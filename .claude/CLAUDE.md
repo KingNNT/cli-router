@@ -4,21 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-A Rust workspace named **`cli-router`** with **2 binary apps** that share a common library:
+A Rust workspace named **`cli-router`** with **3 binary apps** and **2 library crates**:
 
 - **`analysis`** — interactive Ratatui TUI that reads the OpenCode SQLite database at `~/.local/share/opencode/opencode.db` and Claude Code's JSONL session files, then renders token/cost usage as a ccusage-style dashboard. Menu-driven, not argv-driven.
-- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic only today). Forwards `POST /v1/messages` to the upstream, captures token usage from streaming and non-streaming responses, and writes one row per request to a local SQLite file at `~/.local/share/cli-router/proxy.db`.
+- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai). Multi-provider routing with glob-based model matching, admin API for live config editing, Anthropic OAuth PKCE flow with automatic token refresh, and hot reload. Forwards `POST /v1/messages` to the upstream, captures token usage from streaming and non-streaming responses, and writes one row per request to a local SQLite file.
+- **`proxy-tui`** — Ratatui admin client for the proxy daemon. Connects to the proxy's admin API to view status, edit config, manage providers, test connectivity, and initiate OAuth flows.
 
-The proxy and the TUI are peers — independent applications that share domain types, ports, and a small set of pricing-related adapters via the `shared` crate.
+Shared libraries:
+- **`shared`** — domain types, ports, and pricing adapters used by both apps.
+- **`proxy-admin-api`** — wire types (DTOs) for the proxy admin API. Pure data + serde, zero logic. Both the daemon and the TUI depend on this crate so on-the-wire shapes stay in sync.
 
 ## Commands
 
-The workspace has 3 crates: `shared` (library), `analysis` (TUI binary), `proxy` (HTTP proxy binary). Crate directory names match package names one-for-one.
+The workspace has 5 crates. Crate directory names match package names one-for-one.
 
 ```bash
 # Run a binary
 cargo run -p proxy            # HTTP proxy (default 127.0.0.1:8787)
 cargo run -p analysis         # TUI dashboard
+cargo run -p proxy-tui        # Proxy admin TUI
 
 # Workspace gates
 cargo build --workspace       # build everything
@@ -32,24 +36,24 @@ cargo coverage                # summary in terminal
 cargo coverage-html           # open HTML report
 ```
 
-Release binaries land at `target/release/{proxy,analysis}` after `cargo build --release --workspace`.
+Release binaries land at `target/release/{proxy,analysis,proxy-tui}` after `cargo build --release --workspace`.
 
 Tests live alongside code (`#[cfg(test)] mod tests`), as crate-level integration tests under `crates/<crate>/tests/`, and as `///` doc examples on public value-object constructors.
 
 ## Architecture (at a glance)
 
-Three crates, two enforcement levels.
+Five crates, two enforcement levels.
 
 ```
 crates/
-├── shared/         # library — code consumed by BOTH apps
+├── shared/              # library — code consumed by BOTH apps
 │   └── src/
 │       ├── domain/         entities, value objects, services (pure types)
 │       ├── application/    ApplicationError, Clock + PricingRepository ports, shared test fakes
 │       └── adapters/       AdapterError, SystemClock, SqlitePricingRepository,
 │                           CompositePricingRepository, shared SQLite connection helpers
 │
-├── analysis/       # APP 1 — Ratatui TUI binary `analysis`
+├── analysis/            # APP 1 — Ratatui TUI binary `analysis`
 │   └── src/
 │       ├── application/    UsageRepository + PricingSource ports,
 │       │                   GetDashboard / GetModelsBreakdown / GetProjectsBreakdown /
@@ -61,14 +65,32 @@ crates/
 │       │                   terminal setup, controllers
 │       └── main.rs         composition root
 │
-└── proxy/          # APP 2 — axum HTTP proxy binary `proxy`
+├── proxy-admin-api/     # library — shared DTOs for admin API
+│   └── src/lib.rs          AuthPayload, ConfigPayload, StatusResponse, etc.
+│
+├── proxy-tui/           # APP 3 — Ratatui admin client binary `proxy-tui`
+│   └── src/
+│       ├── app.rs          TUI state machine (EditAuthModal, OAuthAwaitingCode, etc.)
+│       ├── client.rs       HTTP client for the proxy admin API
+│       ├── ui.rs           Ratatui rendering (status, config, edit modals)
+│       ├── terminal.rs     terminal setup/teardown
+│       └── main.rs         event loop
+│
+└── proxy/               # APP 2 — axum HTTP proxy binary `proxy`
     └── src/
         ├── domain/         RequestStart, RequestUsage, UsageRecord, RequestStatus
         ├── application/    Provider + RequestLogPort + UsageParser ports,
-        │                   HandleMessages use case + 5 unit tests
-        ├── adapters/       AnthropicProvider, SqliteRequestLogRepository,
-        │                   AnthropicSseParser, schema migrations
-        ├── frameworks/     framework ring — axum router, handler glue,
+        │                   HandleMessages use case,
+        │                   admin use cases (GetStatus, GetConfig, UpdateConfig,
+        │                   TestProvider, StartAnthropicOAuth, CompleteAnthropicOAuth)
+        ├── adapters/       AnthropicProvider, ZaiProvider, RoutingProvider,
+        │                   LiveProvider (hot reload), builder,
+        │                   OAuth PKCE (Anthropic), token_refresh (background),
+        │                   SqliteRequestLogRepository, AnthropicSseParser,
+        │                   schema migrations, messages_protocol (shared protocol logic)
+        ├── config.rs        TOML config with multi-provider, routing rules,
+        │                   AuthConfig variants (Passthrough, ApiKey, Bearer, AnthropicOAuth)
+        ├── frameworks/     framework ring — axum router, admin handler glue,
         │                   TeedStream, ProxyError IntoResponse
         └── main.rs         composition root
 ```
@@ -89,8 +111,28 @@ frameworks/tui  →  adapters  →  application  →  domain
 
 ### Two enforcement levels
 
-- **Cargo-level** between `shared` and the apps: `shared/Cargo.toml` has zero deps on `analysis` or `proxy`. The compiler refuses any reverse import. Apps depend on `shared` via `path = "../shared"`.
+- **Cargo-level** between `shared`/`proxy-admin-api` and the apps: `shared/Cargo.toml` and `proxy-admin-api/Cargo.toml` have zero deps on `analysis` or `proxy`. The compiler refuses any reverse import. Apps depend on them via `path = "../shared"`.
 - **Module-level** within each app: rings (`domain/`, `application/`, `adapters/`, `frameworks/`) are convention-enforced — `cargo` doesn't catch a `crate::frameworks::*` import inside `crate::application/`, but the spec defines it as a violation and `rg` greps catch it in code review.
+
+### Key data flows
+
+**Proxy request path:**
+```
+Client → axum handler → HandleMessages use case → LiveProvider
+  → RoutingProvider (glob match on model) → AnthropicProvider/ZaiProvider
+  → messages_protocol::forward (auth injection, streaming/buffered)
+  → Upstream (api.anthropic.com) → response → usage logging
+```
+
+**OAuth token lifecycle:**
+```
+TUI → POST /admin/oauth/anthropic/start → PKCE codes generated
+TUI → browser opens authorize URL → user pastes code back
+TUI → POST /admin/oauth/anthropic/complete → exchange code for tokens
+  → AuthConfig::AnthropicOAuth stored in config.toml
+  → Background task (token_refresh.rs) refreshes every 60s, persists to disk
+  → 401-retry safety net in messages_protocol::forward
+```
 
 ## Rules
 
@@ -104,5 +146,7 @@ Detailed conventions live in `.claude/rules/`:
 
 - **Workspace + proxy MVP** — spec `docs/superpowers/specs/2026-05-02-workspace-and-proxy-mvp-design.md`, plan `docs/superpowers/plans/2026-05-02-workspace-and-proxy-mvp.md`.
 - **Proxy clean-architecture refactor** — spec `docs/superpowers/specs/2026-05-02-proxy-clean-architecture-design.md`, plan `docs/superpowers/plans/2026-05-02-proxy-clean-architecture.md`.
+- **OAuth refresh token support** — plan `docs/superpowers/plans/2026-05-03-oauth-refresh-token.md`.
+- **Technical debt** — `docs/tech-debt.md`.
 
 Consult these for motivation before changing data shapes, ring boundaries, or proxy contracts.
