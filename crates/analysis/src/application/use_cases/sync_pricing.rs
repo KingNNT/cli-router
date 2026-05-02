@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::application::dto::{SyncPricingInput, SyncPricingOutput};
-use shared::application::errors::ApplicationError;
 use crate::application::ports::PricingSource;
+use shared::application::errors::ApplicationError;
 use shared::application::ports::{Clock, PricingRepository};
 
 pub struct SyncPricing {
@@ -38,8 +38,8 @@ impl SyncPricing {
 mod tests {
     use super::*;
     use crate::application::test_support::FakePricingSource;
-    use shared::application::test_support::{FakePricingRepository, FixedClock};
     use chrono::NaiveDate;
+    use shared::application::test_support::{FakePricingRepository, FixedClock};
     use shared::domain::entities::ModelPricing;
     use shared::domain::value_objects::{ModelId, PricePerToken};
 

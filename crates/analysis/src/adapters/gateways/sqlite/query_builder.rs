@@ -80,8 +80,8 @@ pub fn param_refs(params: &[Box<dyn ToSql>]) -> Vec<&dyn ToSql> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared::domain::value_objects::{DateRange, ModelId, ProjectPath};
     use chrono::NaiveDate;
+    use shared::domain::value_objects::{DateRange, ModelId, ProjectPath};
 
     #[test]
     fn empty_filter_yields_role_only() {

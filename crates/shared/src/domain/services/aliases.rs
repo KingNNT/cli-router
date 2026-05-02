@@ -97,6 +97,10 @@ pub const ALIASES: &[ModelAlias] = &[
         cache_write_per_token: None,
     },
     // === Z.AI GLM ===
+    // Raw forms (e.g. "glm-4.6") are what the proxy stores when forwarding
+    // through Z.ai's Anthropic-compatible endpoint — the body's `model`
+    // field round-trips verbatim. Prefixed forms ("zai/...") cover the
+    // analysis crate looking up by qualified id.
     ModelAlias {
         canonical: "glm4.6",
         sources: &["glm-4.6", "zai/glm-4.6", "z-ai/glm-4.6"],
@@ -105,12 +109,35 @@ pub const ALIASES: &[ModelAlias] = &[
         cache_read_per_token: Some(1.1e-7),
         cache_write_per_token: None,
     },
+    ModelAlias {
+        canonical: "glm4.7",
+        sources: &["glm-4.7", "zai/glm-4.7", "z-ai/glm-4.7"],
+        input_per_token: 6.0e-7,
+        output_per_token: 2.2e-6,
+        cache_read_per_token: Some(1.1e-7),
+        cache_write_per_token: None,
+    },
+    ModelAlias {
+        canonical: "glm4.5-air",
+        sources: &["glm-4.5-air", "zai/glm-4.5-air", "z-ai/glm-4.5-air"],
+        input_per_token: 2.0e-7,
+        output_per_token: 1.1e-6,
+        cache_read_per_token: Some(5.0e-8),
+        cache_write_per_token: None,
+    },
     // GLM-5 family — LiteLLM doesn't carry rates for these yet, so using
     // glm-4.6 rates as a placeholder estimate. Adjust if you know the real
     // Z.AI rates; turbo variants likely run cheaper than the 5.1 flagship.
     ModelAlias {
         canonical: "glm5",
-        sources: &["zai/glm-5.1", "zai/glm-5-turbo", "zai/glm-5v-turbo"],
+        sources: &[
+            "glm-5.1",
+            "glm-5-turbo",
+            "glm-5v-turbo",
+            "zai/glm-5.1",
+            "zai/glm-5-turbo",
+            "zai/glm-5v-turbo",
+        ],
         input_per_token: 6.0e-7,
         output_per_token: 2.2e-6,
         cache_read_per_token: Some(1.1e-7),

@@ -1,7 +1,10 @@
-//! Anthropic provider — implements `Provider` against `https://api.anthropic.com`.
+//! Z.ai provider — implements `Provider` against Z.ai's Anthropic-compatible
+//! endpoint at `https://api.z.ai/api/anthropic`.
 //!
-//! Protocol-level logic (parse_model, parse_usage_json, usage_parser, forward)
-//! is delegated to `super::messages_protocol`, which is shared with `ZaiProvider`.
+//! Z.ai exposes the same Messages API as Anthropic (path `/v1/messages`,
+//! `x-api-key` header, identical body schema, identical SSE event names),
+//! so all protocol-level logic is delegated to `super::messages_protocol`.
+//! Only `name()` and `base_url` differ from `AnthropicProvider`.
 
 use super::messages_protocol::{self, AuthHeader};
 use crate::application::errors::ProxyError;
@@ -11,17 +14,17 @@ use async_trait::async_trait;
 use axum::http::HeaderMap;
 use bytes::Bytes;
 
-pub struct AnthropicProvider {
+pub struct ZaiProvider {
     base_url: String,
     http: reqwest::Client,
     auth: AuthHeader,
 }
 
-impl AnthropicProvider {
+impl ZaiProvider {
     pub fn new(http: reqwest::Client) -> Self {
         Self::build(
             http,
-            "https://api.anthropic.com".into(),
+            "https://api.z.ai/api/anthropic".into(),
             AuthHeader::Passthrough,
         )
     }
@@ -31,13 +34,13 @@ impl AnthropicProvider {
     }
 
     pub fn with_auth(http: reqwest::Client, auth: AuthHeader) -> Self {
-        Self::build(http, "https://api.anthropic.com".into(), auth)
+        Self::build(http, "https://api.z.ai/api/anthropic".into(), auth)
     }
 
     pub fn configure(http: reqwest::Client, base_url: Option<String>, auth: AuthHeader) -> Self {
         Self::build(
             http,
-            base_url.unwrap_or_else(|| "https://api.anthropic.com".into()),
+            base_url.unwrap_or_else(|| "https://api.z.ai/api/anthropic".into()),
             auth,
         )
     }
@@ -52,9 +55,9 @@ impl AnthropicProvider {
 }
 
 #[async_trait]
-impl Provider for AnthropicProvider {
+impl Provider for ZaiProvider {
     fn name(&self) -> &'static str {
-        "anthropic"
+        "zai"
     }
 
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {
@@ -93,24 +96,30 @@ impl Provider for AnthropicProvider {
 mod tests {
     use super::*;
 
-    fn provider() -> AnthropicProvider {
-        AnthropicProvider::new(reqwest::Client::new())
+    fn provider() -> ZaiProvider {
+        ZaiProvider::new(reqwest::Client::new())
     }
 
     #[test]
-    fn name_is_anthropic() {
-        assert_eq!(provider().name(), "anthropic");
+    fn name_is_zai() {
+        assert_eq!(provider().name(), "zai");
     }
 
     #[test]
-    fn default_base_url_points_to_anthropic_api() {
-        assert_eq!(provider().base_url, "https://api.anthropic.com");
+    fn default_base_url_points_to_zai_anthropic_endpoint() {
+        assert_eq!(provider().base_url, "https://api.z.ai/api/anthropic");
     }
 
     #[test]
     fn with_base_url_overrides_default() {
-        let p = AnthropicProvider::with_base_url(reqwest::Client::new(), "http://localhost:1234");
+        let p = ZaiProvider::with_base_url(reqwest::Client::new(), "http://localhost:1234");
         assert_eq!(p.base_url, "http://localhost:1234");
+    }
+
+    #[test]
+    fn parses_glm_model_id_from_body() {
+        let body = br#"{"model":"glm-4.6","messages":[]}"#;
+        assert_eq!(provider().parse_model(body).unwrap(), "glm-4.6");
     }
 
     #[test]
@@ -120,12 +129,12 @@ mod tests {
 
     #[test]
     fn configure_sets_both_base_url_and_auth() {
-        let p = AnthropicProvider::configure(
+        let p = ZaiProvider::configure(
             reqwest::Client::new(),
-            Some("http://x".into()),
-            AuthHeader::ApiKey("sk-ant-test".into()),
+            Some("http://localhost:1234".into()),
+            AuthHeader::ApiKey("zai-test".into()),
         );
-        assert_eq!(p.base_url, "http://x");
+        assert_eq!(p.base_url, "http://localhost:1234");
         assert!(matches!(p.auth, AuthHeader::ApiKey(_)));
     }
 }

@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 
 use crate::application::dto::Filter;
-use shared::application::errors::ApplicationError;
 use crate::application::ports::UsageRepository;
+use shared::application::errors::ApplicationError;
 use shared::domain::entities::{DayModelRow, ModelUsage, Overview, ProjectUsage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,9 +111,9 @@ impl UsageRepository for DispatchingUsageRepository {
 mod tests {
     use super::*;
     use crate::application::test_support::FakeUsageRepository;
+    use chrono::NaiveDate;
     use shared::domain::entities::{DayModelRow, Overview};
     use shared::domain::value_objects::{Cost, ModelId, TokenBreakdown, TokenCount};
-    use chrono::NaiveDate;
 
     fn row(input: u64) -> DayModelRow {
         DayModelRow {

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::application::dto::{Filter, GetProjectsBreakdownInput, GetProjectsBreakdownOutput};
-use shared::application::errors::ApplicationError;
 use crate::application::ports::UsageRepository;
+use shared::application::errors::ApplicationError;
 use shared::application::ports::Clock;
 use shared::domain::value_objects::DateRange;
 

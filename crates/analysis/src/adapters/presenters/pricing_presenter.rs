@@ -63,9 +63,9 @@ pub fn present_pricing(out: &GetPricingOutput, query: &str) -> PricingViewModel 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveDate;
     use shared::domain::entities::ModelPricing;
     use shared::domain::value_objects::{ModelId, PricePerToken};
-    use chrono::NaiveDate;
 
     fn pricing(model: &str, cache_read: Option<f64>) -> ModelPricing {
         ModelPricing {

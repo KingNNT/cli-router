@@ -23,8 +23,8 @@ impl GetPricing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shared::application::test_support::FakePricingRepository;
     use chrono::NaiveDate;
+    use shared::application::test_support::FakePricingRepository;
     use shared::domain::entities::ModelPricing;
     use shared::domain::value_objects::{ModelId, PricePerToken};
 

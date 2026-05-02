@@ -3,11 +3,11 @@ use std::sync::{Arc, Mutex};
 use chrono::NaiveDate;
 use rusqlite::Connection;
 
-use shared::adapters::AdapterError;
 use crate::adapters::gateways::sqlite::query_builder::{self, WhereClause};
 use crate::application::dto::Filter;
-use shared::application::errors::ApplicationError;
 use crate::application::ports::UsageRepository;
+use shared::adapters::AdapterError;
+use shared::application::errors::ApplicationError;
 use shared::domain::entities::{DayModelRow, ModelUsage, Overview, ProjectUsage};
 use shared::domain::value_objects::{
     Cost, DateRange, ModelId, ProjectPath, TokenBreakdown, TokenCount,

@@ -34,3 +34,20 @@ impl RequestStatus {
         }
     }
 }
+
+/// Snapshot of a row in the `requests` table — what the read port returns.
+#[derive(Debug, Clone)]
+pub struct RequestRow {
+    pub id: String,
+    pub started_at_ms: i64,
+    pub finished_at_ms: Option<i64>,
+    pub provider: String,
+    pub model: String,
+    pub status: String,
+    pub input_tokens: Option<i64>,
+    pub output_tokens: Option<i64>,
+    pub cache_read_tokens: Option<i64>,
+    pub cache_creation_tokens: Option<i64>,
+    pub cost_usd: Option<f64>,
+    pub error_message: Option<String>,
+}

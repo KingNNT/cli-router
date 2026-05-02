@@ -4,5 +4,5 @@
 pub mod request_log;
 pub mod usage_record;
 
-pub use request_log::{RequestStart, RequestStatus, RequestUsage};
+pub use request_log::{RequestRow, RequestStart, RequestStatus, RequestUsage};
 pub use usage_record::{UsageRecord, UsageState};

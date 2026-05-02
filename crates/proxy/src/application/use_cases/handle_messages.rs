@@ -7,10 +7,10 @@ use crate::application::ports::{
     BoxedByteStream, Provider, RequestLogPort, UpstreamResponse, UsageParser,
 };
 use crate::domain::{RequestStart, RequestUsage, UsageRecord};
-use shared::application::ports::{Clock, PricingRepository};
 use bytes::Bytes;
-use shared::domain::value_objects::{ModelId, PricePerToken};
 use http::HeaderMap;
+use shared::application::ports::{Clock, PricingRepository};
+use shared::domain::value_objects::{ModelId, PricePerToken};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -251,10 +251,10 @@ fn compute_cost(
 mod tests {
     use super::*;
     use crate::application::ports::{BoxedByteStream, BoxedError, UpstreamResponse};
-    use shared::application::test_support::{FakePricingRepository, FixedClock};
     use async_trait::async_trait;
     use bytes::Bytes;
     use http::HeaderMap;
+    use shared::application::test_support::{FakePricingRepository, FixedClock};
     use std::sync::Mutex;
 
     /// Fake provider that returns prearranged responses.

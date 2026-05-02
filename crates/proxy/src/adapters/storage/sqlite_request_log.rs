@@ -94,6 +94,77 @@ impl RequestLogPort for SqliteRequestLogRepository {
     }
 }
 
+impl crate::application::ports::RequestLogReadPort for SqliteRequestLogRepository {
+    fn total_count(&self) -> Result<u64, ProxyError> {
+        let c = self.conn.lock().expect("repo mutex poisoned");
+        let n: i64 = c.query_row("SELECT COUNT(*) FROM requests", [], |r| r.get(0))?;
+        Ok(n.max(0) as u64)
+    }
+
+    fn count_by_provider(&self) -> Result<std::collections::BTreeMap<String, u64>, ProxyError> {
+        count_grouped(&self.conn, "provider")
+    }
+
+    fn count_by_status(&self) -> Result<std::collections::BTreeMap<String, u64>, ProxyError> {
+        count_grouped(&self.conn, "status")
+    }
+
+    fn recent(&self, limit: u32) -> Result<Vec<crate::domain::RequestRow>, ProxyError> {
+        let c = self.conn.lock().expect("repo mutex poisoned");
+        let mut stmt = c.prepare(
+            "SELECT id, started_at, finished_at, provider, model, status,
+                    input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, cost_usd, error_message
+             FROM requests
+             ORDER BY started_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit as i64], |r| {
+            Ok(crate::domain::RequestRow {
+                id: r.get(0)?,
+                started_at_ms: r.get(1)?,
+                finished_at_ms: r.get(2)?,
+                provider: r.get(3)?,
+                model: r.get(4)?,
+                status: r.get(5)?,
+                input_tokens: r.get(6)?,
+                output_tokens: r.get(7)?,
+                cache_read_tokens: r.get(8)?,
+                cache_creation_tokens: r.get(9)?,
+                cost_usd: r.get(10)?,
+                error_message: r.get(11)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+}
+
+fn count_grouped(
+    conn: &Arc<Mutex<Connection>>,
+    column: &str,
+) -> Result<std::collections::BTreeMap<String, u64>, ProxyError> {
+    // SAFETY: `column` is hard-coded by callers ("provider" | "status").
+    // No user input flows here, so string interpolation into the query is fine.
+    let sql = format!("SELECT {column}, COUNT(*) FROM requests GROUP BY {column}");
+    let c = conn.lock().expect("repo mutex poisoned");
+    let mut stmt = c.prepare(&sql)?;
+    let rows = stmt.query_map([], |r| {
+        let key: String = r.get(0)?;
+        let n: i64 = r.get(1)?;
+        Ok((key, n.max(0) as u64))
+    })?;
+    let mut out = std::collections::BTreeMap::new();
+    for row in rows {
+        let (k, v) = row?;
+        out.insert(k, v);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

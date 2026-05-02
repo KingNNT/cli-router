@@ -1,13 +1,9 @@
 use std::sync::{Arc, Mutex};
 
-use analysis::adapters::gateways::claudecode::{
-    default_projects_root, ClaudeCodeUsageRepository,
-};
+use analysis::adapters::gateways::claudecode::{default_projects_root, ClaudeCodeUsageRepository};
 use analysis::adapters::gateways::http::LiteLlmPricingSource;
-use analysis::adapters::gateways::{
-    DataSource, DataSourceCell, DispatchingUsageRepository,
-};
 use analysis::adapters::gateways::sqlite::SqliteUsageRepository;
+use analysis::adapters::gateways::{DataSource, DataSourceCell, DispatchingUsageRepository};
 use analysis::application::ports::{PricingSource, UsageRepository};
 use analysis::application::use_cases::{
     GetDashboard, GetModelsBreakdown, GetPricing, GetProjectsBreakdown, SyncPricing,
@@ -56,10 +52,7 @@ fn run() -> Result<(), FrameworkError> {
     );
     let const_pricing = shared::domain::services::aliases::canonical_pricing(clock.today());
     let pricing_repo: Arc<dyn PricingRepository> = Arc::new(
-        shared::adapters::gateways::CompositePricingRepository::new(
-            const_pricing,
-            sqlite_pricing,
-        ),
+        shared::adapters::gateways::CompositePricingRepository::new(const_pricing, sqlite_pricing),
     );
     let pricing_source: Arc<dyn PricingSource> = Arc::new(LiteLlmPricingSource::new(clock.clone()));
 

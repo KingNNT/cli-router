@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-use shared::adapters::AdapterError;
 use crate::adapters::presenters::{
     present_dashboard, present_models, present_pricing, present_projects,
 };
@@ -10,13 +9,14 @@ use crate::application::dto::{
     Filter, GetDashboardInput, GetModelsBreakdownInput, GetPricingInput, GetProjectsBreakdownInput,
     SyncPricingInput,
 };
-use shared::application::ports::Clock;
 use crate::application::use_cases::{
     GetDashboard, GetModelsBreakdown, GetPricing, GetProjectsBreakdown, SyncPricing,
 };
-use shared::domain::value_objects::DateRange;
 use crate::tui::app_state::FilterWindow;
 use crate::tui::{AppState, Focus, View};
+use shared::adapters::AdapterError;
+use shared::application::ports::Clock;
+use shared::domain::value_objects::DateRange;
 
 pub struct TuiController {
     pub get_dashboard: Arc<GetDashboard>,
@@ -428,12 +428,12 @@ mod tests {
     use super::*;
     use crate::application::ports::{PricingSource, UsageRepository};
     use crate::application::test_support::{FakePricingSource, FakeUsageRepository};
+    use chrono::NaiveDate;
+    use crossterm::event::{KeyEvent, KeyModifiers};
     use shared::application::ports::{Clock, PricingRepository};
     use shared::application::test_support::{FakePricingRepository, FixedClock};
     use shared::domain::entities::ModelPricing;
     use shared::domain::value_objects::{ModelId, PricePerToken};
-    use chrono::NaiveDate;
-    use crossterm::event::{KeyEvent, KeyModifiers};
 
     fn ctl_with_source_rows(
         source_rows: Vec<ModelPricing>,

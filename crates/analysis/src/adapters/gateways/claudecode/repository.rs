@@ -7,10 +7,10 @@ use std::sync::Mutex;
 use chrono::{DateTime, NaiveDate};
 use serde::Deserialize;
 
-use shared::adapters::AdapterError;
 use crate::application::dto::Filter;
-use shared::application::errors::ApplicationError;
 use crate::application::ports::UsageRepository;
+use shared::adapters::AdapterError;
+use shared::application::errors::ApplicationError;
 use shared::domain::entities::{DayModelRow, ModelUsage, Overview, ProjectUsage, UsageRecord};
 use shared::domain::value_objects::{
     Cost, DateRange, ModelId, ProjectPath, TokenBreakdown, TokenCount,
@@ -366,8 +366,7 @@ mod tests {
 
     #[test]
     fn missing_root_returns_zero_overview() {
-        let p =
-            std::env::temp_dir().join(format!("analysis-cc-missing-{}", std::process::id()));
+        let p = std::env::temp_dir().join(format!("analysis-cc-missing-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         let repo = ClaudeCodeUsageRepository::new(p);
         let ov = repo.overview(&Filter::default()).unwrap();

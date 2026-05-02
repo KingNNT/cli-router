@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::application::dto::{Filter, GetModelsBreakdownInput, GetModelsBreakdownOutput};
-use shared::application::errors::ApplicationError;
 use crate::application::ports::UsageRepository;
+use shared::application::errors::ApplicationError;
 use shared::application::ports::{Clock, PricingRepository};
 use shared::domain::services::aggregation::aggregate_model_usage_by_alias;
 use shared::domain::services::pricing as pricing_service;
@@ -90,8 +90,8 @@ impl GetModelsBreakdown {
 mod tests {
     use super::*;
     use crate::application::test_support::FakeUsageRepository;
-    use shared::application::test_support::{FakePricingRepository, FixedClock};
     use chrono::NaiveDate;
+    use shared::application::test_support::{FakePricingRepository, FixedClock};
     use shared::domain::entities::{ModelPricing, ModelUsage};
     use shared::domain::value_objects::{Cost, ModelId, PricePerToken, TokenBreakdown, TokenCount};
 

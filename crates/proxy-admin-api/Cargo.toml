@@ -1,0 +1,12 @@
+[package]
+name = "proxy-admin-api"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "proxy_admin_api"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

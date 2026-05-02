@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::application::dto::{Filter, GetDashboardInput, GetDashboardOutput};
-use shared::application::errors::ApplicationError;
 use crate::application::ports::UsageRepository;
+use shared::application::errors::ApplicationError;
 use shared::application::ports::{Clock, PricingRepository};
 use shared::domain::entities::Overview;
 use shared::domain::services::aggregation::aggregate_day_model_rows_by_alias;
@@ -108,8 +108,8 @@ impl GetDashboard {
 mod tests {
     use super::*;
     use crate::application::test_support::FakeUsageRepository;
-    use shared::application::test_support::{FakePricingRepository, FixedClock};
     use chrono::NaiveDate;
+    use shared::application::test_support::{FakePricingRepository, FixedClock};
     use shared::domain::entities::{DayModelRow, ModelPricing, Overview};
     use shared::domain::value_objects::{ModelId, PricePerToken, TokenCount};
 
