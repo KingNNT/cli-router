@@ -1,0 +1,26 @@
+[package]
+name = "analysis"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "analysis"
+
+[[bin]]
+name = "analysis"
+path = "src/main.rs"
+
+[dependencies]
+shared = { path = "../shared" }
+chrono = { workspace = true }
+crossterm = { workspace = true }
+ratatui = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+ureq = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+rusqlite = { workspace = true }

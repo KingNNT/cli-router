@@ -1,0 +1,6 @@
+[alias]
+# Generate a line-coverage report using cargo-llvm-cov.
+# Install once with: `cargo install cargo-llvm-cov`
+# Run with: `cargo coverage` (terminal summary) or `cargo coverage-html` (HTML report).
+coverage = "llvm-cov --workspace --all-features --all-targets --summary-only"
+coverage-html = "llvm-cov --workspace --all-features --all-targets --open"
