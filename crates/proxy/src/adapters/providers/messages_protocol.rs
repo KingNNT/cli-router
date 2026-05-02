@@ -40,6 +40,29 @@ pub enum AuthHeader {
     ApiKey(String),
     /// Strip incoming auth, inject `authorization: Bearer <value>`.
     Bearer(String),
+    /// Full OAuth with auto-refresh. Carries the current tokens.
+    OAuth {
+        access_token: String,
+        refresh_token: String,
+        expires_at_ms: u64,
+    },
+}
+
+impl AuthHeader {
+    /// Returns `true` if the access token is expired or expires within
+    /// `buffer_secs` seconds from now. Only meaningful for `OAuth` variant.
+    pub fn is_expired(&self, buffer_secs: u64) -> bool {
+        match self {
+            AuthHeader::OAuth { expires_at_ms, .. } => {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                now_ms + (buffer_secs * 1000) >= *expires_at_ms
+            }
+            _ => false,
+        }
+    }
 }
 
 pub(super) fn parse_model(body: &[u8]) -> Result<String, String> {
@@ -89,8 +112,81 @@ pub(super) async fn forward(
     body: Bytes,
     streaming: bool,
 ) -> Result<UpstreamResponse, ProxyError> {
+    // For OAuth, we may need to refresh + retry. Clone auth so we can update
+    // it after a refresh. For non-OAuth variants, this is a cheap clone.
+    let mut effective_auth = auth.clone();
+
+    // Proactive refresh: if the token expires within 5 minutes, refresh now.
+    if effective_auth.is_expired(300) {
+        if let AuthHeader::OAuth { refresh_token, .. } = &effective_auth {
+            match crate::adapters::oauth::refresh_token(http, refresh_token).await {
+                Ok(tokens) => {
+                    effective_auth = oauth_tokens_to_auth_header(&tokens);
+                    tracing::info!("proactively refreshed OAuth token");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "proactive OAuth refresh failed; will try with current token");
+                }
+            }
+        }
+    }
+
+    // First attempt.
+    let resp = send_request(http, base_url, &effective_auth, path, headers, &body, streaming).await?;
+
+    // On 401 with OAuth, refresh and retry once. This handles both Buffered
+    // and Streaming response shapes — a 401 can come as either.
+    let status = match &resp {
+        UpstreamResponse::Buffered { status, .. } => *status,
+        UpstreamResponse::Streaming { status, .. } => *status,
+    };
+    if status == 401 {
+        if let AuthHeader::OAuth { refresh_token, .. } = &effective_auth {
+            tracing::info!("401 from upstream, attempting OAuth refresh + retry");
+            match crate::adapters::oauth::refresh_token(http, refresh_token).await {
+                Ok(tokens) => {
+                    let refreshed = oauth_tokens_to_auth_header(&tokens);
+                    return send_request(http, base_url, &refreshed, path, headers, &body, streaming).await;
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "OAuth refresh on 401 failed");
+                }
+            }
+        }
+    }
+
+    Ok(resp)
+}
+
+fn oauth_tokens_to_auth_header(tokens: &crate::adapters::oauth::OAuthTokens) -> AuthHeader {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    // Default to 1 hour if expires_in is missing.
+    let expires_in_ms = tokens.expires_in.unwrap_or(3600) * 1000;
+    let refresh = tokens.refresh_token.clone().unwrap_or_default();
+    if refresh.is_empty() {
+        tracing::warn!("OAuth token response contained no refresh_token; auto-refresh will not be possible");
+    }
+    AuthHeader::OAuth {
+        access_token: tokens.access_token.clone(),
+        refresh_token: refresh,
+        expires_at_ms: now_ms + expires_in_ms,
+    }
+}
+
+async fn send_request(
+    http: &reqwest::Client,
+    base_url: &str,
+    auth: &AuthHeader,
+    path: &str,
+    headers: &HeaderMap,
+    body: &[u8],
+    streaming: bool,
+) -> Result<UpstreamResponse, ProxyError> {
     let url = format!("{base_url}{path}");
-    let mut req = http.post(&url).body(body);
+    let mut req = http.post(&url).body(body.to_vec());
     let strip_auth = !matches!(auth, AuthHeader::Passthrough);
     for (k, v) in headers {
         if HOP_BY_HOP.contains(&k.as_str()) {
@@ -108,6 +204,11 @@ pub(super) async fn forward(
         }
         AuthHeader::Bearer(v) => {
             req = req.header("authorization", format!("Bearer {v}"));
+        }
+        AuthHeader::OAuth { access_token, .. } => {
+            req = req.header("authorization", format!("Bearer {access_token}"));
+            // Required for OAuth-authenticated requests.
+            req = req.header("anthropic-beta", "oauth-2025-04-20");
         }
     }
     let resp = req.send().await?;
@@ -200,5 +301,41 @@ mod tests {
         let rec = p.finish();
         assert_eq!(rec.input_tokens, Some(7));
         assert_eq!(rec.output_tokens, Some(13));
+    }
+
+    #[test]
+    fn auth_header_oauth_is_expired_checks_expiry() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+
+        let expired = AuthHeader::OAuth {
+            access_token: "at".into(),
+            refresh_token: "rt".into(),
+            expires_at_ms: now_ms - 1000, // already expired
+        };
+        assert!(expired.is_expired(300));
+
+        let fresh = AuthHeader::OAuth {
+            access_token: "at".into(),
+            refresh_token: "rt".into(),
+            expires_at_ms: now_ms + 600_000, // expires in 10 min
+        };
+        assert!(!fresh.is_expired(300));
+
+        let almost_expired = AuthHeader::OAuth {
+            access_token: "at".into(),
+            refresh_token: "rt".into(),
+            expires_at_ms: now_ms + 200_000, // expires in 200s, within 300s buffer
+        };
+        assert!(almost_expired.is_expired(300));
+    }
+
+    #[test]
+    fn non_oauth_auth_header_is_never_expired() {
+        assert!(!AuthHeader::Passthrough.is_expired(300));
+        assert!(!AuthHeader::ApiKey("k".into()).is_expired(300));
+        assert!(!AuthHeader::Bearer("b".into()).is_expired(300));
     }
 }

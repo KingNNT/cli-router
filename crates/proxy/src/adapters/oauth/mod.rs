@@ -3,6 +3,6 @@
 pub mod anthropic;
 
 pub use anthropic::{
-    build_authorize_url, exchange_code, generate_pkce, OAuthError, OAuthSessionStore, OAuthTokens,
-    PkceCodes,
+    build_authorize_url, exchange_code, generate_pkce, refresh_token, OAuthError, OAuthSessionStore,
+    OAuthTokens, PkceCodes,
 };

@@ -311,8 +311,22 @@ impl CompleteAnthropicOAuth {
                     };
                 }
             };
-            prov.auth = AuthConfig::Bearer {
-                value: tokens.access_token.clone(),
+            // Compute expires_at_ms: now + expires_in (default 8 hours).
+            let expires_at_ms = {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                let expires_in_ms = tokens.expires_in.unwrap_or(28800) * 1000;
+                now_ms + expires_in_ms
+            };
+            prov.auth = AuthConfig::AnthropicOAuth {
+                access_token: tokens.access_token.clone(),
+                refresh_token: tokens
+                    .refresh_token
+                    .clone()
+                    .unwrap_or_default(),
+                expires_at_ms,
             };
             (config_to_payload(&cur), cur.clone())
         };

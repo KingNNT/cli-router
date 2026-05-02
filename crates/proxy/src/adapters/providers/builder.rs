@@ -22,7 +22,15 @@ pub fn build_leaf(p: &ProviderConfig, http: reqwest::Client) -> Arc<dyn Provider
         AuthConfig::Passthrough => AuthHeader::Passthrough,
         AuthConfig::ApiKey { value } => AuthHeader::ApiKey(value.clone()),
         AuthConfig::Bearer { value } => AuthHeader::Bearer(value.clone()),
-        AuthConfig::AnthropicOAuth { access_token, .. } => AuthHeader::Bearer(access_token.clone()),
+        AuthConfig::AnthropicOAuth {
+            access_token,
+            refresh_token,
+            expires_at_ms,
+        } => AuthHeader::OAuth {
+            access_token: access_token.clone(),
+            refresh_token: refresh_token.clone(),
+            expires_at_ms: *expires_at_ms,
+        },
     };
     match p.kind {
         ProviderKind::Anthropic => {
