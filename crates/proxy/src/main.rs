@@ -88,6 +88,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
+
+    // Spawn background OAuth token refresh (checks every 60s, persists to disk).
+    proxy::adapters::providers::token_refresh::spawn(
+        cfg_lock.clone(),
+        config_path.clone(),
+        http.clone(),
+        live.clone(),
+    );
+
     let admin = AdminState {
         get_status: Arc::new(GetStatus::new(request_read.clone(), now_epoch_ms())),
         get_config: Arc::new(GetConfig::new(cfg_lock.clone())),

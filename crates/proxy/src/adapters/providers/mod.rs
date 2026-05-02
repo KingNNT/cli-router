@@ -5,6 +5,7 @@ pub mod builder;
 pub mod live;
 mod messages_protocol;
 pub mod routing;
+pub mod token_refresh;
 pub mod zai;
 
 pub use anthropic::AnthropicProvider;

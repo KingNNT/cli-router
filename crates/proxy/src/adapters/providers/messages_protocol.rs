@@ -112,36 +112,19 @@ pub(super) async fn forward(
     body: Bytes,
     streaming: bool,
 ) -> Result<UpstreamResponse, ProxyError> {
-    // For OAuth, we may need to refresh + retry. Clone auth so we can update
-    // it after a refresh. For non-OAuth variants, this is a cheap clone.
-    let mut effective_auth = auth.clone();
-
-    // Proactive refresh: if the token expires within 5 minutes, refresh now.
-    if effective_auth.is_expired(300) {
-        if let AuthHeader::OAuth { refresh_token, .. } = &effective_auth {
-            match crate::adapters::oauth::refresh_token(http, refresh_token).await {
-                Ok(tokens) => {
-                    effective_auth = oauth_tokens_to_auth_header(&tokens);
-                    tracing::info!("proactively refreshed OAuth token");
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "proactive OAuth refresh failed; will try with current token");
-                }
-            }
-        }
-    }
-
-    // First attempt.
-    let resp = send_request(http, base_url, &effective_auth, path, headers, &body, streaming).await?;
+    // Send the request using the current auth.
+    let resp = send_request(http, base_url, auth, path, headers, &body, streaming).await?;
 
     // On 401 with OAuth, refresh and retry once. This handles both Buffered
     // and Streaming response shapes — a 401 can come as either.
+    // Proactive refresh is handled by the background token_refresh task
+    // so we don't race with it on refresh-token rotation.
     let status = match &resp {
         UpstreamResponse::Buffered { status, .. } => *status,
         UpstreamResponse::Streaming { status, .. } => *status,
     };
     if status == 401 {
-        if let AuthHeader::OAuth { refresh_token, .. } = &effective_auth {
+        if let AuthHeader::OAuth { refresh_token, .. } = auth {
             tracing::info!("401 from upstream, attempting OAuth refresh + retry");
             match crate::adapters::oauth::refresh_token(http, refresh_token).await {
                 Ok(tokens) => {
