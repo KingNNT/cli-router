@@ -20,7 +20,7 @@ Built with [axum](https://github.com/tokio-rs/axum) (proxy), [Ratatui](https://r
 - **Dual-protocol support** — accepts both Anthropic (`/v1/messages`) and OpenAI (`/v1/chat/completions`) request formats. Works with Claude Code, OpenCode, Cursor, and any OpenAI-compatible client.
 - **Streaming support** — forwards SSE streaming and buffered JSON responses unchanged
 - **Token usage logging** — parses upstream events to extract input/output/cache token counts, looks up cost, writes to `~/.local/share/cli-router/proxy.db`
-- **Admin API** — `GET/PUT /admin/config`, `GET /admin/status`, `GET /admin/requests/recent`, `POST /admin/providers/:name/test`
+- **Admin API** — `GET/PUT /admin/config`, `GET /admin/status`, `GET /admin/requests/recent`, `POST /admin/providers/:name/test`, `POST /admin/oauth/anthropic/{start,complete}`
 - **Anthropic OAuth** — PKCE-based browser flow with automatic token refresh (background task refreshes tokens every 60s, persists to config file)
 - **401 retry** — on auth failure, automatically refreshes OAuth token and retries once
 - **Hot reload** — config changes via admin API take effect immediately without daemon restart

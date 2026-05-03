@@ -2,6 +2,15 @@
 
 General Rust style follows `rustfmt` defaults (`cargo fmt`) and `clippy` (`cargo clippy`). The notes below are conventions that are specific to this crate.
 
+## Edition
+
+All crates target **edition 2024**. Two consequences worth knowing:
+
+- **Let-chains are stable** — prefer `if let Some(x) = opt && cond { … }` over a nested `if let Some(x) = opt { if cond { … } }`. Clippy's `collapsible_if` enforces this with `-D warnings`.
+- **`std::env::set_var` is `unsafe`** — wrap test-only mutations in `unsafe { … }` with a `// SAFETY: …` rationale (the env var name being unique to the test is a sufficient reason). Don't reach for it in production code.
+
+If you migrate a new crate in or change toolchains, run `cargo fix --edition` followed by `cargo clippy --workspace --fix` to pick up these rewrites mechanically.
+
 ## Error types
 
 One error enum per ring, each wrapping the one it sits outside of. Use `thiserror` derives.

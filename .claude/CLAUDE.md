@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A Rust workspace named **`cli-router`** with **3 binary apps** and **2 library crates**:
 
 - **`analysis`** — interactive Ratatui TUI that reads the OpenCode SQLite database at `~/.local/share/opencode/opencode.db` and Claude Code's JSONL session files, then renders token/cost usage as a ccusage-style dashboard. Menu-driven, not argv-driven.
-- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai). Multi-provider routing with glob-based model matching, admin API for live config editing, Anthropic OAuth PKCE flow with automatic token refresh, and hot reload. Forwards `POST /v1/messages` to the upstream, captures token usage from streaming and non-streaming responses, and writes one row per request to a local SQLite file.
+- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai). Multi-provider routing with glob-based model matching, `provider/model` namespace overrides, round-robin load balancing with 429 cooldown, admin API for live config editing, Anthropic OAuth PKCE flow with automatic token refresh, and hot reload. Accepts both Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`) formats, captures token usage from streaming and non-streaming responses, and writes one row per request to a local SQLite file.
 - **`proxy-tui`** — Ratatui admin client for the proxy daemon. Connects to the proxy's admin API to view status, edit config, manage providers, test connectivity, and initiate OAuth flows.
 
 Shared libraries:
@@ -80,17 +80,22 @@ crates/
     └── src/
         ├── domain/         RequestStart, RequestUsage, UsageRecord, RequestStatus
         ├── application/    Provider + RequestLogPort + UsageParser ports,
-        │                   HandleMessages use case,
+        │                   HandleMessages use case (with ApiFormat for dual-protocol),
         │                   admin use cases (GetStatus, GetConfig, UpdateConfig,
         │                   TestProvider, StartAnthropicOAuth, CompleteAnthropicOAuth)
-        ├── adapters/       AnthropicProvider, ZaiProvider, RoutingProvider,
-        │                   LiveProvider (hot reload), builder,
-        │                   OAuth PKCE (Anthropic), token_refresh (background),
-        │                   SqliteRequestLogRepository, AnthropicSseParser,
-        │                   schema migrations, messages_protocol (shared protocol logic)
+        ├── adapters/
+        │   ├── providers/  AnthropicProvider, ZaiProvider, RoutingProvider
+        │   │               (glob match + namespace + load balancing),
+        │   │               LiveProvider (hot reload), builder,
+        │   │               messages_protocol (shared forward/forward_openai logic),
+        │   │               token_refresh (background OAuth refresh)
+        │   ├── oauth/      Anthropic PKCE flow
+        │   ├── storage/    SqliteRequestLogRepository, schema migrations
+        │   └── usage/      AnthropicSseParser
         ├── config.rs        TOML config with multi-provider, routing rules,
         │                   AuthConfig variants (Passthrough, ApiKey, Bearer, AnthropicOAuth)
-        ├── frameworks/     framework ring — axum router, admin handler glue,
+        ├── frameworks/     framework ring — axum router (`/v1/messages`,
+        │                   `/v1/chat/completions`, `/admin/*`), admin handler glue,
         │                   TeedStream, ProxyError IntoResponse
         └── main.rs         composition root
 ```
@@ -118,10 +123,14 @@ frameworks/tui  →  adapters  →  application  →  domain
 
 **Proxy request path:**
 ```
-Client → axum handler → HandleMessages use case → LiveProvider
-  → RoutingProvider (glob match on model) → AnthropicProvider/ZaiProvider
-  → messages_protocol::forward (auth injection, streaming/buffered)
-  → Upstream (api.anthropic.com) → response → usage logging
+Client → axum handler (`/v1/messages` or `/v1/chat/completions`)
+  → HandleMessages use case (ApiFormat::Anthropic | ApiFormat::OpenAI)
+  → LiveProvider → RoutingProvider (namespace override → glob match
+    → priority + round-robin load balancing with 429 cooldown)
+  → AnthropicProvider/ZaiProvider
+  → messages_protocol::forward / forward_openai (auth injection,
+    streaming/buffered)
+  → Upstream → response → usage logging
 ```
 
 **OAuth token lifecycle:**
@@ -144,9 +153,10 @@ Detailed conventions live in `.claude/rules/`:
 
 ## Design docs
 
-- **Workspace + proxy MVP** — spec `docs/superpowers/specs/2026-05-02-workspace-and-proxy-mvp-design.md`, plan `docs/superpowers/plans/2026-05-02-workspace-and-proxy-mvp.md`.
-- **Proxy clean-architecture refactor** — spec `docs/superpowers/specs/2026-05-02-proxy-clean-architecture-design.md`, plan `docs/superpowers/plans/2026-05-02-proxy-clean-architecture.md`.
+- **Proxy usage guide** — `docs/proxy-usage.md` (config examples, OAuth, namespace routing, load balancing, priority).
 - **OAuth refresh token support** — plan `docs/superpowers/plans/2026-05-03-oauth-refresh-token.md`.
-- **Technical debt** — `docs/tech-debt.md`.
+- **Provider namespace routing** — spec `docs/superpowers/specs/2026-05-03-provider-namespace-design.md`, plan `docs/superpowers/plans/2026-05-03-provider-namespace.md`.
+- **Load balancing** — spec `docs/superpowers/specs/2026-05-03-load-balancing-design.md`.
+- **OpenAI chat completions endpoint** — spec `docs/superpowers/specs/2026-05-03-openai-chat-completions-design.md`, plan `docs/superpowers/plans/2026-05-03-openai-chat-completions.md`.
 
 Consult these for motivation before changing data shapes, ring boundaries, or proxy contracts.
