@@ -96,8 +96,8 @@ fn dummy_admin_state_with_path(
     use proxy::adapters::providers::{AnthropicProvider, LiveProvider};
     use proxy::application::ports::{Provider, RequestLogReadPort};
     use proxy::application::use_cases::{
-        CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, GetUsageSummary,
-        StartAnthropicOAuth, TestProvider, UpdateConfig,
+        CompleteAnthropicOAuth, GetConfig, GetQuotaStatus, GetRecentRequests, GetStatus,
+        GetUsageSummary, StartAnthropicOAuth, TestProvider, UpdateConfig,
     };
     use proxy::config::Config;
     use std::path::PathBuf;
@@ -136,7 +136,10 @@ fn dummy_admin_state_with_path(
             config_path,
             live,
         )),
-        usage_summary: Arc::new(GetUsageSummary::new(read)),
+        usage_summary: Arc::new(GetUsageSummary::new(read.clone())),
+        quota_status: Arc::new(GetQuotaStatus::new(Arc::new(
+            proxy::adapters::quota::InMemoryQuota::new(vec![]),
+        ))),
     }
 }
 
@@ -364,8 +367,8 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
     use proxy::adapters::providers::{LiveProvider, build_from_config};
     use proxy::application::ports::Provider;
     use proxy::application::use_cases::{
-        CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, GetUsageSummary,
-        StartAnthropicOAuth, TestProvider, UpdateConfig,
+        CompleteAnthropicOAuth, GetConfig, GetQuotaStatus, GetRecentRequests, GetStatus,
+        GetUsageSummary, StartAnthropicOAuth, TestProvider, UpdateConfig,
     };
     use proxy::config::{
         AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule, RoutingStrategy,
@@ -478,7 +481,10 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             path.clone(),
             live,
         )),
-        usage_summary: Arc::new(GetUsageSummary::new(read)),
+        usage_summary: Arc::new(GetUsageSummary::new(read.clone())),
+        quota_status: Arc::new(GetQuotaStatus::new(Arc::new(
+            proxy::adapters::quota::InMemoryQuota::new(vec![]),
+        ))),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
