@@ -377,7 +377,7 @@ impl RoutingProvider {
             .min()
             .unwrap_or(DEFAULT_COOLDOWN_SECS * 1000);
 
-        let retry_after_secs = (min_remaining + 999) / 1000; // ceil division
+        let retry_after_secs = min_remaining.div_ceil(1000);
 
         Err(ProxyError::UpstreamRateLimited {
             retry_after_secs,
