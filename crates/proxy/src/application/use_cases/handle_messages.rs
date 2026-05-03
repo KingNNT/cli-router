@@ -100,11 +100,20 @@ impl HandleMessages {
                     .await?
             }
             ApiFormat::OpenAI => {
+                // OpenAI providers only emit `usage` in the stream when the
+                // request body sets `stream_options: {"include_usage": true}`.
+                // Inject it transparently for streaming requests so logged
+                // token counts aren't NULL.
+                let outbound_body = if streaming {
+                    ensure_include_usage(&input.body)
+                } else {
+                    input.body.clone()
+                };
                 self.provider
                     .forward_openai(
                         "/chat/completions",
                         &input.headers,
-                        input.body.clone(),
+                        outbound_body,
                         streaming,
                     )
                     .await?
@@ -116,12 +125,19 @@ impl HandleMessages {
                 status,
                 headers,
                 body,
-            } => self.handle_buffered(request_id, model, status, headers, body),
+            } => self.handle_buffered(request_id, model, status, headers, body, input.api_format),
             UpstreamResponse::Streaming {
                 status,
                 headers,
                 body,
-            } => Ok(self.handle_streaming(request_id, model, status, headers, body)),
+            } => Ok(self.handle_streaming(
+                request_id,
+                model,
+                status,
+                headers,
+                body,
+                input.api_format,
+            )),
         }
     }
 
@@ -132,9 +148,16 @@ impl HandleMessages {
         status: u16,
         headers: HeaderMap,
         body: Bytes,
+        api_format: ApiFormat,
     ) -> Result<HandleMessagesOutput, ProxyError> {
         if (200..300).contains(&status) {
-            let usage = self.provider.parse_usage_json(&body).unwrap_or_default();
+            let usage = match api_format {
+                ApiFormat::Anthropic => self.provider.parse_usage_json(&body).unwrap_or_default(),
+                ApiFormat::OpenAI => self
+                    .provider
+                    .parse_usage_json_openai(&body)
+                    .unwrap_or_default(),
+            };
             let cost = compute_cost(&self.pricing, &model, &usage);
             let req_usage = to_request_usage(&usage, cost);
             if let Err(e) = self
@@ -173,8 +196,12 @@ impl HandleMessages {
         status: u16,
         headers: HeaderMap,
         body: BoxedByteStream,
+        api_format: ApiFormat,
     ) -> HandleMessagesOutput {
-        let parser = self.provider.usage_parser();
+        let parser = match api_format {
+            ApiFormat::Anthropic => self.provider.usage_parser(),
+            ApiFormat::OpenAI => self.provider.usage_parser_openai(),
+        };
         let pricing = self.pricing.clone();
         let request_log = self.request_log.clone();
         let clock = self.clock.clone();
@@ -211,6 +238,28 @@ fn is_streaming(body: &[u8]) -> bool {
         .ok()
         .and_then(|v| v.get("stream").and_then(|s| s.as_bool()))
         .unwrap_or(false)
+}
+
+/// Inject `stream_options: {"include_usage": true}` into an OpenAI-format
+/// request body. OpenAI providers only emit token counts on the final SSE
+/// chunk when this flag is set; without it, the proxy can't log usage for
+/// streaming requests. Non-JSON or non-object bodies are returned verbatim.
+fn ensure_include_usage(body: &Bytes) -> Bytes {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return body.clone();
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return body.clone();
+    };
+    let stream_options = obj
+        .entry("stream_options".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if let Some(so_obj) = stream_options.as_object_mut() {
+        so_obj.insert("include_usage".to_string(), serde_json::json!(true));
+    }
+    serde_json::to_vec(&value)
+        .map(Bytes::from)
+        .unwrap_or_else(|_| body.clone())
 }
 
 fn to_request_usage(usage: &UsageRecord, cost_usd: Option<f64>) -> RequestUsage {
@@ -495,6 +544,77 @@ mod tests {
             HandleMessagesOutput::Streaming { status: 200, .. }
         ));
         // Don't drive the stream here — just confirm shape. Drop tests are in stream.rs.
+    }
+
+    fn parse_json(b: &Bytes) -> serde_json::Value {
+        serde_json::from_slice(b).expect("ensure_include_usage must emit valid json")
+    }
+
+    #[test]
+    fn ensure_include_usage_adds_field_when_missing() {
+        let body = Bytes::from_static(br#"{"model":"glm-4.6","stream":true}"#);
+        let out = ensure_include_usage(&body);
+        let v = parse_json(&out);
+        assert_eq!(
+            v["stream_options"]["include_usage"],
+            serde_json::json!(true)
+        );
+        assert_eq!(v["model"], serde_json::json!("glm-4.6"));
+        assert_eq!(v["stream"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn ensure_include_usage_fills_empty_stream_options() {
+        let body = Bytes::from_static(br#"{"stream":true,"stream_options":{}}"#);
+        let out = ensure_include_usage(&body);
+        let v = parse_json(&out);
+        assert_eq!(
+            v["stream_options"]["include_usage"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn ensure_include_usage_flips_existing_false_value() {
+        let body =
+            Bytes::from_static(br#"{"stream":true,"stream_options":{"include_usage":false}}"#);
+        let out = ensure_include_usage(&body);
+        let v = parse_json(&out);
+        assert_eq!(
+            v["stream_options"]["include_usage"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn ensure_include_usage_preserves_other_stream_options_keys() {
+        let body = Bytes::from_static(
+            br#"{"stream":true,"stream_options":{"include_usage":true,"continuous_usage_stats":true}}"#,
+        );
+        let out = ensure_include_usage(&body);
+        let v = parse_json(&out);
+        assert_eq!(
+            v["stream_options"]["include_usage"],
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            v["stream_options"]["continuous_usage_stats"],
+            serde_json::json!(true)
+        );
+    }
+
+    #[test]
+    fn ensure_include_usage_returns_non_json_body_unchanged() {
+        let body = Bytes::from_static(b"not json at all");
+        let out = ensure_include_usage(&body);
+        assert_eq!(out, body);
+    }
+
+    #[test]
+    fn ensure_include_usage_returns_non_object_json_unchanged() {
+        let body = Bytes::from_static(br#"["this","is","an","array"]"#);
+        let out = ensure_include_usage(&body);
+        assert_eq!(out, body);
     }
 
     #[tokio::test]

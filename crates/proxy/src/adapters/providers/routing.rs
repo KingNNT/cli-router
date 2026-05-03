@@ -195,6 +195,14 @@ impl Provider for RoutingProvider {
         messages_protocol::parse_usage_json(body)
     }
 
+    fn usage_parser_openai(&self) -> Box<dyn UsageParser> {
+        messages_protocol::openai_usage_parser()
+    }
+
+    fn parse_usage_json_openai(&self, body: &[u8]) -> Result<UsageRecord, String> {
+        messages_protocol::parse_openai_usage_json(body)
+    }
+
     async fn forward(
         &self,
         path: &str,
