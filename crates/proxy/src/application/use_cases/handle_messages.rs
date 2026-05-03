@@ -102,7 +102,7 @@ impl HandleMessages {
             ApiFormat::OpenAI => {
                 self.provider
                     .forward_openai(
-                        "/v1/chat/completions",
+                        "/chat/completions",
                         &input.headers,
                         input.body.clone(),
                         streaming,
