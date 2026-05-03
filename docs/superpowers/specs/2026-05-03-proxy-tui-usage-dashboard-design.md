@@ -116,9 +116,10 @@ sentinels to the resolved upstream is a separate concern — out of scope here.
 
 ## Internal port and use case (proxy ring)
 
-Extend the existing `RequestLogPort` (single trait, write + read together).
-The existing methods are sync (`fn insert_started`, `fn complete`, `fn fail`)
-and return `Result<(), ProxyError>` — the new method follows that pattern:
+Extend the existing `RequestLogReadPort` (separate from the write-side
+`RequestLogPort`; both already exist in `proxy/src/application/ports/`).
+Read methods are sync and return `Result<T, ProxyError>` — the new method
+follows that pattern:
 
 ```rust
 fn summarize(
