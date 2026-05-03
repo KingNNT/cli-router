@@ -77,10 +77,19 @@ fn draw_status(f: &mut Frame, area: Rect, status: Option<&Result<StatusResponse,
         ))],
         Some(Ok(s)) => {
             let started = format_ms(s.started_at_ms);
+            let affinity_line = if s.affinity.enabled {
+                format!(
+                    "Affinity: enabled ({} headers + body fallback)",
+                    s.affinity.headers.len()
+                )
+            } else {
+                "Affinity: disabled (round-robin)".to_string()
+            };
             let mut v = vec![
                 Line::from(format!("Started:        {started}")),
                 Line::from(format!("Uptime:         {} s", s.uptime_seconds)),
                 Line::from(format!("Total requests: {}", s.total_requests)),
+                Line::from(affinity_line),
                 Line::from(""),
                 Line::from(Span::styled(
                     "By provider",
