@@ -2,7 +2,7 @@
 
 use crate::application::errors::ProxyError;
 use crate::application::ports::RequestLogPort;
-use crate::domain::{RequestStart, RequestUsage};
+use crate::domain::{DailyTotal, ModelTotal, RequestStart, RequestUsage, UsageSummary};
 use rusqlite::{Connection, params};
 use std::sync::{Arc, Mutex};
 
@@ -141,6 +141,100 @@ impl crate::application::ports::RequestLogReadPort for SqliteRequestLogRepositor
         }
         Ok(out)
     }
+
+    fn summarize(&self, from_ms: i64, to_ms: i64) -> Result<UsageSummary, ProxyError> {
+        let conn = self.conn.lock().expect("repo mutex poisoned");
+
+        let daily = query_daily(&conn, from_ms, to_ms)?;
+        let models = query_models(&conn, from_ms, to_ms)?;
+
+        Ok(UsageSummary {
+            from_ms,
+            to_ms,
+            daily,
+            models,
+        })
+    }
+}
+
+fn query_daily(
+    conn: &rusqlite::Connection,
+    from_ms: i64,
+    to_ms: i64,
+) -> Result<Vec<DailyTotal>, ProxyError> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT
+            date(started_at / 1000, 'unixepoch', 'localtime') AS d,
+            COUNT(*)                                             AS reqs,
+            COALESCE(SUM(input_tokens),          0)              AS input_tokens,
+            COALESCE(SUM(output_tokens),         0)              AS output_tokens,
+            COALESCE(SUM(cache_read_tokens),     0)              AS cache_read_tokens,
+            COALESCE(SUM(cache_creation_tokens), 0)              AS cache_creation_tokens,
+            COALESCE(SUM(cost_usd),              0.0)            AS cost_usd
+        FROM requests
+        WHERE status = 'completed'
+          AND started_at BETWEEN ?1 AND ?2
+        GROUP BY d
+        ORDER BY d ASC
+        "#,
+    )?;
+
+    let rows = stmt
+        .query_map([from_ms, to_ms], |row| {
+            Ok(DailyTotal {
+                date: row.get(0)?,
+                requests: row.get::<_, i64>(1)? as u64,
+                input_tokens: row.get::<_, i64>(2)? as u64,
+                output_tokens: row.get::<_, i64>(3)? as u64,
+                cache_read_tokens: row.get::<_, i64>(4)? as u64,
+                cache_creation_tokens: row.get::<_, i64>(5)? as u64,
+                cost_usd: row.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn query_models(
+    conn: &rusqlite::Connection,
+    from_ms: i64,
+    to_ms: i64,
+) -> Result<Vec<ModelTotal>, ProxyError> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT
+            model,
+            provider,
+            COUNT(*)                                             AS reqs,
+            COALESCE(SUM(input_tokens),          0)              AS input_tokens,
+            COALESCE(SUM(output_tokens),         0)              AS output_tokens,
+            COALESCE(SUM(cache_read_tokens),     0)              AS cache_read_tokens,
+            COALESCE(SUM(cache_creation_tokens), 0)              AS cache_creation_tokens,
+            COALESCE(SUM(cost_usd),              0.0)            AS cost_usd
+        FROM requests
+        WHERE status = 'completed'
+          AND started_at BETWEEN ?1 AND ?2
+        GROUP BY model, provider
+        ORDER BY cost_usd DESC, model ASC
+        "#,
+    )?;
+
+    let rows = stmt
+        .query_map([from_ms, to_ms], |row| {
+            Ok(ModelTotal {
+                model: row.get(0)?,
+                provider: row.get(1)?,
+                requests: row.get::<_, i64>(2)? as u64,
+                input_tokens: row.get::<_, i64>(3)? as u64,
+                output_tokens: row.get::<_, i64>(4)? as u64,
+                cache_read_tokens: row.get::<_, i64>(5)? as u64,
+                cache_creation_tokens: row.get::<_, i64>(6)? as u64,
+                cost_usd: row.get(7)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 fn count_grouped(
@@ -169,11 +263,82 @@ fn count_grouped(
 mod tests {
     use super::*;
     use crate::adapters::storage::schema::ensure_current;
+    use crate::application::ports::RequestLogReadPort;
+
+    fn open_in_memory() -> Connection {
+        Connection::open_in_memory().unwrap()
+    }
 
     fn fresh() -> SqliteRequestLogRepository {
-        let conn = Connection::open_in_memory().unwrap();
+        let conn = open_in_memory();
         ensure_current(&conn).unwrap();
         SqliteRequestLogRepository::new(Arc::new(Mutex::new(conn)))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn seed_completed(
+        conn: &rusqlite::Connection,
+        id: &str,
+        started_at_ms: i64,
+        provider: &str,
+        model: &str,
+        input: i64,
+        output: i64,
+        cache_read: i64,
+        cache_creation: i64,
+        cost: f64,
+    ) {
+        conn.execute(
+            r#"
+            INSERT INTO requests
+                (id, user_id, api_key_id, provider, model, status,
+                 started_at, finished_at, error_message,
+                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                 cost_usd)
+            VALUES
+                (?1, 1, NULL, ?2, ?3, 'completed',
+                 ?4, ?4, NULL,
+                 ?5, ?6, ?7, ?8,
+                 ?9)
+            "#,
+            rusqlite::params![
+                id,
+                provider,
+                model,
+                started_at_ms,
+                input,
+                output,
+                cache_read,
+                cache_creation,
+                cost,
+            ],
+        )
+        .unwrap();
+    }
+
+    fn seed_errored(
+        conn: &rusqlite::Connection,
+        id: &str,
+        started_at_ms: i64,
+        provider: &str,
+        model: &str,
+    ) {
+        conn.execute(
+            r#"
+            INSERT INTO requests
+                (id, user_id, api_key_id, provider, model, status,
+                 started_at, finished_at, error_message,
+                 input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                 cost_usd)
+            VALUES
+                (?1, 1, NULL, ?2, ?3, 'errored',
+                 ?4, ?4, 'boom',
+                 NULL, NULL, NULL, NULL,
+                 NULL)
+            "#,
+            rusqlite::params![id, provider, model, started_at_ms],
+        )
+        .unwrap();
     }
 
     fn local_user_id(repo: &SqliteRequestLogRepository) -> i64 {
@@ -287,5 +452,135 @@ mod tests {
         assert_eq!(msg, "client disconnected");
         assert_eq!(input, 10);
         assert_eq!(output, None);
+    }
+
+    #[test]
+    fn summarize_empty_db_returns_empty_arrays() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+        let repo = SqliteRequestLogRepository::new(Arc::new(Mutex::new(conn)));
+
+        let summary = repo.summarize(0, i64::MAX).unwrap();
+
+        assert_eq!(summary.from_ms, 0);
+        assert_eq!(summary.to_ms, i64::MAX);
+        assert!(summary.daily.is_empty());
+        assert!(summary.models.is_empty());
+    }
+
+    #[test]
+    fn summarize_single_completed_row_aggregates_into_one_daily_and_one_model() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+        seed_completed(
+            &conn,
+            "req-1",
+            1_730_000_000_000, // 2024-10-27 in UTC; local tz may differ
+            "anthropic",
+            "claude-opus-4-5",
+            1_000,
+            200,
+            5_000,
+            0,
+            0.42,
+        );
+        let repo = SqliteRequestLogRepository::new(Arc::new(Mutex::new(conn)));
+
+        let summary = repo.summarize(0, i64::MAX).unwrap();
+
+        assert_eq!(summary.daily.len(), 1, "expected one daily bucket");
+        let d = &summary.daily[0];
+        assert_eq!(d.requests, 1);
+        assert_eq!(d.input_tokens, 1_000);
+        assert_eq!(d.output_tokens, 200);
+        assert_eq!(d.cache_read_tokens, 5_000);
+        assert_eq!(d.cache_creation_tokens, 0);
+        assert!((d.cost_usd - 0.42).abs() < 1e-9);
+
+        assert_eq!(summary.models.len(), 1);
+        let m = &summary.models[0];
+        assert_eq!(m.model, "claude-opus-4-5");
+        assert_eq!(m.provider, "anthropic");
+        assert_eq!(m.requests, 1);
+        assert!((m.cost_usd - 0.42).abs() < 1e-9);
+    }
+
+    #[test]
+    fn summarize_excludes_errored_and_started_rows() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+
+        // 'started' row (no completion data)
+        conn.execute(
+            r#"INSERT INTO requests
+               (id, user_id, provider, model, status, started_at)
+               VALUES ('s1', 1, 'anthropic', 'claude-opus-4-5', 'started', 1730000000000)"#,
+            [],
+        )
+        .unwrap();
+        seed_errored(
+            &conn,
+            "e1",
+            1_730_000_000_000,
+            "anthropic",
+            "claude-opus-4-5",
+        );
+        seed_completed(
+            &conn,
+            "c1",
+            1_730_000_000_000,
+            "anthropic",
+            "claude-opus-4-5",
+            100,
+            50,
+            0,
+            0,
+            0.10,
+        );
+        let repo = SqliteRequestLogRepository::new(Arc::new(Mutex::new(conn)));
+
+        let summary = repo.summarize(0, i64::MAX).unwrap();
+
+        assert_eq!(summary.daily.len(), 1);
+        assert_eq!(
+            summary.daily[0].requests, 1,
+            "only the completed row should count"
+        );
+        assert_eq!(summary.models.len(), 1);
+        assert_eq!(summary.models[0].requests, 1);
+    }
+
+    #[test]
+    fn summarize_excludes_rows_outside_range() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+
+        seed_completed(&conn, "before", 1_000, "anthropic", "m", 1, 1, 0, 0, 0.01);
+        seed_completed(&conn, "in-1", 2_000, "anthropic", "m", 1, 1, 0, 0, 0.01);
+        seed_completed(&conn, "in-2", 3_000, "anthropic", "m", 1, 1, 0, 0, 0.01);
+        seed_completed(&conn, "after", 4_000, "anthropic", "m", 1, 1, 0, 0, 0.01);
+        let repo = SqliteRequestLogRepository::new(Arc::new(Mutex::new(conn)));
+
+        let summary = repo.summarize(2_000, 3_000).unwrap();
+
+        let total: u64 = summary.daily.iter().map(|d| d.requests).sum();
+        assert_eq!(total, 2, "boundaries inclusive, outside excluded");
+        assert_eq!(summary.models[0].requests, 2);
+    }
+
+    #[test]
+    fn summarize_orders_models_by_cost_desc() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+
+        seed_completed(&conn, "a1", 1_000, "anthropic", "low", 1, 1, 0, 0, 0.10);
+        seed_completed(&conn, "a2", 1_000, "anthropic", "high", 1, 1, 0, 0, 5.00);
+        seed_completed(&conn, "a3", 1_000, "anthropic", "mid", 1, 1, 0, 0, 1.00);
+        let repo = SqliteRequestLogRepository::new(Arc::new(Mutex::new(conn)));
+
+        let summary = repo.summarize(0, i64::MAX).unwrap();
+
+        let names: Vec<_> = summary.models.iter().map(|m| m.model.clone()).collect();
+        assert_eq!(names, vec!["high", "mid", "low"]);
     }
 }

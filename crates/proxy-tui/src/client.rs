@@ -7,7 +7,7 @@
 use proxy_admin_api::{
     CompleteOAuthRequest, CompleteOAuthResponse, ConfigPayload, RecentRequestsResponse,
     StartOAuthRequest, StartOAuthResponse, StatusResponse, TestProviderRequest,
-    TestProviderResponse,
+    TestProviderResponse, UsageSummaryResponse,
 };
 use thiserror::Error;
 
@@ -53,6 +53,17 @@ impl AdminClient {
     pub fn get_recent(&self, limit: u32) -> Result<RecentRequestsResponse, ClientError> {
         get_json(&format!(
             "{}/admin/requests/recent?limit={limit}",
+            self.base_url
+        ))
+    }
+
+    pub fn get_usage_summary(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<UsageSummaryResponse, ClientError> {
+        get_json(&format!(
+            "{}/admin/usage/summary?from={from_ms}&to={to_ms}",
             self.base_url
         ))
     }
@@ -123,5 +134,53 @@ fn map_ureq_err(e: ureq::Error) -> ClientError {
             ClientError::Status(code, msg)
         }
         ureq::Error::Transport(t) => ClientError::Transport(t.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod usage_summary_client_tests {
+    use super::*;
+    use proxy_admin_api::{DailyUsageRow, ModelUsageRow, UsageSummaryResponse};
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn get_usage_summary_calls_endpoint_and_decodes_response() {
+        let server = MockServer::start().await;
+        let payload = UsageSummaryResponse {
+            from_ms: 100,
+            to_ms: 200,
+            daily: vec![DailyUsageRow {
+                date: "2026-05-03".into(),
+                requests: 1,
+                input_tokens: 1,
+                output_tokens: 1,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+                cost_usd: 0.01,
+            }],
+            models: vec![ModelUsageRow {
+                model: "m".into(),
+                provider: "anthropic".into(),
+                requests: 1,
+                input_tokens: 1,
+                output_tokens: 1,
+                cache_read_tokens: 0,
+                cache_creation_tokens: 0,
+                cost_usd: 0.01,
+            }],
+        };
+
+        Mock::given(method("GET"))
+            .and(path("/admin/usage/summary"))
+            .and(query_param("from", "100"))
+            .and(query_param("to", "200"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&payload))
+            .mount(&server)
+            .await;
+
+        let client = AdminClient::new(server.uri());
+        let got = client.get_usage_summary(100, 200).unwrap();
+        assert_eq!(got, payload);
     }
 }

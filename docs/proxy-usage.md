@@ -116,6 +116,40 @@ fallback = ["zai"]
 - `glm-*` models → Z.ai
 - Everything else → Anthropic, with Z.ai as fallback on 5xx
 
+### Z.ai Coding Plan vs Pay-As-You-Go
+
+Z.ai routes requests to different billing ledgers based on the auth header:
+
+| Auth header sent | Billed against |
+|---|---|
+| `Authorization: Bearer <token>` | Coding Plan quota |
+| `x-api-key: <token>` | Pay-as-you-go balance |
+
+If you're on the **GLM Coding Plan**, you need *both* of:
+
+1. `type = "bearer"` — not `type = "api_key"`. Z.ai routes the two headers to different ledgers.
+2. `openai_base_url = "https://api.z.ai/api/coding/paas/v4"` — the `coding/` prefix is what selects the Coding Plan ledger for OpenAI-format requests. Without it, requests hit the PAYG ledger.
+
+```toml
+[[providers]]
+name = "zai"
+kind = "zai"
+auth = { type = "bearer", value = "${ZAI_CODING_PLAN_TOKEN}" }
+openai_base_url = "https://api.z.ai/api/coding/paas/v4"
+```
+
+The default Anthropic-compatible URL (`https://api.z.ai/api/anthropic`) already routes to the Coding Plan when authenticated with Bearer, so no override is needed for clients that speak Anthropic format.
+
+| Endpoint | Coding Plan | PAYG |
+|---|---|---|
+| `https://api.z.ai/api/anthropic/v1/messages` | ✓ | ✓ |
+| `https://api.z.ai/api/coding/paas/v4/chat/completions` | ✓ | — |
+| `https://api.z.ai/api/paas/v4/chat/completions` | — | ✓ |
+
+A Coding Plan request that lands on the PAYG endpoint surfaces as `1113 Insufficient balance or no resource package` even when the plan has quota.
+
+Pay-as-you-go users can use either header on `/api/paas/v4`; `type = "api_key"` matches the Anthropic SDK default.
+
 ---
 
 ## Multiple Accounts

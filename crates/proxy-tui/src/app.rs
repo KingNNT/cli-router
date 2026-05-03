@@ -5,7 +5,7 @@
 
 use proxy_admin_api::{
     AuthPayload, ConfigPayload, ProviderPayload, RecentRequestsResponse, StatusResponse,
-    TestProviderResponse,
+    TestProviderResponse, UsageSummaryResponse,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,6 +14,7 @@ pub enum View {
     Providers,
     Routing,
     Requests,
+    Usage,
 }
 
 impl View {
@@ -23,11 +24,59 @@ impl View {
             View::Providers => "Providers",
             View::Routing => "Routing",
             View::Requests => "Requests",
+            View::Usage => "Usage",
         }
     }
 }
 
-pub const ALL_VIEWS: &[View] = &[View::Status, View::Providers, View::Routing, View::Requests];
+pub const ALL_VIEWS: &[View] = &[
+    View::Status,
+    View::Providers,
+    View::Routing,
+    View::Requests,
+    View::Usage,
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RangePreset {
+    Today,
+    D7,
+    D30,
+    All,
+}
+
+impl RangePreset {
+    pub fn label(self) -> &'static str {
+        match self {
+            RangePreset::Today => "Today",
+            RangePreset::D7 => "7d",
+            RangePreset::D30 => "30d",
+            RangePreset::All => "All",
+        }
+    }
+
+    /// Resolve the preset to an inclusive `(from_ms, to_ms)` window using the
+    /// supplied "now" (epoch ms in local timezone). Splitting `now` out makes
+    /// this trivially testable with deterministic times.
+    pub fn to_range(self, now_ms: i64, local_midnight_ms: i64) -> (i64, i64) {
+        const DAY_MS: i64 = 86_400_000;
+        match self {
+            RangePreset::Today => (local_midnight_ms, now_ms),
+            RangePreset::D7 => (now_ms - 7 * DAY_MS, now_ms),
+            RangePreset::D30 => (now_ms - 30 * DAY_MS, now_ms),
+            RangePreset::All => (0, now_ms),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct UsagePaneState {
+    pub range_preset: Option<RangePreset>,
+    pub summary: Option<UsageSummaryResponse>,
+    pub table_offset: usize,
+    pub last_error: Option<String>,
+    pub loading: bool,
+}
 
 #[derive(Debug, Clone)]
 pub enum Modal {
@@ -133,6 +182,7 @@ pub struct AppState {
     pub recent: Option<Result<RecentRequestsResponse, String>>,
     pub providers_selected: usize,
     pub requests_selected: usize,
+    pub usage: UsagePaneState,
     pub flash: Option<String>,
     pub should_quit: bool,
 }
@@ -147,6 +197,7 @@ impl AppState {
             recent: None,
             providers_selected: 0,
             requests_selected: 0,
+            usage: UsagePaneState::default(),
             flash: None,
             should_quit: false,
         }
@@ -224,5 +275,31 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod range_preset_tests {
+    use super::*;
+
+    #[test]
+    fn today_uses_local_midnight_to_now() {
+        let now = 1_730_086_400_000;
+        let midnight = 1_730_073_600_000;
+        assert_eq!(RangePreset::Today.to_range(now, midnight), (midnight, now));
+    }
+
+    #[test]
+    fn d7_subtracts_seven_days() {
+        let now = 1_730_086_400_000;
+        let (from, to) = RangePreset::D7.to_range(now, 0);
+        assert_eq!(to, now);
+        assert_eq!(now - from, 7 * 86_400_000);
+    }
+
+    #[test]
+    fn all_starts_at_epoch() {
+        let now = 1_730_086_400_000;
+        assert_eq!(RangePreset::All.to_range(now, 0), (0, now));
     }
 }

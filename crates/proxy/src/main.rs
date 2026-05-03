@@ -7,8 +7,8 @@ use proxy::adapters::providers::{LiveProvider, build_from_config};
 use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
 use proxy::application::ports::{Provider, RequestLogPort, RequestLogReadPort};
 use proxy::application::use_cases::{
-    CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, HandleMessages,
-    StartAnthropicOAuth, TestProvider, UpdateConfig,
+    CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, GetUsageSummary,
+    HandleMessages, StartAnthropicOAuth, TestProvider, UpdateConfig,
 };
 use proxy::config::Config;
 use proxy::frameworks::AdminState;
@@ -97,6 +97,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         live.clone(),
     );
 
+    let usage_summary = Arc::new(GetUsageSummary::new(request_read.clone()));
+
     let admin = AdminState {
         get_status: Arc::new(GetStatus::new(request_read.clone(), now_epoch_ms())),
         get_config: Arc::new(GetConfig::new(cfg_lock.clone())),
@@ -116,6 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             config_path,
             live,
         )),
+        usage_summary,
     };
 
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;

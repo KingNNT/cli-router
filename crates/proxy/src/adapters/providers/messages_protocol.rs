@@ -103,6 +103,40 @@ impl UsageParser for SseUsageParser {
     }
 }
 
+pub(super) fn parse_openai_usage_json(body: &[u8]) -> Result<UsageRecord, String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(body).map_err(|e| format!("invalid json: {e}"))?;
+    let usage = value.get("usage").ok_or("missing 'usage' field")?;
+    let get = |k: &str| usage.get(k).and_then(|v| v.as_u64());
+    let cached = usage
+        .get("prompt_tokens_details")
+        .and_then(|d| d.get("cached_tokens"))
+        .and_then(|v| v.as_u64());
+    Ok(UsageRecord {
+        input_tokens: get("prompt_tokens"),
+        output_tokens: get("completion_tokens"),
+        cache_creation_tokens: None,
+        cache_read_tokens: cached,
+    })
+}
+
+pub(super) fn openai_usage_parser() -> Box<dyn UsageParser> {
+    Box::new(OpenAiUsageParser(
+        crate::adapters::usage::openai_sse::OpenAiSseParser::new(),
+    ))
+}
+
+struct OpenAiUsageParser(crate::adapters::usage::openai_sse::OpenAiSseParser);
+
+impl UsageParser for OpenAiUsageParser {
+    fn feed(&mut self, chunk: &[u8]) {
+        self.0.feed(chunk);
+    }
+    fn finish(self: Box<Self>) -> UsageRecord {
+        UsageRecord::from(self.0.state)
+    }
+}
+
 pub(super) async fn forward(
     http: &reqwest::Client,
     base_url: &str,
@@ -323,5 +357,52 @@ mod tests {
         assert!(!AuthHeader::Passthrough.is_expired(300));
         assert!(!AuthHeader::ApiKey("k".into()).is_expired(300));
         assert!(!AuthHeader::Bearer("b".into()).is_expired(300));
+    }
+
+    #[test]
+    fn parse_openai_usage_json_extracts_all_fields() {
+        let body = br#"{
+            "id":"chatcmpl-1","object":"chat.completion","choices":[],
+            "usage":{
+                "prompt_tokens": 6,
+                "completion_tokens": 10,
+                "total_tokens": 16,
+                "prompt_tokens_details": { "cached_tokens": 2 }
+            }
+        }"#;
+        let u = parse_openai_usage_json(body).unwrap();
+        assert_eq!(u.input_tokens, Some(6));
+        assert_eq!(u.output_tokens, Some(10));
+        assert_eq!(u.cache_read_tokens, Some(2));
+        assert_eq!(u.cache_creation_tokens, None);
+    }
+
+    #[test]
+    fn parse_openai_usage_json_handles_missing_prompt_tokens_details() {
+        let body = br#"{"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}"#;
+        let u = parse_openai_usage_json(body).unwrap();
+        assert_eq!(u.input_tokens, Some(1));
+        assert_eq!(u.output_tokens, Some(2));
+        assert_eq!(u.cache_read_tokens, None);
+        assert_eq!(u.cache_creation_tokens, None);
+    }
+
+    #[test]
+    fn parse_openai_usage_json_errors_when_usage_missing() {
+        let body = br#"{"id":"chatcmpl-1","choices":[]}"#;
+        assert!(parse_openai_usage_json(body).is_err());
+    }
+
+    #[test]
+    fn openai_usage_parser_collects_streaming_usage() {
+        let mut p = openai_usage_parser();
+        p.feed(b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n");
+        p.feed(b"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":8,\"prompt_tokens_details\":{\"cached_tokens\":1}}}\n");
+        p.feed(b"data: [DONE]\n");
+        let rec = p.finish();
+        assert_eq!(rec.input_tokens, Some(4));
+        assert_eq!(rec.output_tokens, Some(8));
+        assert_eq!(rec.cache_read_tokens, Some(1));
+        assert_eq!(rec.cache_creation_tokens, None);
     }
 }

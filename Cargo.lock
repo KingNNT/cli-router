@@ -1275,6 +1275,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
+ "tower",
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
@@ -1300,8 +1301,11 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_json",
+ "shared",
  "thiserror 1.0.69",
+ "tokio",
  "ureq",
+ "wiremock",
 ]
 
 [[package]]

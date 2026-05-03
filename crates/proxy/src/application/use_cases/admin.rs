@@ -89,6 +89,60 @@ impl GetRecentRequests {
     }
 }
 
+// ---- GetUsageSummary ----
+
+pub struct GetUsageSummary {
+    read: Arc<dyn RequestLogReadPort>,
+}
+
+impl GetUsageSummary {
+    pub fn new(read: Arc<dyn RequestLogReadPort>) -> Self {
+        Self { read }
+    }
+
+    pub fn execute(
+        &self,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<proxy_admin_api::UsageSummaryResponse, ProxyError> {
+        if from_ms > to_ms {
+            return Err(ProxyError::BadRequest("from must be <= to".into()));
+        }
+        let s = self.read.summarize(from_ms, to_ms)?;
+        Ok(proxy_admin_api::UsageSummaryResponse {
+            from_ms: s.from_ms,
+            to_ms: s.to_ms,
+            daily: s
+                .daily
+                .into_iter()
+                .map(|d| proxy_admin_api::DailyUsageRow {
+                    date: d.date,
+                    requests: d.requests,
+                    input_tokens: d.input_tokens,
+                    output_tokens: d.output_tokens,
+                    cache_read_tokens: d.cache_read_tokens,
+                    cache_creation_tokens: d.cache_creation_tokens,
+                    cost_usd: d.cost_usd,
+                })
+                .collect(),
+            models: s
+                .models
+                .into_iter()
+                .map(|m| proxy_admin_api::ModelUsageRow {
+                    model: m.model,
+                    provider: m.provider,
+                    requests: m.requests,
+                    input_tokens: m.input_tokens,
+                    output_tokens: m.output_tokens,
+                    cache_read_tokens: m.cache_read_tokens,
+                    cache_creation_tokens: m.cache_creation_tokens,
+                    cost_usd: m.cost_usd,
+                })
+                .collect(),
+        })
+    }
+}
+
 // ---- UpdateConfig ----
 
 pub struct UpdateConfig {
@@ -544,7 +598,7 @@ fn payload_to_auth(a: AuthPayload) -> AuthConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::RequestRow;
+    use crate::domain::{DailyTotal, ModelTotal, RequestRow, UsageSummary};
     use std::collections::BTreeMap;
 
     struct StubRead {
@@ -565,6 +619,31 @@ mod tests {
         }
         fn recent(&self, _: u32) -> Result<Vec<RequestRow>, ProxyError> {
             Ok(self.rows.clone())
+        }
+        fn summarize(&self, from_ms: i64, to_ms: i64) -> Result<UsageSummary, ProxyError> {
+            Ok(UsageSummary {
+                from_ms,
+                to_ms,
+                daily: vec![DailyTotal {
+                    date: "2026-05-03".into(),
+                    requests: 3,
+                    input_tokens: 100,
+                    output_tokens: 50,
+                    cache_read_tokens: 10,
+                    cache_creation_tokens: 5,
+                    cost_usd: 0.25,
+                }],
+                models: vec![ModelTotal {
+                    model: "claude-opus-4-5".into(),
+                    provider: "anthropic".into(),
+                    requests: 3,
+                    input_tokens: 100,
+                    output_tokens: 50,
+                    cache_read_tokens: 10,
+                    cache_creation_tokens: 5,
+                    cost_usd: 0.25,
+                }],
+            })
         }
     }
 
@@ -629,6 +708,25 @@ mod tests {
             AuthPayload::ApiKey { .. }
         ));
         assert_eq!(payload.routing[0].provider, "anthropic");
+    }
+
+    #[test]
+    fn get_usage_summary_maps_domain_to_dto() {
+        let uc = GetUsageSummary::new(stub());
+        let resp = uc.execute(0, i64::MAX).unwrap();
+        assert_eq!(resp.from_ms, 0);
+        assert_eq!(resp.to_ms, i64::MAX);
+        assert_eq!(resp.daily.len(), 1);
+        assert_eq!(resp.daily[0].requests, 3);
+        assert_eq!(resp.models.len(), 1);
+        assert_eq!(resp.models[0].model, "claude-opus-4-5");
+    }
+
+    #[test]
+    fn get_usage_summary_rejects_inverted_range() {
+        let uc = GetUsageSummary::new(stub());
+        let err = uc.execute(100, 50).unwrap_err();
+        assert!(matches!(err, ProxyError::BadRequest(_)));
     }
 
     #[test]

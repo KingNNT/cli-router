@@ -7,11 +7,14 @@ mod app;
 mod client;
 mod terminal;
 mod ui;
+mod views;
 
 use crate::app::{
-    AppState, AuthInputKind, EditAuthModal, EditState, Modal, TestProviderModal, TestState, View,
+    AppState, AuthInputKind, EditAuthModal, EditState, Modal, RangePreset, TestProviderModal,
+    TestState, View,
 };
 use crate::client::AdminClient;
+use chrono::{Datelike, Local, TimeZone};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use proxy_admin_api::ConfigPayload;
 use std::time::Duration;
@@ -66,6 +69,9 @@ fn refresh_view(client: &AdminClient, state: &mut AppState) {
             state.set_config(client.get_config().map_err(|e| e.to_string()))
         }
         View::Requests => state.set_recent(client.get_recent(50).map_err(|e| e.to_string())),
+        // Usage refreshes on demand from `handle_key`'s Usage-tab branch
+        // (`fetch_usage`); no auto-refresh tick should hit this arm.
+        View::Usage => {}
     }
 }
 
@@ -79,8 +85,61 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         return;
     }
     state.flash = None;
+
+    // Always-available keys (quit + view switching). View switches happen
+    // first so the user can leave Usage with `5`→other-tab number keys.
     match k.code {
-        KeyCode::Char('q') | KeyCode::Esc => state.should_quit = true,
+        KeyCode::Char('q') | KeyCode::Esc => {
+            state.should_quit = true;
+            return;
+        }
+        KeyCode::Char('5') => {
+            state.set_view(View::Usage);
+            if state.usage.summary.is_none() && state.usage.last_error.is_none() {
+                fetch_usage(client, state);
+            }
+            return;
+        }
+        _ => {}
+    }
+
+    // Usage-tab-specific keys take precedence over the global handler so
+    // that `1`/`2`/`3`/`4` switch range presets instead of leaving the tab.
+    if state.view == View::Usage {
+        match k.code {
+            KeyCode::Char('1') => {
+                state.usage.range_preset = Some(RangePreset::Today);
+                fetch_usage(client, state);
+            }
+            KeyCode::Char('2') => {
+                state.usage.range_preset = Some(RangePreset::D7);
+                fetch_usage(client, state);
+            }
+            KeyCode::Char('3') => {
+                state.usage.range_preset = Some(RangePreset::D30);
+                fetch_usage(client, state);
+            }
+            KeyCode::Char('4') => {
+                state.usage.range_preset = Some(RangePreset::All);
+                fetch_usage(client, state);
+            }
+            KeyCode::Char('r') => fetch_usage(client, state),
+            KeyCode::Up => {
+                state.usage.table_offset = state.usage.table_offset.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                if let Some(s) = &state.usage.summary
+                    && state.usage.table_offset + 1 < s.models.len()
+                {
+                    state.usage.table_offset += 1;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    match k.code {
         KeyCode::Char('1') => state.set_view(View::Status),
         KeyCode::Char('2') => state.set_view(View::Providers),
         KeyCode::Char('3') => state.set_view(View::Routing),
@@ -95,6 +154,34 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         KeyCode::Char('e') if state.view == View::Providers => open_edit_modal(state),
         _ => {}
     }
+}
+
+fn fetch_usage(client: &AdminClient, state: &mut AppState) {
+    let preset = state.usage.range_preset.unwrap_or(RangePreset::Today);
+    state.usage.range_preset = Some(preset);
+    state.usage.loading = true;
+
+    let now = Local::now();
+    let now_ms = now.timestamp_millis();
+    let local_midnight_ms = Local
+        .with_ymd_and_hms(now.year(), now.month(), now.day(), 0, 0, 0)
+        .single()
+        .map(|d| d.timestamp_millis())
+        .unwrap_or(now_ms);
+
+    let (from_ms, to_ms) = preset.to_range(now_ms, local_midnight_ms);
+
+    match client.get_usage_summary(from_ms, to_ms) {
+        Ok(resp) => {
+            state.usage.summary = Some(resp);
+            state.usage.last_error = None;
+            state.usage.table_offset = 0;
+        }
+        Err(e) => {
+            state.usage.last_error = Some(format!("{e}"));
+        }
+    }
+    state.usage.loading = false;
 }
 
 // ---- Modal handling ----

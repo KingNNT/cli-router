@@ -95,8 +95,8 @@ fn dummy_admin_state_with_path(
     use proxy::adapters::providers::{AnthropicProvider, LiveProvider};
     use proxy::application::ports::{Provider, RequestLogReadPort};
     use proxy::application::use_cases::{
-        CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, StartAnthropicOAuth,
-        TestProvider, UpdateConfig,
+        CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, GetUsageSummary,
+        StartAnthropicOAuth, TestProvider, UpdateConfig,
     };
     use proxy::config::Config;
     use std::path::PathBuf;
@@ -117,7 +117,7 @@ fn dummy_admin_state_with_path(
     proxy::frameworks::AdminState {
         get_status: Arc::new(GetStatus::new(read.clone(), 0)),
         get_config: Arc::new(GetConfig::new(cfg.clone())),
-        get_recent: Arc::new(GetRecentRequests::new(read)),
+        get_recent: Arc::new(GetRecentRequests::new(read.clone())),
         update_config: Arc::new(UpdateConfig::new(
             cfg.clone(),
             config_path.clone(),
@@ -133,6 +133,7 @@ fn dummy_admin_state_with_path(
             config_path,
             live,
         )),
+        usage_summary: Arc::new(GetUsageSummary::new(read)),
     }
 }
 
@@ -359,8 +360,8 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
     use proxy::adapters::providers::{LiveProvider, build_from_config};
     use proxy::application::ports::Provider;
     use proxy::application::use_cases::{
-        CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, StartAnthropicOAuth,
-        TestProvider, UpdateConfig,
+        CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, GetUsageSummary,
+        StartAnthropicOAuth, TestProvider, UpdateConfig,
     };
     use proxy::config::{
         AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule, RoutingStrategy,
@@ -454,7 +455,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
     let admin = proxy::frameworks::AdminState {
         get_status: Arc::new(GetStatus::new(read.clone(), 0)),
         get_config: Arc::new(GetConfig::new(cfg_lock.clone())),
-        get_recent: Arc::new(GetRecentRequests::new(read)),
+        get_recent: Arc::new(GetRecentRequests::new(read.clone())),
         update_config: Arc::new(UpdateConfig::new(
             cfg_lock.clone(),
             path.clone(),
@@ -470,6 +471,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             path.clone(),
             live,
         )),
+        usage_summary: Arc::new(GetUsageSummary::new(read)),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

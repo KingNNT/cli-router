@@ -14,6 +14,20 @@ pub trait Provider: Send + Sync {
     fn usage_parser(&self) -> Box<dyn UsageParser>;
     fn parse_usage_json(&self, body: &[u8]) -> Result<UsageRecord, String>;
 
+    /// SSE usage parser for OpenAI-format streams. Default falls back to the
+    /// Anthropic parser; providers that speak OpenAI-flavoured endpoints
+    /// (e.g. `/v1/chat/completions`) should override this.
+    fn usage_parser_openai(&self) -> Box<dyn UsageParser> {
+        self.usage_parser()
+    }
+
+    /// Parse a buffered OpenAI-format response body for token usage. Default
+    /// falls back to the Anthropic parser; providers that speak OpenAI-flavoured
+    /// endpoints should override this.
+    fn parse_usage_json_openai(&self, body: &[u8]) -> Result<UsageRecord, String> {
+        self.parse_usage_json(body)
+    }
+
     async fn forward(
         &self,
         path: &str,

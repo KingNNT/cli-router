@@ -177,3 +177,79 @@ pub struct CompleteOAuthResponse {
     /// `auth = bearer` with the access token from Anthropic.
     pub config: Option<ConfigPayload>,
 }
+
+/// `GET /admin/usage/summary?from=<ms>&to=<ms>`
+///
+/// Server-side aggregated view of the proxy's request log. `from`/`to` are
+/// inclusive epoch milliseconds. Both arrays are empty when no rows match.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsageSummaryResponse {
+    pub from_ms: i64,
+    pub to_ms: i64,
+    /// One row per local-tz day. Sorted by `date` ascending.
+    pub daily: Vec<DailyUsageRow>,
+    /// One row per (model, provider) pair. Sorted by `cost_usd` descending.
+    pub models: Vec<ModelUsageRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DailyUsageRow {
+    /// Local-tz date as `YYYY-MM-DD`.
+    pub date: String,
+    pub requests: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cost_usd: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelUsageRow {
+    pub model: String,
+    /// Value from `requests.provider` as logged — may be `"anthropic"`,
+    /// `"zai"`, or `"router"` per the existing `StatusResponse` note.
+    pub provider: String,
+    pub requests: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cost_usd: f64,
+}
+
+#[cfg(test)]
+mod usage_summary_tests {
+    use super::*;
+
+    #[test]
+    fn usage_summary_response_round_trips_through_json() {
+        let original = UsageSummaryResponse {
+            from_ms: 1_700_000_000_000,
+            to_ms: 1_700_086_400_000,
+            daily: vec![DailyUsageRow {
+                date: "2026-05-03".into(),
+                requests: 12,
+                input_tokens: 1_000,
+                output_tokens: 200,
+                cache_read_tokens: 5_000,
+                cache_creation_tokens: 0,
+                cost_usd: 0.42,
+            }],
+            models: vec![ModelUsageRow {
+                model: "claude-opus-4-5".into(),
+                provider: "anthropic".into(),
+                requests: 12,
+                input_tokens: 1_000,
+                output_tokens: 200,
+                cache_read_tokens: 5_000,
+                cache_creation_tokens: 0,
+                cost_usd: 0.42,
+            }],
+        };
+
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: UsageSummaryResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, original);
+    }
+}

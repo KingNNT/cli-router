@@ -21,3 +21,6 @@ Thumbs.db
 # Environment / Secrets
 .env
 .env.*
+
+# Worktrees
+/.worktrees/

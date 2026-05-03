@@ -68,6 +68,14 @@ impl Provider for LiveProvider {
         self.current().parse_usage_json(body)
     }
 
+    fn usage_parser_openai(&self) -> Box<dyn UsageParser> {
+        self.current().usage_parser_openai()
+    }
+
+    fn parse_usage_json_openai(&self, body: &[u8]) -> Result<UsageRecord, String> {
+        self.current().parse_usage_json_openai(body)
+    }
+
     async fn forward(
         &self,
         path: &str,
