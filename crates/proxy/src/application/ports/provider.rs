@@ -21,4 +21,21 @@ pub trait Provider: Send + Sync {
         body: Bytes,
         streaming: bool,
     ) -> Result<UpstreamResponse, ProxyError>;
+
+    /// Forward an OpenAI-format request (e.g. `/v1/chat/completions`).
+    /// Default implementation returns an error — only providers with an
+    /// OpenAI-compatible endpoint should override this.
+    async fn forward_openai(
+        &self,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        let _ = (path, headers, body, streaming);
+        Err(ProxyError::BadRequest(format!(
+            "provider '{}' does not support OpenAI chat completions format",
+            self.name()
+        )))
+    }
 }

@@ -128,4 +128,23 @@ mod tests {
         assert_eq!(p.base_url, "http://x");
         assert!(matches!(p.auth, AuthHeader::ApiKey(_)));
     }
+
+    #[tokio::test]
+    async fn forward_openai_returns_error() {
+        let p = AnthropicProvider::new(reqwest::Client::new());
+        let result = p
+            .forward_openai(
+                "/v1/chat/completions",
+                &HeaderMap::new(),
+                Bytes::from_static(br#"{"model":"test"}"#),
+                false,
+            )
+            .await;
+        match result {
+            Err(ProxyError::BadRequest(msg)) => {
+                assert!(msg.contains("does not support OpenAI"), "got: {msg}");
+            }
+            _other => panic!("expected BadRequest"),
+        }
+    }
 }
