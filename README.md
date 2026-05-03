@@ -16,7 +16,7 @@ Built with [axum](https://github.com/tokio-rs/axum) (proxy), [Ratatui](https://r
 
 ### `proxy` — HTTP proxy with usage capture and admin control plane
 
-- **Multi-provider routing** — configure multiple LLM providers (Anthropic, Z.ai) with glob-based model matching and fallback chains
+- **Multi-provider routing** — configure multiple LLM providers (Anthropic, Z.ai) with glob-based model matching and fallback chains. Override per-request with `provider-name/model` namespace syntax (e.g. `zai/glm-5`).
 - **Streaming support** — forwards SSE streaming and buffered JSON responses unchanged
 - **Token usage logging** — parses upstream events to extract input/output/cache token counts, looks up cost, writes to `~/.local/share/cli-router/proxy.db`
 - **Admin API** — `GET/PUT /admin/config`, `GET /admin/status`, `GET /admin/requests/recent`, `POST /admin/providers/:name/test`
