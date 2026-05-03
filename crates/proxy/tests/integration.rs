@@ -109,6 +109,7 @@ fn dummy_admin_state_with_path(
         pricing_db: PathBuf::new(),
         providers: vec![],
         routing: vec![],
+        affinity: Default::default(),
     }));
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
     let http = reqwest::Client::new();
@@ -424,6 +425,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             strategy: RoutingStrategy::Failover,
             priority: None,
         }],
+        affinity: Default::default(),
     };
 
     let nanos = SystemTime::now()

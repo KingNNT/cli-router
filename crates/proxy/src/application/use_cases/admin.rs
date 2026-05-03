@@ -511,6 +511,7 @@ fn payload_to_config(
         pricing_db,
         providers,
         routing,
+        affinity: Default::default(),
     })
 }
 
@@ -699,6 +700,7 @@ mod tests {
                 strategy: Default::default(),
                 priority: None,
             }],
+            affinity: Default::default(),
         };
         let payload = config_to_payload(&cfg);
         assert_eq!(payload.port, 8787);
