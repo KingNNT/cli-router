@@ -2,22 +2,34 @@
 //! across multiple calls; different conversations distribute across keys.
 
 use http::HeaderMap;
-use proxy::adapters::providers::affinity::{affinity_hash, pick_sticky_entry, score_for, PoolMember};
+use proxy::adapters::providers::affinity::{
+    PoolMember, affinity_hash, pick_sticky_entry, score_for,
+};
 
 struct MockEntry {
     id: String,
     healthy: bool,
 }
 impl PoolMember for MockEntry {
-    fn id(&self) -> &str { &self.id }
-    fn healthy(&self) -> bool { self.healthy }
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn healthy(&self) -> bool {
+        self.healthy
+    }
 }
 
 #[test]
 fn same_affinity_picks_same_id_in_two_key_pool() {
     let pool: Vec<MockEntry> = vec![
-        MockEntry { id: "key-a".into(), healthy: true },
-        MockEntry { id: "key-b".into(), healthy: true },
+        MockEntry {
+            id: "key-a".into(),
+            healthy: true,
+        },
+        MockEntry {
+            id: "key-b".into(),
+            healthy: true,
+        },
     ];
 
     let body = br#"{"system":"long enough","messages":[{"role":"user","content":"hello world"}]}"#;
@@ -32,8 +44,14 @@ fn same_affinity_picks_same_id_in_two_key_pool() {
 #[test]
 fn distributes_across_keys_for_different_bodies() {
     let pool: Vec<MockEntry> = vec![
-        MockEntry { id: "key-a".into(), healthy: true },
-        MockEntry { id: "key-b".into(), healthy: true },
+        MockEntry {
+            id: "key-a".into(),
+            healthy: true,
+        },
+        MockEntry {
+            id: "key-b".into(),
+            healthy: true,
+        },
     ];
 
     let mut a_count = 0;
@@ -57,8 +75,14 @@ fn distributes_across_keys_for_different_bodies() {
 fn cooldown_routes_around_sticky_then_returns() {
     // Find an affinity that picks "key-a" when both healthy.
     let healthy_pool = vec![
-        MockEntry { id: "key-a".into(), healthy: true },
-        MockEntry { id: "key-b".into(), healthy: true },
+        MockEntry {
+            id: "key-a".into(),
+            healthy: true,
+        },
+        MockEntry {
+            id: "key-b".into(),
+            healthy: true,
+        },
     ];
 
     let mut affinity = 0u64;
@@ -74,20 +98,38 @@ fn cooldown_routes_around_sticky_then_returns() {
 
     // Mark key-a unhealthy → fallback to key-b.
     let cooldown_pool = vec![
-        MockEntry { id: "key-a".into(), healthy: false },
-        MockEntry { id: "key-b".into(), healthy: true },
+        MockEntry {
+            id: "key-a".into(),
+            healthy: false,
+        },
+        MockEntry {
+            id: "key-b".into(),
+            healthy: true,
+        },
     ];
-    assert_eq!(pick_sticky_entry(&cooldown_pool, affinity).unwrap().id(), "key-b");
+    assert_eq!(
+        pick_sticky_entry(&cooldown_pool, affinity).unwrap().id(),
+        "key-b"
+    );
 
     // Once key-a recovers, same affinity returns to key-a (no state to reset).
-    assert_eq!(pick_sticky_entry(&healthy_pool, affinity).unwrap().id(), "key-a");
+    assert_eq!(
+        pick_sticky_entry(&healthy_pool, affinity).unwrap().id(),
+        "key-a"
+    );
 }
 
 #[test]
 fn header_priority_over_body_via_public_api() {
     let pool: Vec<MockEntry> = vec![
-        MockEntry { id: "key-a".into(), healthy: true },
-        MockEntry { id: "key-b".into(), healthy: true },
+        MockEntry {
+            id: "key-a".into(),
+            healthy: true,
+        },
+        MockEntry {
+            id: "key-b".into(),
+            healthy: true,
+        },
     ];
 
     let mut h = HeaderMap::new();
@@ -108,9 +150,18 @@ fn unused_score_for_helper_is_consistent() {
     // The score_for export is what `routing.rs::compute_attempt_order` uses;
     // assert it agrees with pick_sticky_entry under the same inputs.
     let pool: Vec<MockEntry> = vec![
-        MockEntry { id: "key-a".into(), healthy: true },
-        MockEntry { id: "key-b".into(), healthy: true },
-        MockEntry { id: "key-c".into(), healthy: true },
+        MockEntry {
+            id: "key-a".into(),
+            healthy: true,
+        },
+        MockEntry {
+            id: "key-b".into(),
+            healthy: true,
+        },
+        MockEntry {
+            id: "key-c".into(),
+            healthy: true,
+        },
     ];
     let affinity = 12345u64;
     let by_pick = pick_sticky_entry(&pool, affinity).unwrap().id().to_string();

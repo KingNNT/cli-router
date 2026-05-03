@@ -342,12 +342,18 @@ mod tests {
         let mut affected = 0;
         let mut total = 0;
         for affinity in 0..200u64 {
-            let pre = pick_sticky_entry(&before, affinity).unwrap().id().to_string();
+            let pre = pick_sticky_entry(&before, affinity)
+                .unwrap()
+                .id()
+                .to_string();
             if pre == "d" {
                 continue;
             }
             total += 1;
-            let post = pick_sticky_entry(&after, affinity).unwrap().id().to_string();
+            let post = pick_sticky_entry(&after, affinity)
+                .unwrap()
+                .id()
+                .to_string();
             if pre != post {
                 affected += 1;
             }
