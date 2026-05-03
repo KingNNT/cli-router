@@ -212,6 +212,32 @@ Without `priority`, rules are checked in TOML order.
 
 ---
 
+## Namespace Routing
+
+Override routing rules by prefixing the model name with a provider name and `/`:
+
+```
+<provider-name>/<model>
+```
+
+| Client sends | Routed to | Upstream receives |
+|---|---|---|
+| `zai/glm-5` | provider `zai` | `{"model":"glm-5"}` |
+| `anthropic-work/claude-sonnet-4` | provider `anthropic-work` | `{"model":"claude-sonnet-4"}` |
+| `glm-5` | normal routing rules | `{"model":"glm-5"}` |
+
+**Namespace always wins** — it bypasses glob-based routing rules entirely. The proxy strips the prefix before forwarding, so the upstream only sees the bare model name.
+
+If the namespace doesn't match any configured provider name, the proxy returns:
+
+```
+400 Bad Request: unknown provider namespace 'nonexistent'
+```
+
+This is useful when you have multiple providers of the same kind and want explicit control over which one handles a request, or when testing a specific provider without changing routing rules.
+
+---
+
 ## OAuth Setup
 
 ### Via TUI (recommended)
@@ -344,4 +370,72 @@ The proxy binds to `127.0.0.1:8787` by default. Configure the port:
 
 ```toml
 port = 9000
+```
+
+---
+
+## Verifying It Works
+
+After starting the proxy, here are three ways to confirm it's routing requests correctly.
+
+### 1. Quick health check
+
+```bash
+# Is the proxy responding?
+curl -s http://127.0.0.1:8787/admin/status | jq
+```
+
+A `200` response with uptime and request counts means the proxy is running.
+
+### 2. Test a provider via admin API
+
+```bash
+# Sends a minimal request through to the upstream provider
+curl -s -X POST http://127.0.0.1:8787/admin/providers/zai/test \
+  -H "content-type: application/json" \
+  -d '{"model":"glm-5"}' | jq
+```
+
+Replace `zai` with your provider name. A successful response confirms the proxy can reach the upstream and authenticate.
+
+### 3. Send a real request through the proxy
+
+The proxy speaks the **Anthropic Messages API** (`/v1/messages`). Both Anthropic and Z.ai providers use this format.
+
+```bash
+curl http://127.0.0.1:8787/v1/messages \
+  -H "content-type: application/json" \
+  -H "x-api-key: dummy" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "glm-5",
+    "max_tokens": 50,
+    "messages": [{"role": "user", "content": "Say hello"}]
+  }'
+```
+
+> **Note:** The `x-api-key` header is required by the Anthropic API format, but if your provider uses `api_key` auth in the config, the proxy replaces it with your configured key. For `passthrough` auth, the client's key is forwarded as-is.
+
+A successful response looks like:
+
+```json
+{
+  "id": "msg_...",
+  "type": "message",
+  "role": "assistant",
+  "model": "glm-5.1",
+  "content": [{"type": "text", "text": "Hello! How can I help you today?"}],
+  "stop_reason": "end_turn",
+  "usage": {"input_tokens": 7, "output_tokens": 10}
+}
+```
+
+#### Point your tools at it
+
+```bash
+# Claude Code
+ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude
+
+# OpenCode
+ANTHROPIC_BASE_URL=http://127.0.0.1:8787 opencode
 ```
