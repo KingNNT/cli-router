@@ -750,7 +750,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&result).unwrap();
         assert_eq!(v["model"].as_str().unwrap(), "glm-5");
         assert_eq!(v["max_tokens"].as_u64().unwrap(), 50);
-        assert_eq!(v["stream"].as_bool().unwrap(), true);
+        assert!(v["stream"].as_bool().unwrap());
     }
 
     #[test]

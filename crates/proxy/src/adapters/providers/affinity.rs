@@ -19,8 +19,7 @@ pub fn affinity_hash(headers: &HeaderMap, body: &[u8], header_names: &[String]) 
     if let Some(h) = header_lookup(headers, header_names) {
         return Some(siphash_str(&h));
     }
-    let extracted = extract_body_signal(body)?;
-    let normalized = normalize(&extracted);
+    let normalized = normalize(&extract_body_signal(body)?);
     if normalized.is_empty() {
         return None;
     }
@@ -30,12 +29,12 @@ pub fn affinity_hash(headers: &HeaderMap, body: &[u8], header_names: &[String]) 
 
 fn header_lookup(headers: &HeaderMap, names: &[String]) -> Option<String> {
     for name in names {
-        if let Some(v) = headers.get(name) {
-            if let Ok(s) = v.to_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
+        if let Some(v) = headers.get(name)
+            && let Ok(s) = v.to_str()
+        {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
             }
         }
     }
@@ -43,6 +42,7 @@ fn header_lookup(headers: &HeaderMap, names: &[String]) -> Option<String> {
 }
 
 /// Extract system + first two messages text content as one string.
+/// Returns `None` if the body is not parseable JSON or has no signal.
 fn extract_body_signal(body: &[u8]) -> Option<String> {
     let v: serde_json::Value = serde_json::from_slice(body).ok()?;
     let mut buf = String::new();
@@ -62,7 +62,12 @@ fn extract_body_signal(body: &[u8]) -> Option<String> {
     if buf.is_empty() { None } else { Some(buf) }
 }
 
-/// Append text from a JSON value: string, array of objects with `.text`, or object with `.text`.
+/// Append text from a JSON value:
+/// - string: the string itself
+/// - array: each element's `.text` field if present, else recurse into the element
+/// - object with `.text`: that text
+///
+/// Other shapes are ignored.
 fn append_value_text(v: &serde_json::Value, out: &mut String) {
     match v {
         serde_json::Value::String(s) => {
@@ -114,7 +119,7 @@ pub trait PoolMember {
 }
 
 /// Rendezvous-hash picker over healthy pool members.
-pub fn pick_sticky_entry<'a, T: PoolMember>(pool: &'a [T], affinity: u64) -> Option<&'a T> {
+pub fn pick_sticky_entry<T: PoolMember>(pool: &[T], affinity: u64) -> Option<&T> {
     pool.iter()
         .filter(|e| e.healthy())
         .max_by_key(|e| score_for(e.id(), affinity))
