@@ -4,7 +4,7 @@ pub mod admin;
 pub mod handle_messages;
 
 pub use admin::{
-    CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, StartAnthropicOAuth,
-    TestProvider, UpdateConfig,
+    CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, GetUsageSummary,
+    StartAnthropicOAuth, TestProvider, UpdateConfig,
 };
 pub use handle_messages::{ApiFormat, HandleMessages, HandleMessagesInput, HandleMessagesOutput};

@@ -7,16 +7,16 @@
 
 use crate::application::errors::ProxyError;
 use crate::application::use_cases::{
-    CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, StartAnthropicOAuth,
-    TestProvider, UpdateConfig,
+    CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, GetUsageSummary,
+    StartAnthropicOAuth, TestProvider, UpdateConfig,
 };
-use axum::extract::{Path, Query, State};
+use axum::extract::{FromRef, Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use proxy_admin_api::{
     CompleteOAuthRequest, CompleteOAuthResponse, ConfigPayload, RecentRequestsResponse,
     StartOAuthRequest, StartOAuthResponse, StatusResponse, TestProviderRequest,
-    TestProviderResponse,
+    TestProviderResponse, UsageSummaryResponse,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -30,6 +30,13 @@ pub struct AdminState {
     pub test_provider: Arc<TestProvider>,
     pub start_oauth: Arc<StartAnthropicOAuth>,
     pub complete_oauth: Arc<CompleteAnthropicOAuth>,
+    pub usage_summary: Arc<GetUsageSummary>,
+}
+
+impl FromRef<AdminState> for Arc<GetUsageSummary> {
+    fn from_ref(s: &AdminState) -> Self {
+        s.usage_summary.clone()
+    }
 }
 
 pub fn build_admin_router(state: AdminState) -> Router {
@@ -40,6 +47,7 @@ pub fn build_admin_router(state: AdminState) -> Router {
             get(get_config_handler).put(update_config_handler),
         )
         .route("/admin/requests/recent", get(recent_handler))
+        .route("/admin/usage/summary", get(usage_summary_handler))
         .route("/admin/providers/:name/test", post(test_provider_handler))
         .route("/admin/oauth/anthropic/start", post(oauth_start_handler))
         .route(
@@ -77,6 +85,19 @@ async fn recent_handler(
     Query(params): Query<RecentParams>,
 ) -> Result<Json<RecentRequestsResponse>, ProxyError> {
     Ok(Json(s.get_recent.execute(params.limit)?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UsageSummaryQuery {
+    pub from: i64,
+    pub to: i64,
+}
+
+async fn usage_summary_handler(
+    State(uc): State<Arc<GetUsageSummary>>,
+    Query(q): Query<UsageSummaryQuery>,
+) -> Result<Json<UsageSummaryResponse>, ProxyError> {
+    Ok(Json(uc.execute(q.from, q.to)?))
 }
 
 async fn test_provider_handler(
