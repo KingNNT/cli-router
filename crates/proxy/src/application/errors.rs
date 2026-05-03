@@ -31,4 +31,10 @@ pub enum ProxyError {
         metric: &'static str,
         retry_after_ms: u64,
     },
+    #[error("translation: invalid request: {field}: {reason}")]
+    TranslationInvalidRequest { field: &'static str, reason: String },
+    #[error("translation: unsupported feature: {0}")]
+    TranslationUnsupported(String),
+    #[error("translation stream protocol error: {0}")]
+    TranslationStreamProtocol(String),
 }

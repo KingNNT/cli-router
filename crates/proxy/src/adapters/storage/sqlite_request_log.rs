@@ -23,14 +23,15 @@ impl RequestLogPort for SqliteRequestLogRepository {
         let conn = self.conn.lock().expect("repo mutex poisoned");
         conn.execute(
             "INSERT INTO requests \
-             (id, user_id, provider, model, status, started_at) \
-             VALUES (?1, ?2, ?3, ?4, 'started', ?5)",
+             (id, user_id, provider, model, status, started_at, translation_direction) \
+             VALUES (?1, ?2, ?3, ?4, 'started', ?5, ?6)",
             params![
                 start.id,
                 start.user_id,
                 start.provider,
                 start.model,
                 start.started_at,
+                start.translation_direction,
             ],
         )?;
         Ok(())
@@ -384,6 +385,7 @@ mod tests {
             provider: "anthropic".into(),
             model: "claude-3-5-sonnet-20241022".into(),
             started_at: 1_700_000_000_000,
+            translation_direction: None,
         })
         .unwrap();
 
@@ -409,6 +411,7 @@ mod tests {
             provider: "anthropic".into(),
             model: "m".into(),
             started_at: 1,
+            translation_direction: None,
         })
         .unwrap();
         repo.complete(
@@ -449,6 +452,7 @@ mod tests {
             provider: "anthropic".into(),
             model: "m".into(),
             started_at: 1,
+            translation_direction: None,
         })
         .unwrap();
         repo.fail(
