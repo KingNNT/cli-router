@@ -661,6 +661,9 @@ mod tests {
                 }],
             })
         }
+        fn quota_seed(&self, _cutoff_ms: i64) -> Result<Vec<crate::application::ports::QuotaSeedRow>, ProxyError> {
+            Ok(vec![])
+        }
     }
 
     fn stub() -> Arc<dyn RequestLogReadPort> {
