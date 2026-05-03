@@ -219,6 +219,9 @@ impl RoutingProviderBuilder {
     }
 }
 
+// `native_format` intentionally not overridden — routing is dynamic and the leaf
+// provider's native_format is what matters; translation triggers per-entry inside
+// messages_protocol after routing has selected an entry.
 #[async_trait]
 impl Provider for RoutingProvider {
     fn name(&self) -> &'static str {

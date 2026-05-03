@@ -5,7 +5,7 @@
 
 use super::messages_protocol::{self, AuthHeader};
 use crate::application::errors::ProxyError;
-use crate::application::ports::{Provider, UpstreamResponse, UsageParser};
+use crate::application::ports::{ApiFormat, Provider, UpstreamResponse, UsageParser};
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
 use axum::http::HeaderMap;
@@ -55,6 +55,10 @@ impl AnthropicProvider {
 impl Provider for AnthropicProvider {
     fn name(&self) -> &'static str {
         "anthropic"
+    }
+
+    fn native_format(&self) -> ApiFormat {
+        ApiFormat::Anthropic
     }
 
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {
