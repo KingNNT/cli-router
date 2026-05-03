@@ -15,6 +15,8 @@ ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude
 
 This uses a default config: single Anthropic provider, passthrough auth (forwards the client's key).
 
+The proxy accepts both **Anthropic** (`/v1/messages`) and **OpenAI** (`/v1/chat/completions`) request formats. Point any compatible tool at it — Claude Code, OpenCode, Cursor, etc.
+
 ---
 
 ## Configuration
@@ -99,6 +101,7 @@ auth = { type = "api_key", value = "${ANTHROPIC_API_KEY}" }
 name = "zai"
 kind = "zai"
 auth = { type = "api_key", value = "${ZAI_API_KEY}" }
+openai_base_url = "https://api.z.ai/api/paas/v4"
 
 [[routing]]
 match = { model = "glm-*" }
@@ -326,6 +329,7 @@ auth = { type = "api_key", value = "${ANTHROPIC_C_KEY}" }
 name = "zai"
 kind = "zai"
 auth = { type = "api_key", value = "${ZAI_API_KEY}" }
+openai_base_url = "https://api.z.ai/api/paas/v4"
 
 # Opus models: round-robin across 3 Anthropic accounts
 [[routing]]
@@ -433,9 +437,46 @@ A successful response looks like:
 #### Point your tools at it
 
 ```bash
-# Claude Code
+# Claude Code (Anthropic format)
 ANTHROPIC_BASE_URL=http://127.0.0.1:8787 claude
 
-# OpenCode
-ANTHROPIC_BASE_URL=http://127.0.0.1:8787 opencode
+# OpenCode (OpenAI format — use @ai-sdk/openai-compatible provider)
+# See "Configure OpenCode" below
 ```
+
+### 4. Test the OpenAI-compatible endpoint
+
+```bash
+curl http://127.0.0.1:8787/v1/chat/completions \
+  -H "content-type: application/json" \
+  -H "Authorization: Bearer dummy" \
+  -d '{
+    "model": "zai/glm-5",
+    "max_tokens": 50,
+    "messages": [{"role": "user", "content": "Say hello"}]
+  }'
+```
+
+#### Configure OpenCode
+
+Add this to your `opencode.json`:
+
+```json
+{
+  "provider": {
+    "cli-router": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "CLI Router",
+      "options": {
+        "baseURL": "http://127.0.0.1:8787/v1"
+      },
+      "models": {
+        "zai/glm-5.1": { "name": "z.ai/GLM 5.1" },
+        "zai/glm-5": { "name": "z.ai/GLM 5" }
+      }
+    }
+  }
+}
+```
+
+Run `/connect` in OpenCode, select the `cli-router` provider, and enter any non-empty string as the API key. The proxy replaces it with your configured key.
