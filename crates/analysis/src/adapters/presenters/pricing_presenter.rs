@@ -19,8 +19,7 @@ pub fn present_pricing(out: &GetPricingOutput, query: &str) -> PricingViewModel 
         if q.is_empty() {
             return true;
         }
-        p.model.as_str().to_lowercase().contains(&q)
-            || p.provider_id.to_lowercase().contains(&q)
+        p.model.as_str().to_lowercase().contains(&q) || p.provider_id.to_lowercase().contains(&q)
     };
 
     // De-duplicate by model (a single model may have raw + composed rows).
