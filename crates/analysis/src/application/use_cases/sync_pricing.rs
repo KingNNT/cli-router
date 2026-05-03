@@ -53,7 +53,6 @@ mod tests {
             cache_read_rate: None,
             cache_write_rate: None,
             last_synced: NaiveDate::from_ymd_opt(2026, 4, 22).unwrap(),
-            alias: None,
         }
     }
 

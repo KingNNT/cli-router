@@ -109,7 +109,6 @@ fn dashboard_reconciles_cost_when_pricing_present() {
             cache_read_rate: Some(PricePerToken::new(0.000_001_5).unwrap()),
             cache_write_rate: Some(PricePerToken::new(0.000_018_75).unwrap()),
             last_synced: NaiveDate::from_ymd_opt(2026, 4, 24).unwrap(),
-            alias: None,
         }])
         .unwrap();
 
@@ -215,7 +214,6 @@ fn pricing_use_case_returns_rows_after_upsert() {
             cache_read_rate: None,
             cache_write_rate: None,
             last_synced: NaiveDate::from_ymd_opt(2026, 4, 24).unwrap(),
-            alias: None,
         }])
         .unwrap();
 

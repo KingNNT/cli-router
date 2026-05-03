@@ -9,7 +9,6 @@ use shared::adapters::AdapterError;
 use shared::application::errors::ApplicationError;
 use shared::application::ports::Clock;
 use shared::domain::entities::ModelPricing;
-use shared::domain::services::aliases::canonicalize;
 use shared::domain::value_objects::{ModelId, PricePerToken};
 
 pub const LITELLM_JSON_URL: &str =
@@ -87,7 +86,6 @@ impl LiteLlmPricingSource {
                 Err(_) => continue,
             };
 
-            let raw_alias = canonicalize(&key).map(String::from);
             // Raw key row.
             out.push(ModelPricing {
                 lookup_key: key.clone(),
@@ -98,12 +96,10 @@ impl LiteLlmPricingSource {
                 cache_read_rate,
                 cache_write_rate,
                 last_synced: today,
-                alias: raw_alias,
             });
             // Provider-composed key row, unless raw already has '/'.
             if !key.contains('/') {
                 let composed_key = format!("{}/{}", provider, key);
-                let composed_alias = canonicalize(&composed_key).map(String::from);
                 out.push(ModelPricing {
                     lookup_key: composed_key,
                     model,
@@ -113,7 +109,6 @@ impl LiteLlmPricingSource {
                     cache_read_rate,
                     cache_write_rate,
                     last_synced: today,
-                    alias: composed_alias,
                 });
             }
         }
@@ -217,44 +212,4 @@ mod tests {
         assert!(matches!(err, AdapterError::DataMapping(_)));
     }
 
-    #[test]
-    fn parse_populates_alias_for_sources_matching_const() {
-        // "anthropic.claude-opus-4-6-v1" is a literal source entry in ALIASES.
-        let body = r#"{
-            "anthropic.claude-opus-4-6-v1": {
-                "input_cost_per_token": 5e-6,
-                "output_cost_per_token": 2.5e-5,
-                "litellm_provider": "anthropic",
-                "mode": "chat"
-            }
-        }"#;
-        let rows = LiteLlmPricingSource::parse(body, today()).unwrap();
-        // Raw key is in ALIASES → alias = Some("opus4.6")
-        let raw = rows
-            .iter()
-            .find(|r| r.lookup_key == "anthropic.claude-opus-4-6-v1")
-            .unwrap();
-        assert_eq!(raw.alias.as_deref(), Some("opus4.6"));
-        // Composed key "anthropic/anthropic.claude-opus-4-6-v1" is NOT in ALIASES → alias = None
-        let composed = rows
-            .iter()
-            .find(|r| r.lookup_key == "anthropic/anthropic.claude-opus-4-6-v1")
-            .unwrap();
-        assert_eq!(composed.alias, None);
-    }
-
-    #[test]
-    fn parse_alias_is_none_for_unrecognised_keys() {
-        let rows = LiteLlmPricingSource::parse(&sample_body(), today()).unwrap();
-        // Rows whose lookup_key is NOT in ALIASES must carry alias = None.
-        // (`gpt-4o` and similar may be in ALIASES; check only known-unaliased fixture keys.)
-        let unaliased = ["claude-opus-4", "openrouter/anthropic/claude-3-opus"];
-        for key in unaliased {
-            let row = rows
-                .iter()
-                .find(|r| r.lookup_key == key)
-                .unwrap_or_else(|| panic!("missing row for {}", key));
-            assert_eq!(row.alias, None, "row {} should be unaliased", key);
-        }
-    }
 }

@@ -44,7 +44,6 @@ mod tests {
             cache_read_rate: cache_read.map(|v| PricePerToken::new(v).unwrap()),
             cache_write_rate: cache_write.map(|v| PricePerToken::new(v).unwrap()),
             last_synced: NaiveDate::from_ymd_opt(2026, 4, 23).unwrap(),
-            alias: None,
         }
     }
 

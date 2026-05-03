@@ -15,6 +15,4 @@ pub struct ModelPricing {
     pub cache_read_rate: Option<PricePerToken>,
     pub cache_write_rate: Option<PricePerToken>,
     pub last_synced: NaiveDate,
-    /// The canonical alias this row is aliased TO, or `None` if unaliased.
-    pub alias: Option<String>,
 }

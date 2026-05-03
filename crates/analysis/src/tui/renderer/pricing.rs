@@ -93,7 +93,6 @@ pub fn draw(f: &mut Frame, vm: &PricingViewModel, area: Rect, offset: usize, is_
         "Cache R",
         "Cache W",
         "Provider",
-        "Alias",
     ]
     .iter()
     .map(|h| {
@@ -124,10 +123,6 @@ pub fn draw(f: &mut Frame, vm: &PricingViewModel, area: Rect, offset: usize, is_
                     r.provider.clone(),
                     Style::default().fg(Color::DarkGray),
                 )),
-                Cell::from(Span::styled(
-                    r.alias.clone(),
-                    Style::default().fg(Color::DarkGray),
-                )),
             ])
         })
         .collect();
@@ -138,7 +133,6 @@ pub fn draw(f: &mut Frame, vm: &PricingViewModel, area: Rect, offset: usize, is_
         Constraint::Length(12),
         Constraint::Length(12),
         Constraint::Length(12),
-        Constraint::Length(15),
         Constraint::Length(15),
     ];
 
@@ -192,7 +186,6 @@ mod tests {
             output: "$15.00/M".into(),
             cache_read: "$0.30/M".into(),
             cache_write: "$3.75/M".into(),
-            alias: "opus".into(),
         }
     }
 
@@ -281,7 +274,6 @@ mod tests {
             "Cache R",
             "Cache W",
             "Provider",
-            "Alias",
         ] {
             assert!(
                 rendered.contains(expected),

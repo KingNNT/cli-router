@@ -105,7 +105,6 @@ mod tests {
             cache_read_rate: None,
             cache_write_rate: None,
             last_synced: NaiveDate::from_ymd_opt(2026, 4, 23).unwrap(),
-            alias: None,
         }
     }
 
@@ -209,7 +208,6 @@ mod tests {
                 cache_read_rate: None,
                 cache_write_rate: None,
                 last_synced: NaiveDate::from_ymd_opt(2026, 4, 23).unwrap(),
-                alias: None,
             }])
             .unwrap();
 

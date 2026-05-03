@@ -201,7 +201,6 @@ pub fn canonical_pricing(today: NaiveDate) -> Vec<ModelPricing> {
                 .cache_write_per_token
                 .map(|v| PricePerToken::new(v).expect("alias cache_write rate must be valid")),
             last_synced: today,
-            alias: None,
         })
         .collect()
 }
@@ -240,10 +239,6 @@ mod tests {
             assert_eq!(row.last_synced, today);
             assert!((row.input_rate.value() - entry.input_per_token).abs() < 1e-12);
             assert!((row.output_rate.value() - entry.output_per_token).abs() < 1e-12);
-            assert_eq!(
-                row.alias, None,
-                "canonical rows are not aliased to anything"
-            );
         }
     }
 }

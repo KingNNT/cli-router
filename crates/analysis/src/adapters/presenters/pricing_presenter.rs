@@ -21,9 +21,6 @@ pub fn present_pricing(out: &GetPricingOutput, query: &str) -> PricingViewModel 
         }
         p.model.as_str().to_lowercase().contains(&q)
             || p.provider_id.to_lowercase().contains(&q)
-            || p.alias
-                .as_ref()
-                .is_some_and(|a| a.to_lowercase().contains(&q))
     };
 
     // De-duplicate by model (a single model may have raw + composed rows).
@@ -40,10 +37,6 @@ pub fn present_pricing(out: &GetPricingOutput, query: &str) -> PricingViewModel 
             output: fmt_rate_required(&p.output_rate),
             cache_read: fmt_rate(&p.cache_read_rate),
             cache_write: fmt_rate(&p.cache_write_rate),
-            alias: match &p.alias {
-                Some(a) => format!("→ {}", a),
-                None => String::new(),
-            },
         })
         .collect();
 
@@ -77,7 +70,6 @@ mod tests {
             cache_read_rate: cache_read.map(|v| PricePerToken::new(v).unwrap()),
             cache_write_rate: None,
             last_synced: NaiveDate::from_ymd_opt(2026, 4, 23).unwrap(),
-            alias: None,
         }
     }
 
@@ -110,28 +102,6 @@ mod tests {
         assert_eq!(vm.last_sync_label, "2026-04-23");
     }
 
-    #[test]
-    fn alias_some_formats_with_arrow() {
-        let mut p = pricing("opus", None);
-        p.alias = Some("opus4.6".to_string());
-        let out = GetPricingOutput {
-            rows: vec![p],
-            last_sync: None,
-        };
-        let vm = present_pricing(&out, "");
-        assert_eq!(vm.rows[0].alias, "→ opus4.6");
-    }
-
-    #[test]
-    fn alias_none_formats_as_empty_string() {
-        let out = GetPricingOutput {
-            rows: vec![pricing("sonnet", None)],
-            last_sync: None,
-        };
-        let vm = present_pricing(&out, "");
-        assert_eq!(vm.rows[0].alias, "");
-    }
-
     // ── Search / filter tests ────────────────────────────────────────────────
 
     fn make_output() -> GetPricingOutput {
@@ -140,7 +110,6 @@ mod tests {
 
         let mut sonnet = pricing("claude-sonnet-4-5", None);
         sonnet.provider_id = "anthropic".into();
-        sonnet.alias = Some("sonnet-4-5".to_string());
 
         let mut gpt = pricing("gpt-4o", None);
         gpt.provider_id = "openai".into();
@@ -174,14 +143,6 @@ mod tests {
         let vm = present_pricing(&out, "openai");
         assert_eq!(vm.rows.len(), 1);
         assert_eq!(vm.rows[0].model, "gpt-4o");
-    }
-
-    #[test]
-    fn query_filters_by_alias() {
-        let out = make_output();
-        let vm = present_pricing(&out, "sonnet-4-5");
-        assert_eq!(vm.rows.len(), 1);
-        assert_eq!(vm.rows[0].model, "claude-sonnet-4-5");
     }
 
     #[test]

@@ -19,8 +19,7 @@ CREATE TABLE IF NOT EXISTS pricing (
     output_per_token       REAL NOT NULL,
     cache_read_per_token   REAL,
     cache_write_per_token  REAL,
-    last_synced_at         INTEGER NOT NULL,
-    alias                  TEXT
+    last_synced_at         INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pricing_model_id ON pricing(model_id);
 "#;
@@ -33,9 +32,6 @@ impl SqlitePricingRepository {
     pub fn new(conn: Arc<Mutex<Connection>>) -> Result<Self, AdapterError> {
         let c = conn.lock().unwrap();
         c.execute_batch(SCHEMA)?;
-        // Idempotent migration for DBs created before the alias column.
-        // SQLite ALTER TABLE errors with "duplicate column name" if already present — ignore it.
-        let _ = c.execute("ALTER TABLE pricing ADD COLUMN alias TEXT", []);
         drop(c);
         Ok(Self { conn })
     }
@@ -62,7 +58,6 @@ fn row_to_pricing(row: &rusqlite::Row) -> Result<ModelPricing, AdapterError> {
     let cache_read: Option<f64> = row.get(5)?;
     let cache_write: Option<f64> = row.get(6)?;
     let last_synced_days: i64 = row.get(7)?;
-    let alias: Option<String> = row.get(8)?;
     Ok(ModelPricing {
         lookup_key,
         model: ModelId::new(model_id).map_err(AdapterError::from)?,
@@ -78,7 +73,6 @@ fn row_to_pricing(row: &rusqlite::Row) -> Result<ModelPricing, AdapterError> {
             .transpose()
             .map_err(AdapterError::from)?,
         last_synced: from_epoch_days(last_synced_days)?,
-        alias,
     })
 }
 
@@ -91,8 +85,8 @@ impl PricingRepository for SqlitePricingRepository {
                 .prepare(
                     "INSERT OR REPLACE INTO pricing \
                      (lookup_key, model_id, provider_id, input_per_token, output_per_token, \
-                      cache_read_per_token, cache_write_per_token, last_synced_at, alias) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                      cache_read_per_token, cache_write_per_token, last_synced_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 )
                 .map_err(AdapterError::from)?;
             for r in rows {
@@ -105,7 +99,6 @@ impl PricingRepository for SqlitePricingRepository {
                     r.cache_read_rate.as_ref().map(|p| p.value()),
                     r.cache_write_rate.as_ref().map(|p| p.value()),
                     to_epoch_days(r.last_synced),
-                    r.alias,
                 ])
                 .map_err(AdapterError::from)?;
             }
@@ -128,7 +121,7 @@ impl PricingRepository for SqlitePricingRepository {
             .join(",");
         let sql = format!(
             "SELECT lookup_key, model_id, provider_id, input_per_token, output_per_token, \
-                    cache_read_per_token, cache_write_per_token, last_synced_at, alias \
+                    cache_read_per_token, cache_write_per_token, last_synced_at \
              FROM pricing WHERE lookup_key IN ({})",
             placeholders
         );
@@ -154,7 +147,7 @@ impl PricingRepository for SqlitePricingRepository {
         let mut stmt = conn
             .prepare(
                 "SELECT lookup_key, model_id, provider_id, input_per_token, output_per_token, \
-                        cache_read_per_token, cache_write_per_token, last_synced_at, alias \
+                        cache_read_per_token, cache_write_per_token, last_synced_at \
                  FROM pricing ORDER BY model_id",
             )
             .map_err(AdapterError::from)?;
@@ -209,7 +202,6 @@ mod tests {
             cache_read_rate: cache_read.map(|v| PricePerToken::new(v).unwrap()),
             cache_write_rate: None,
             last_synced: NaiveDate::from_ymd_opt(date.0, date.1, date.2).unwrap(),
-            alias: None,
         }
     }
 
@@ -279,38 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn alias_round_trips_through_upsert_and_list() {
-        let repo = setup();
-        let mut r = row("opus", "opus", 0.000005, None, (2026, 4, 23));
-        r.alias = Some("opus4.6".to_string());
-        repo.upsert_many(&[r]).unwrap();
-        let rows = repo.list().unwrap();
-        assert_eq!(rows[0].alias.as_deref(), Some("opus4.6"));
-    }
-
-    #[test]
-    fn alias_none_round_trips_as_none() {
-        let repo = setup();
-        repo.upsert_many(&[row("k", "m", 0.00001, None, (2026, 4, 23))])
-            .unwrap();
-        let rows = repo.list().unwrap();
-        assert_eq!(rows[0].alias, None);
-    }
-
-    #[test]
-    fn alias_round_trips_via_find_many() {
-        let repo = setup();
-        let mut r = row("opus", "opus", 0.000005, None, (2026, 4, 23));
-        r.alias = Some("opus4.6".to_string());
-        repo.upsert_many(&[r]).unwrap();
-        let out = repo.find_many(&["opus".to_string()]).unwrap();
-        assert_eq!(out["opus"].alias.as_deref(), Some("opus4.6"));
-    }
-
-    #[test]
-    fn migration_is_idempotent() {
-        // Creating a second SqlitePricingRepository on an already-migrated connection
-        // should not error — the ALTER TABLE is silently ignored.
+    fn schema_creation_is_idempotent() {
         let conn = Arc::new(Mutex::new(Connection::open_in_memory().unwrap()));
         SqlitePricingRepository::new(conn.clone()).unwrap();
         SqlitePricingRepository::new(conn).unwrap();

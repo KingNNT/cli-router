@@ -14,5 +14,4 @@ pub struct PricingRowVM {
     pub output: String,
     pub cache_read: String,
     pub cache_write: String,
-    pub alias: String,
 }
