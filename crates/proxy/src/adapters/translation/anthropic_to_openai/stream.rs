@@ -70,7 +70,9 @@ impl OpenAiToAnthropicStream {
         // Extract the single choice (index 0)
         let choice = chunk.get("choices").and_then(|c| c.get(0));
         let delta = choice.and_then(|c| c.get("delta")).unwrap_or(&Value::Null);
-        let finish_reason = choice.and_then(|c| c.get("finish_reason")).and_then(|f| f.as_str());
+        let finish_reason = choice
+            .and_then(|c| c.get("finish_reason"))
+            .and_then(|f| f.as_str());
 
         // First chunk ever: emit message_start
         if !self.started {
@@ -129,7 +131,10 @@ impl OpenAiToAnthropicStream {
             if let Some(completion) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
                 self.output_tokens = completion;
             }
-            if let Some(cached) = usage.pointer("/prompt_tokens_details/cached_tokens").and_then(|v| v.as_u64()) {
+            if let Some(cached) = usage
+                .pointer("/prompt_tokens_details/cached_tokens")
+                .and_then(|v| v.as_u64())
+            {
                 self.cached_tokens = cached;
             }
         }
@@ -186,7 +191,11 @@ impl OpenAiToAnthropicStream {
                         let anth_idx = self.next_anth_block_index;
                         self.next_anth_block_index += 1;
 
-                        let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let id = tc
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         let name = tc
                             .pointer("/function/name")
                             .and_then(|v| v.as_str())
@@ -504,7 +513,10 @@ mod tests {
         assert_eq!(events[4].1["content_block"]["type"], "tool_use");
         // tool block should have index >= 1
         let tool_idx = events[4].1["index"].as_u64().unwrap();
-        assert!(tool_idx >= 1, "tool block index should be >= 1, got {tool_idx}");
+        assert!(
+            tool_idx >= 1,
+            "tool block index should be >= 1, got {tool_idx}"
+        );
     }
 
     #[test]
@@ -579,8 +591,7 @@ mod tests {
                 .find(|(n, _)| n == "message_delta")
                 .expect("message_delta should be emitted");
             assert_eq!(
-                msg_delta.1["delta"]["stop_reason"],
-                anth_reason,
+                msg_delta.1["delta"]["stop_reason"], anth_reason,
                 "finish_reason {openai_reason} should map to {anth_reason}"
             );
         }

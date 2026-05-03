@@ -1,15 +1,20 @@
 //! Translate Anthropic /v1/messages request body to OpenAI /v1/chat/completions.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::application::errors::ProxyError;
 
 pub fn translate(body: &[u8]) -> Result<Vec<u8>, ProxyError> {
-    let v: Value = serde_json::from_slice(body)
-        .map_err(|e| ProxyError::BadRequest(format!("invalid anthropic request: {e}")))?;
+    let v: Value =
+        serde_json::from_slice(body).map_err(|e| ProxyError::TranslationInvalidRequest {
+            field: "body",
+            reason: format!("parse failed: {e}"),
+        })?;
     let translated = translate_value(&v)?;
-    serde_json::to_vec(&translated)
-        .map_err(|e| ProxyError::BadRequest(format!("translation serialize: {e}")))
+    serde_json::to_vec(&translated).map_err(|e| ProxyError::TranslationInvalidRequest {
+        field: "body",
+        reason: format!("serialize failed: {e}"),
+    })
 }
 
 fn translate_value(v: &Value) -> Result<Value, ProxyError> {
@@ -139,10 +144,8 @@ fn translate_message(msg: &Value) -> Result<Vec<Value>, ProxyError> {
                         }));
                     }
                     "tool_result" => {
-                        let tool_use_id =
-                            block.get("tool_use_id").cloned().unwrap_or(Value::Null);
-                        let tr_content =
-                            block.get("content").cloned().unwrap_or(Value::Null);
+                        let tool_use_id = block.get("tool_use_id").cloned().unwrap_or(Value::Null);
+                        let tr_content = block.get("content").cloned().unwrap_or(Value::Null);
                         let flat = flatten_text(&tr_content);
                         tool_messages.push(json!({
                             "role": "tool",
@@ -207,8 +210,7 @@ mod tests {
 
     #[test]
     fn plain_text_message() {
-        let body =
-            br#"{"model":"x","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}"#;
+        let body = br#"{"model":"x","max_tokens":10,"messages":[{"role":"user","content":"hi"}]}"#;
         let out: Value = serde_json::from_slice(&translate(body).unwrap()).unwrap();
         assert_eq!(out["model"], "x");
         assert_eq!(out["max_tokens"], 10);
@@ -245,11 +247,16 @@ mod tests {
         assert_eq!(out["messages"][0]["content"], "calling tool");
         assert_eq!(out["messages"][0]["tool_calls"][0]["id"], "t1");
         assert_eq!(out["messages"][0]["tool_calls"][0]["type"], "function");
-        assert_eq!(out["messages"][0]["tool_calls"][0]["function"]["name"], "search");
-        assert!(out["messages"][0]["tool_calls"][0]["function"]["arguments"]
-            .as_str()
-            .unwrap()
-            .contains("hello"));
+        assert_eq!(
+            out["messages"][0]["tool_calls"][0]["function"]["name"],
+            "search"
+        );
+        assert!(
+            out["messages"][0]["tool_calls"][0]["function"]["arguments"]
+                .as_str()
+                .unwrap()
+                .contains("hello")
+        );
     }
 
     #[test]
@@ -293,8 +300,7 @@ mod tests {
 
     #[test]
     fn stop_sequences_rename_to_stop() {
-        let body =
-            br#"{"model":"x","max_tokens":10,"messages":[],"stop_sequences":["END"]}"#;
+        let body = br#"{"model":"x","max_tokens":10,"messages":[],"stop_sequences":["END"]}"#;
         let out: Value = serde_json::from_slice(&translate(body).unwrap()).unwrap();
         assert_eq!(out["stop"][0], "END");
         assert!(out.get("stop_sequences").is_none());
@@ -319,8 +325,7 @@ mod tests {
 
     #[test]
     fn metadata_user_id_becomes_user() {
-        let body =
-            br#"{"model":"x","max_tokens":10,"messages":[],"metadata":{"user_id":"u42"}}"#;
+        let body = br#"{"model":"x","max_tokens":10,"messages":[],"metadata":{"user_id":"u42"}}"#;
         let out: Value = serde_json::from_slice(&translate(body).unwrap()).unwrap();
         assert_eq!(out["user"], "u42");
         assert!(out.get("metadata").is_none());

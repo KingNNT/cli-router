@@ -1,16 +1,21 @@
 //! Translate Anthropic /v1/messages response back to OpenAI /v1/chat/completions.
 
 use chrono::Utc;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::application::errors::ProxyError;
 
 pub fn translate(body: &[u8]) -> Result<Vec<u8>, ProxyError> {
-    let v: Value = serde_json::from_slice(body)
-        .map_err(|e| ProxyError::BadRequest(format!("invalid anthropic response: {e}")))?;
+    let v: Value =
+        serde_json::from_slice(body).map_err(|e| ProxyError::TranslationInvalidRequest {
+            field: "body",
+            reason: format!("parse failed: {e}"),
+        })?;
     let translated = translate_value(&v)?;
-    serde_json::to_vec(&translated)
-        .map_err(|e| ProxyError::BadRequest(format!("translation serialize: {e}")))
+    serde_json::to_vec(&translated).map_err(|e| ProxyError::TranslationInvalidRequest {
+        field: "body",
+        reason: format!("serialize failed: {e}"),
+    })
 }
 
 fn translate_value(v: &Value) -> Result<Value, ProxyError> {
@@ -170,7 +175,9 @@ mod tests {
     #[test]
     fn tool_use_only_response() {
         let body = anthropic_response(
-            vec![json!({"type": "tool_use", "id": "tu_1", "name": "search", "input": {"q": "rust"}})],
+            vec![
+                json!({"type": "tool_use", "id": "tu_1", "name": "search", "input": {"q": "rust"}}),
+            ],
             "tool_use",
             "msg_xyz",
             "claude-3-5-sonnet",
@@ -183,8 +190,7 @@ mod tests {
         assert_eq!(tool_calls[0]["type"], "function");
         assert_eq!(tool_calls[0]["function"]["name"], "search");
         let args: Value =
-            serde_json::from_str(tool_calls[0]["function"]["arguments"].as_str().unwrap())
-                .unwrap();
+            serde_json::from_str(tool_calls[0]["function"]["arguments"].as_str().unwrap()).unwrap();
         assert_eq!(args["q"], "rust");
     }
 
@@ -311,7 +317,9 @@ mod tests {
             json!({"input_tokens": 5, "output_tokens": 10}),
         );
         let out = run(&body);
-        let tcs = out["choices"][0]["message"]["tool_calls"].as_array().unwrap();
+        let tcs = out["choices"][0]["message"]["tool_calls"]
+            .as_array()
+            .unwrap();
         assert_eq!(tcs.len(), 3);
         assert_eq!(tcs[0]["id"], "a");
         assert_eq!(tcs[1]["id"], "b");
@@ -347,6 +355,9 @@ mod tests {
             json!({"input_tokens": 5, "output_tokens": 5}),
         );
         let out = run(&body);
-        assert_eq!(out["choices"][0]["message"]["content"], "part one\npart two");
+        assert_eq!(
+            out["choices"][0]["message"]["content"],
+            "part one\npart two"
+        );
     }
 }

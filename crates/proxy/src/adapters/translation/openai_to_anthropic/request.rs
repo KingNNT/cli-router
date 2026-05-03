@@ -1,15 +1,20 @@
 //! Translate OpenAI /v1/chat/completions request body to Anthropic /v1/messages.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::application::errors::ProxyError;
 
 pub fn translate(body: &[u8]) -> Result<Vec<u8>, ProxyError> {
-    let v: Value = serde_json::from_slice(body)
-        .map_err(|e| ProxyError::BadRequest(format!("invalid openai request: {e}")))?;
+    let v: Value =
+        serde_json::from_slice(body).map_err(|e| ProxyError::TranslationInvalidRequest {
+            field: "body",
+            reason: format!("parse failed: {e}"),
+        })?;
     let translated = translate_value(&v)?;
-    serde_json::to_vec(&translated)
-        .map_err(|e| ProxyError::BadRequest(format!("translation serialize: {e}")))
+    serde_json::to_vec(&translated).map_err(|e| ProxyError::TranslationInvalidRequest {
+        field: "body",
+        reason: format!("serialize failed: {e}"),
+    })
 }
 
 fn translate_value(v: &Value) -> Result<Value, ProxyError> {
@@ -255,7 +260,10 @@ fn translate_assistant_message(msg: &Value) -> Result<Value, ProxyError> {
                 .and_then(|a| a.as_str())
                 .unwrap_or("{}");
             let input: Value = serde_json::from_str(arguments).map_err(|e| {
-                ProxyError::BadRequest(format!("tool_call arguments not valid JSON: {e}"))
+                ProxyError::TranslationInvalidRequest {
+                    field: "tool_call.arguments",
+                    reason: format!("not valid JSON: {e}"),
+                }
             })?;
             content.push(json!({"type": "tool_use", "id": id, "name": name, "input": input}));
         }
@@ -295,8 +303,7 @@ mod tests {
 
     #[test]
     fn plain_text_message_round_trips() {
-        let body =
-            br#"{"model":"x","messages":[{"role":"user","content":"hi"}]}"#;
+        let body = br#"{"model":"x","messages":[{"role":"user","content":"hi"}]}"#;
         let out: Value = serde_json::from_slice(&translate(body).unwrap()).unwrap();
         assert_eq!(out["model"], "x");
         assert_eq!(out["messages"][0]["role"], "user");

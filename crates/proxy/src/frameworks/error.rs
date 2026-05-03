@@ -83,20 +83,6 @@ impl IntoResponse for ProxyError {
                 })),
             )
                 .into_response(),
-            ProxyError::TranslationUnsupported(msg) => (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({
-                    "error": {"type": "unsupported", "message": msg}
-                })),
-            )
-                .into_response(),
-            ProxyError::TranslationStreamProtocol(msg) => (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({
-                    "error": {"type": "upstream_protocol", "message": msg}
-                })),
-            )
-                .into_response(),
             other => {
                 tracing::error!(error = %other, "internal proxy error");
                 (

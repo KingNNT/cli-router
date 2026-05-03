@@ -55,9 +55,19 @@ pub fn wrap_openai_to_anthropic(upstream: BoxedByteStream) -> BoxedByteStream {
                         break;
                     }
 
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(data) {
-                        for s in fsm.feed_chunk(&value) {
-                            emit.push(Ok(Bytes::from(s.into_bytes())));
+                    match serde_json::from_str::<serde_json::Value>(data) {
+                        Ok(value) => {
+                            for s in fsm.feed_chunk(&value) {
+                                emit.push(Ok(Bytes::from(s.into_bytes())));
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "translation",
+                                error = %e,
+                                data = %data,
+                                "failed to parse SSE chunk; dropping"
+                            );
                         }
                     }
                 }
@@ -115,13 +125,23 @@ pub fn wrap_anthropic_to_openai(upstream: BoxedByteStream) -> BoxedByteStream {
                         continue;
                     }
 
-                    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&data_str) {
-                        let chunks = fsm.feed_event(&event_name, &value);
-                        for s in chunks {
-                            if s == "data: [DONE]\n\n" {
-                                done = true;
+                    match serde_json::from_str::<serde_json::Value>(&data_str) {
+                        Ok(value) => {
+                            let chunks = fsm.feed_event(&event_name, &value);
+                            for s in chunks {
+                                if s == "data: [DONE]\n\n" {
+                                    done = true;
+                                }
+                                emit.push(Ok(Bytes::from(s.into_bytes())));
                             }
-                            emit.push(Ok(Bytes::from(s.into_bytes())));
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "translation",
+                                error = %e,
+                                data = %data_str,
+                                "failed to parse SSE chunk; dropping"
+                            );
                         }
                     }
 

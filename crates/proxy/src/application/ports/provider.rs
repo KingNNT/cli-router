@@ -25,7 +25,8 @@ pub enum Direction {
 impl Direction {
     pub fn from_pair(client: ApiFormat, upstream: ApiFormat) -> Self {
         match (client, upstream) {
-            (ApiFormat::Anthropic, ApiFormat::Anthropic) | (ApiFormat::OpenAI, ApiFormat::OpenAI) => Self::Passthrough,
+            (ApiFormat::Anthropic, ApiFormat::Anthropic)
+            | (ApiFormat::OpenAI, ApiFormat::OpenAI) => Self::Passthrough,
             (ApiFormat::Anthropic, ApiFormat::OpenAI) => Self::AnthropicToOpenAI,
             (ApiFormat::OpenAI, ApiFormat::Anthropic) => Self::OpenAIToAnthropic,
         }

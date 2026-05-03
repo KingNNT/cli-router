@@ -5,7 +5,13 @@
 
 use serde_json::{Value, json};
 
-fn chunk(id: &str, model: &str, delta: Value, finish_reason: Option<&'static str>, usage: Option<Value>) -> String {
+fn chunk(
+    id: &str,
+    model: &str,
+    delta: Value,
+    finish_reason: Option<&'static str>,
+    usage: Option<Value>,
+) -> String {
     let finish = match finish_reason {
         Some(r) => Value::String(r.to_string()),
         None => Value::Null,
@@ -96,7 +102,11 @@ impl AnthropicToOpenAiStream {
 
             "content_block_start" => {
                 let content_block = data.get("content_block").unwrap_or(&Value::Null);
-                match content_block.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+                match content_block
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                {
                     "text" => {
                         // No emit; text deltas follow
                     }
@@ -198,14 +208,9 @@ impl AnthropicToOpenAiStream {
                 // Capture usage
                 let usage = data.get("usage");
                 if let Some(u) = usage {
-                    let output_tokens = u
-                        .get("output_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-                    let input_tokens = u
-                        .get("input_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                    let output_tokens =
+                        u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let input_tokens = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                     let cached = u
                         .get("cache_read_input_tokens")
                         .and_then(|v| v.as_u64())
@@ -287,7 +292,10 @@ mod tests {
         (event_name.to_string(), data)
     }
 
-    fn collect(fsm: &mut AnthropicToOpenAiStream, events: &[(String, Value)]) -> Vec<Option<Value>> {
+    fn collect(
+        fsm: &mut AnthropicToOpenAiStream,
+        events: &[(String, Value)],
+    ) -> Vec<Option<Value>> {
         let mut out = Vec::new();
         for (name, data) in events {
             for s in fsm.feed_event(name, data) {
@@ -324,7 +332,10 @@ mod tests {
                 "content_block_delta",
                 json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "world"}}),
             ),
-            anth_event("content_block_stop", json!({"type": "content_block_stop", "index": 0})),
+            anth_event(
+                "content_block_stop",
+                json!({"type": "content_block_stop", "index": 0}),
+            ),
             anth_event(
                 "message_delta",
                 json!({"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": null}, "usage": {"output_tokens": 5}}),
@@ -335,7 +346,10 @@ mod tests {
         let chunks = collect(&mut fsm, &events);
 
         // Last item is [DONE] (None)
-        assert!(chunks.last().unwrap().is_none(), "last item should be [DONE]");
+        assert!(
+            chunks.last().unwrap().is_none(),
+            "last item should be [DONE]"
+        );
 
         let data_chunks: Vec<&Value> = chunks.iter().filter_map(|c| c.as_ref()).collect();
         // role chunk, text delta x2, final chunk
@@ -370,7 +384,10 @@ mod tests {
                 "content_block_delta",
                 json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "\"hello\"}"}}),
             ),
-            anth_event("content_block_stop", json!({"type": "content_block_stop", "index": 0})),
+            anth_event(
+                "content_block_stop",
+                json!({"type": "content_block_stop", "index": 0}),
+            ),
             anth_event(
                 "message_delta",
                 json!({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": null}, "usage": {"output_tokens": 15}}),
@@ -423,7 +440,10 @@ mod tests {
                 "content_block_delta",
                 json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Let me search."}}),
             ),
-            anth_event("content_block_stop", json!({"type": "content_block_stop", "index": 0})),
+            anth_event(
+                "content_block_stop",
+                json!({"type": "content_block_stop", "index": 0}),
+            ),
             anth_event(
                 "content_block_start",
                 json!({"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "toolu_2", "name": "web_search", "input": {}}}),
@@ -432,7 +452,10 @@ mod tests {
                 "content_block_delta",
                 json!({"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "{\"query\":\"rust\"}"}}),
             ),
-            anth_event("content_block_stop", json!({"type": "content_block_stop", "index": 1})),
+            anth_event(
+                "content_block_stop",
+                json!({"type": "content_block_stop", "index": 1}),
+            ),
             anth_event(
                 "message_delta",
                 json!({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": null}, "usage": {"output_tokens": 20}}),
@@ -446,7 +469,10 @@ mod tests {
         // role + text_delta + tool_start + tool_arg_delta + final
         assert_eq!(data_chunks.len(), 5);
         assert_eq!(data_chunks[0]["choices"][0]["delta"]["role"], "assistant");
-        assert_eq!(data_chunks[1]["choices"][0]["delta"]["content"], "Let me search.");
+        assert_eq!(
+            data_chunks[1]["choices"][0]["delta"]["content"],
+            "Let me search."
+        );
         assert_eq!(
             data_chunks[2]["choices"][0]["delta"]["tool_calls"][0]["function"]["name"],
             "web_search"
@@ -470,7 +496,10 @@ mod tests {
                 "content_block_delta",
                 json!({"type": "content_block_delta", "index": 0, "delta": {"type": "input_json_delta", "partial_json": "{\"a\":1}"}}),
             ),
-            anth_event("content_block_stop", json!({"type": "content_block_stop", "index": 0})),
+            anth_event(
+                "content_block_stop",
+                json!({"type": "content_block_stop", "index": 0}),
+            ),
             anth_event(
                 "content_block_start",
                 json!({"type": "content_block_start", "index": 1, "content_block": {"type": "tool_use", "id": "tc_b", "name": "tool_b", "input": {}}}),
@@ -479,7 +508,10 @@ mod tests {
                 "content_block_delta",
                 json!({"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta", "partial_json": "{\"b\":2}"}}),
             ),
-            anth_event("content_block_stop", json!({"type": "content_block_stop", "index": 1})),
+            anth_event(
+                "content_block_stop",
+                json!({"type": "content_block_stop", "index": 1}),
+            ),
             anth_event(
                 "message_delta",
                 json!({"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": null}, "usage": {"output_tokens": 25}}),
@@ -527,8 +559,7 @@ mod tests {
             let data_chunks: Vec<&Value> = chunks.iter().filter_map(|c| c.as_ref()).collect();
             let final_chunk = data_chunks.last().unwrap();
             assert_eq!(
-                final_chunk["choices"][0]["finish_reason"],
-                oai_reason,
+                final_chunk["choices"][0]["finish_reason"], oai_reason,
                 "stop_reason {anth_reason} should map to {oai_reason}"
             );
         }

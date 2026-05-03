@@ -1,20 +1,28 @@
 //! Translate OpenAI chat completion response back to Anthropic /v1/messages.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::application::errors::ProxyError;
 
 pub fn translate(body: &[u8]) -> Result<Vec<u8>, ProxyError> {
-    let v: Value = serde_json::from_slice(body)
-        .map_err(|e| ProxyError::BadRequest(format!("invalid openai response: {e}")))?;
+    let v: Value =
+        serde_json::from_slice(body).map_err(|e| ProxyError::TranslationInvalidRequest {
+            field: "body",
+            reason: format!("parse failed: {e}"),
+        })?;
     let translated = translate_value(&v)?;
-    serde_json::to_vec(&translated)
-        .map_err(|e| ProxyError::BadRequest(format!("translation serialize: {e}")))
+    serde_json::to_vec(&translated).map_err(|e| ProxyError::TranslationInvalidRequest {
+        field: "body",
+        reason: format!("serialize failed: {e}"),
+    })
 }
 
 fn translate_value(v: &Value) -> Result<Value, ProxyError> {
     // 1. Build content array: text from message.content + tool_use blocks from message.tool_calls
-    let choice0 = v.get("choices").and_then(|c| c.get(0)).unwrap_or(&Value::Null);
+    let choice0 = v
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .unwrap_or(&Value::Null);
     let message = choice0.get("message").unwrap_or(&Value::Null);
 
     let mut content = Vec::<Value>::new();
@@ -33,8 +41,8 @@ fn translate_value(v: &Value) -> Result<Value, ProxyError> {
                 .pointer("/function/arguments")
                 .and_then(|a| a.as_str())
                 .unwrap_or("{}");
-            let input: Value = serde_json::from_str(args_str)
-                .unwrap_or(Value::Object(serde_json::Map::new()));
+            let input: Value =
+                serde_json::from_str(args_str).unwrap_or(Value::Object(serde_json::Map::new()));
             content.push(json!({"type": "tool_use", "id": id, "name": name, "input": input}));
         }
     }
