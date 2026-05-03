@@ -14,9 +14,18 @@ use shared::domain::value_objects::{ModelId, PricePerToken};
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Which API format the client used — determines which `forward_*` method
+/// the use case calls on the provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiFormat {
+    Anthropic,
+    OpenAI,
+}
+
 pub struct HandleMessagesInput {
     pub headers: HeaderMap,
     pub body: Bytes,
+    pub api_format: ApiFormat,
 }
 
 pub enum HandleMessagesOutput {
@@ -79,15 +88,28 @@ impl HandleMessages {
         })?;
 
         let streaming = is_streaming(&input.body);
-        let upstream = self
-            .provider
-            .forward(
-                "/v1/messages",
-                &input.headers,
-                input.body.clone(),
-                streaming,
-            )
-            .await?;
+        let upstream = match input.api_format {
+            ApiFormat::Anthropic => {
+                self.provider
+                    .forward(
+                        "/v1/messages",
+                        &input.headers,
+                        input.body.clone(),
+                        streaming,
+                    )
+                    .await?
+            }
+            ApiFormat::OpenAI => {
+                self.provider
+                    .forward_openai(
+                        "/v1/chat/completions",
+                        &input.headers,
+                        input.body.clone(),
+                        streaming,
+                    )
+                    .await?
+            }
+        };
 
         match upstream {
             UpstreamResponse::Buffered {
@@ -371,6 +393,7 @@ mod tests {
             .execute(HandleMessagesInput {
                 headers: HeaderMap::new(),
                 body: Bytes::from_static(b"{}"),
+                api_format: ApiFormat::Anthropic,
             })
             .await;
 
@@ -399,6 +422,7 @@ mod tests {
                 body: Bytes::from_static(
                     br#"{"model":"claude-3-5-sonnet-20241022","stream":false}"#,
                 ),
+                api_format: ApiFormat::Anthropic,
             })
             .await
             .unwrap();
@@ -428,6 +452,7 @@ mod tests {
             .execute(HandleMessagesInput {
                 headers: HeaderMap::new(),
                 body: Bytes::from_static(br#"{"model":"model-x"}"#),
+                api_format: ApiFormat::Anthropic,
             })
             .await
             .unwrap();
@@ -459,7 +484,8 @@ mod tests {
         let output = uc
             .execute(HandleMessagesInput {
                 headers: HeaderMap::new(),
-                body: Bytes::from_static(br#"{"model":"model-x","stream":true}"#),
+                body: Bytes::from_static(br#"{"model":"model-x"}"#),
+                api_format: ApiFormat::Anthropic,
             })
             .await
             .unwrap();
@@ -483,6 +509,7 @@ mod tests {
             .execute(HandleMessagesInput {
                 headers: HeaderMap::new(),
                 body: Bytes::from_static(br#"{"model":"model-x"}"#),
+                api_format: ApiFormat::Anthropic,
             })
             .await;
 

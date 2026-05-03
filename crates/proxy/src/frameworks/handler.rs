@@ -1,6 +1,6 @@
 //! /v1/messages handler — thin axum glue over HandleMessages.
 
-use crate::application::use_cases::{HandleMessages, HandleMessagesInput, HandleMessagesOutput};
+use crate::application::use_cases::{ApiFormat, HandleMessages, HandleMessagesInput, HandleMessagesOutput};
 use crate::frameworks::error::ProxyError;
 use crate::frameworks::stream::TeedStream;
 use axum::body::Body;
@@ -37,6 +37,7 @@ pub async fn messages(
         .execute(HandleMessagesInput {
             headers: parts.headers,
             body: body_bytes,
+            api_format: ApiFormat::Anthropic,
         })
         .await?;
 

@@ -7,4 +7,4 @@ pub use admin::{
     CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, StartAnthropicOAuth,
     TestProvider, UpdateConfig,
 };
-pub use handle_messages::{HandleMessages, HandleMessagesInput, HandleMessagesOutput};
+pub use handle_messages::{ApiFormat, HandleMessages, HandleMessagesInput, HandleMessagesOutput};
