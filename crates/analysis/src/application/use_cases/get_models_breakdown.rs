@@ -143,12 +143,14 @@ mod tests {
         let out = uc.execute(GetModelsBreakdownInput::default()).unwrap();
         assert_eq!(out.models.len(), 2);
         assert_eq!(out.missing_pricing_count, 1);
-        assert!(out
-            .unpriced_models
-            .contains(&ModelId::new("unknown/one").unwrap()));
-        assert!(!out
-            .unpriced_models
-            .contains(&ModelId::new("anthropic/opus").unwrap()));
+        assert!(
+            out.unpriced_models
+                .contains(&ModelId::new("unknown/one").unwrap())
+        );
+        assert!(
+            !out.unpriced_models
+                .contains(&ModelId::new("anthropic/opus").unwrap())
+        );
         // opus reconciled: 2000 * 0.00001 = 0.02
         let opus = out
             .models

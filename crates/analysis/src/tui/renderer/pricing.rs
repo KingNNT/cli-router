@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Cell, HighlightSpacing, Paragraph, Row, Table},
-    Frame,
 };
 
 use crate::adapters::view_models::PricingViewModel;
@@ -165,7 +165,7 @@ pub fn draw(f: &mut Frame, vm: &PricingViewModel, area: Rect, offset: usize, is_
 mod tests {
     use super::*;
     use crate::adapters::view_models::{PricingRowVM, PricingViewModel};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn render(vm: &PricingViewModel, offset: usize, is_searching: bool, w: u16, h: u16) -> String {
         let backend = TestBackend::new(w, h);

@@ -54,9 +54,7 @@ impl ZaiProvider {
         Self::build(
             http,
             base_url.unwrap_or_else(|| DEFAULT_BASE_URL.into()),
-            Some(
-                openai_base_url.unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.into()),
-            ),
+            Some(openai_base_url.unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.into())),
             auth,
         )
     }
@@ -203,12 +201,7 @@ mod tests {
 
     #[test]
     fn configure_uses_default_openai_base_url_when_none() {
-        let p = ZaiProvider::configure(
-            reqwest::Client::new(),
-            None,
-            None,
-            AuthHeader::Passthrough,
-        );
+        let p = ZaiProvider::configure(reqwest::Client::new(), None, None, AuthHeader::Passthrough);
         assert_eq!(p.base_url, "https://api.z.ai/api/anthropic");
         assert_eq!(
             p.openai_base_url,

@@ -3,7 +3,7 @@
 use crate::application::errors::ProxyError;
 use crate::application::ports::RequestLogPort;
 use crate::domain::{RequestStart, RequestUsage};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]

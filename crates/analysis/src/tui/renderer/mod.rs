@@ -8,11 +8,11 @@ pub mod sidebar;
 pub mod status_bar;
 
 use ratatui::{
+    Frame,
     layout::{Alignment, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
 use crate::tui::app_state::{AppState, Focus, Hit, HitRegions, View};

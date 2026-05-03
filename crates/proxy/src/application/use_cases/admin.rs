@@ -322,10 +322,7 @@ impl CompleteAnthropicOAuth {
             };
             prov.auth = AuthConfig::AnthropicOAuth {
                 access_token: tokens.access_token.clone(),
-                refresh_token: tokens
-                    .refresh_token
-                    .clone()
-                    .unwrap_or_default(),
+                refresh_token: tokens.refresh_token.clone().unwrap_or_default(),
                 expires_at_ms,
             };
             (config_to_payload(&cur), cur.clone())
@@ -463,17 +460,29 @@ fn payload_to_config(
     })
 }
 
-fn strategy_to_payload(s: crate::config::RoutingStrategy) -> proxy_admin_api::RoutingStrategyPayload {
+fn strategy_to_payload(
+    s: crate::config::RoutingStrategy,
+) -> proxy_admin_api::RoutingStrategyPayload {
     match s {
-        crate::config::RoutingStrategy::Failover => proxy_admin_api::RoutingStrategyPayload::Failover,
-        crate::config::RoutingStrategy::RoundRobin => proxy_admin_api::RoutingStrategyPayload::RoundRobin,
+        crate::config::RoutingStrategy::Failover => {
+            proxy_admin_api::RoutingStrategyPayload::Failover
+        }
+        crate::config::RoutingStrategy::RoundRobin => {
+            proxy_admin_api::RoutingStrategyPayload::RoundRobin
+        }
     }
 }
 
-fn payload_to_strategy(s: proxy_admin_api::RoutingStrategyPayload) -> crate::config::RoutingStrategy {
+fn payload_to_strategy(
+    s: proxy_admin_api::RoutingStrategyPayload,
+) -> crate::config::RoutingStrategy {
     match s {
-        proxy_admin_api::RoutingStrategyPayload::Failover => crate::config::RoutingStrategy::Failover,
-        proxy_admin_api::RoutingStrategyPayload::RoundRobin => crate::config::RoutingStrategy::RoundRobin,
+        proxy_admin_api::RoutingStrategyPayload::Failover => {
+            crate::config::RoutingStrategy::Failover
+        }
+        proxy_admin_api::RoutingStrategyPayload::RoundRobin => {
+            crate::config::RoutingStrategy::RoundRobin
+        }
     }
 }
 

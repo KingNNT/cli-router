@@ -138,15 +138,15 @@ fn io_err(e: std::io::Error) -> AdapterError {
 
 fn in_range(date: NaiveDate, range: Option<&DateRange>) -> bool {
     let Some(r) = range else { return true };
-    if let Some(from) = r.from {
-        if date < from {
-            return false;
-        }
+    if let Some(from) = r.from
+        && date < from
+    {
+        return false;
     }
-    if let Some(to) = r.to {
-        if date > to {
-            return false;
-        }
+    if let Some(to) = r.to
+        && date > to
+    {
+        return false;
     }
     true
 }
@@ -155,20 +155,20 @@ fn matches_filter(r: &UsageRecord, filter: &Filter) -> bool {
     if !in_range(r.date, filter.date_range.as_ref()) {
         return false;
     }
-    if let Some(p) = &filter.project {
-        if r.project.as_str() != p.as_str() {
-            return false;
-        }
+    if let Some(p) = &filter.project
+        && r.project.as_str() != p.as_str()
+    {
+        return false;
     }
-    if let Some(m) = &filter.model {
-        if r.model.as_str() != m.as_str() {
-            return false;
-        }
+    if let Some(m) = &filter.model
+        && r.model.as_str() != m.as_str()
+    {
+        return false;
     }
-    if let Some(s) = &filter.session_id {
-        if r.session_id != *s {
-            return false;
-        }
+    if let Some(s) = &filter.session_id
+        && r.session_id != *s
+    {
+        return false;
     }
     // provider filter is not available in JSONL records — pass-through.
     true
@@ -208,8 +208,8 @@ impl UsageRepository for ClaudeCodeUsageRepository {
             let entry = map
                 .entry(key)
                 .or_insert_with(|| (r.model.clone(), (TokenBreakdown::default(), Cost::zero())));
-            entry.1 .0 += r.tokens;
-            entry.1 .1 += r.cost;
+            entry.1.0 += r.tokens;
+            entry.1.1 += r.cost;
         }
         let mut out: Vec<DayModelRow> = map
             .into_iter()

@@ -4,7 +4,9 @@
 //! - `/v1/messages` → Anthropic Messages API
 //! - `/v1/chat/completions` → OpenAI Chat Completions API
 
-use crate::application::use_cases::{ApiFormat, HandleMessages, HandleMessagesInput, HandleMessagesOutput};
+use crate::application::use_cases::{
+    ApiFormat, HandleMessages, HandleMessagesInput, HandleMessagesOutput,
+};
 use crate::frameworks::error::ProxyError;
 use crate::frameworks::stream::TeedStream;
 use axum::body::Body;

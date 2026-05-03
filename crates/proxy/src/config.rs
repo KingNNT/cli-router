@@ -284,14 +284,16 @@ fn interpolate(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
-            if let Some(end) = bytes[i + 2..].iter().position(|&b| b == b'}') {
-                let var_name = &s[i + 2..i + 2 + end];
-                let value = std::env::var(var_name).unwrap_or_default();
-                out.push_str(&value);
-                i += 2 + end + 1;
-                continue;
-            }
+        if bytes[i] == b'$'
+            && i + 1 < bytes.len()
+            && bytes[i + 1] == b'{'
+            && let Some(end) = bytes[i + 2..].iter().position(|&b| b == b'}')
+        {
+            let var_name = &s[i + 2..i + 2 + end];
+            let value = std::env::var(var_name).unwrap_or_default();
+            out.push_str(&value);
+            i += 2 + end + 1;
+            continue;
         }
         out.push(bytes[i] as char);
         i += 1;
@@ -306,7 +308,7 @@ mod tests {
     #[test]
     fn interpolate_replaces_env_vars() {
         // SAFETY: this var name is unique to this test
-        std::env::set_var("CLI_ROUTER_TEST_INTERPOLATE_X", "hello");
+        unsafe { std::env::set_var("CLI_ROUTER_TEST_INTERPOLATE_X", "hello") };
         assert_eq!(
             interpolate("a-${CLI_ROUTER_TEST_INTERPOLATE_X}-b"),
             "a-hello-b"

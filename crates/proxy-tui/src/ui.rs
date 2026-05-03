@@ -2,16 +2,16 @@
 //! layout: tab bar, body for the active view, status line, optional modal.
 
 use crate::app::{
-    AppState, AuthInputKind, EditAuthModal, EditState, Modal, TestProviderModal, TestState, View,
-    ALL_VIEWS,
+    ALL_VIEWS, AppState, AuthInputKind, EditAuthModal, EditState, Modal, TestProviderModal,
+    TestState, View,
 };
 use chrono::{Local, TimeZone};
 use proxy_admin_api::{AuthPayload, ConfigPayload, RecentRequestsResponse, StatusResponse};
+use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Tabs, Wrap};
-use ratatui::Frame;
 
 pub fn draw(f: &mut Frame, state: &AppState) {
     let chunks = Layout::default()

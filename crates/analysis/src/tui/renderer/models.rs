@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::Span,
     widgets::{Cell, HighlightSpacing, Paragraph, Row, Table},
-    Frame,
 };
 
 use crate::adapters::view_models::ModelsViewModel;
@@ -88,7 +88,7 @@ pub fn draw(f: &mut Frame, vm: &ModelsViewModel, area: Rect, offset: usize) {
 mod tests {
     use super::*;
     use crate::adapters::view_models::{ModelRowVM, ModelsViewModel};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn render(vm: &ModelsViewModel, offset: usize, w: u16, h: u16) -> String {
         let backend = TestBackend::new(w, h);

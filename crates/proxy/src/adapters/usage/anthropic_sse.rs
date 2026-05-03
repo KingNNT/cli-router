@@ -104,10 +104,10 @@ impl AnthropicSseParser {
         let Ok(ev) = serde_json::from_slice::<MessageDeltaEvent>(data) else {
             return;
         };
-        if let Some(u) = ev.usage {
-            if let Some(out) = u.output_tokens {
-                self.state.output_tokens = Some(out);
-            }
+        if let Some(u) = ev.usage
+            && let Some(out) = u.output_tokens
+        {
+            self.state.output_tokens = Some(out);
         }
     }
 }

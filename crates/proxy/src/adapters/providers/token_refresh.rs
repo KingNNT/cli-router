@@ -78,10 +78,7 @@ async fn refresh_expiring(
             if let Some(prov) = cfg.providers.iter_mut().find(|p| p.name == name) {
                 prov.auth = AuthConfig::AnthropicOAuth {
                     access_token: tokens.access_token.clone(),
-                    refresh_token: tokens
-                        .refresh_token
-                        .clone()
-                        .unwrap_or(old_rt),
+                    refresh_token: tokens.refresh_token.clone().unwrap_or(old_rt),
                     expires_at_ms,
                 };
             }
@@ -94,10 +91,8 @@ async fn refresh_expiring(
         if let Some(parent) = config_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let toml_str = toml::to_string_pretty(&new_cfg)
-            .map_err(|e| format!("serialize: {e}"))?;
-        std::fs::write(config_path, toml_str)
-            .map_err(|e| format!("write: {e}"))?;
+        let toml_str = toml::to_string_pretty(&new_cfg).map_err(|e| format!("serialize: {e}"))?;
+        std::fs::write(config_path, toml_str).map_err(|e| format!("write: {e}"))?;
 
         live.reload(&new_cfg, http.clone())
             .map_err(|e| format!("reload: {e}"))?;

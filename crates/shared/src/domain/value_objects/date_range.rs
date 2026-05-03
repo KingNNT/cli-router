@@ -20,10 +20,10 @@ impl DateRange {
     /// assert!(DateRange::new(Some(b), Some(a)).is_err());
     /// ```
     pub fn new(from: Option<NaiveDate>, to: Option<NaiveDate>) -> Result<Self, DomainError> {
-        if let (Some(f), Some(t)) = (from, to) {
-            if f > t {
-                return Err(DomainError::InvalidDateRange { from: f, to: t });
-            }
+        if let (Some(f), Some(t)) = (from, to)
+            && f > t
+        {
+            return Err(DomainError::InvalidDateRange { from: f, to: t });
         }
         Ok(Self { from, to })
     }

@@ -170,9 +170,10 @@ mod tests {
     #[test]
     fn parse_skips_entries_missing_costs() {
         let rows = LiteLlmPricingSource::parse(&sample_body(), today()).unwrap();
-        assert!(rows
-            .iter()
-            .all(|r| r.model.as_str() != "missing-costs-model"));
+        assert!(
+            rows.iter()
+                .all(|r| r.model.as_str() != "missing-costs-model")
+        );
     }
 
     #[test]

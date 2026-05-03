@@ -123,17 +123,18 @@ pub(super) async fn forward(
         UpstreamResponse::Buffered { status, .. } => *status,
         UpstreamResponse::Streaming { status, .. } => *status,
     };
-    if status == 401 {
-        if let AuthHeader::OAuth { refresh_token, .. } = auth {
-            tracing::info!("401 from upstream, attempting OAuth refresh + retry");
-            match crate::adapters::oauth::refresh_token(http, refresh_token).await {
-                Ok(tokens) => {
-                    let refreshed = oauth_tokens_to_auth_header(&tokens);
-                    return send_request(http, base_url, &refreshed, path, headers, &body, streaming).await;
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "OAuth refresh on 401 failed");
-                }
+    if status == 401
+        && let AuthHeader::OAuth { refresh_token, .. } = auth
+    {
+        tracing::info!("401 from upstream, attempting OAuth refresh + retry");
+        match crate::adapters::oauth::refresh_token(http, refresh_token).await {
+            Ok(tokens) => {
+                let refreshed = oauth_tokens_to_auth_header(&tokens);
+                return send_request(http, base_url, &refreshed, path, headers, &body, streaming)
+                    .await;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "OAuth refresh on 401 failed");
             }
         }
     }
@@ -150,7 +151,9 @@ fn oauth_tokens_to_auth_header(tokens: &crate::adapters::oauth::OAuthTokens) -> 
     let expires_in_ms = tokens.expires_in.unwrap_or(3600) * 1000;
     let refresh = tokens.refresh_token.clone().unwrap_or_default();
     if refresh.is_empty() {
-        tracing::warn!("OAuth token response contained no refresh_token; auto-refresh will not be possible");
+        tracing::warn!(
+            "OAuth token response contained no refresh_token; auto-refresh will not be possible"
+        );
     }
     AuthHeader::OAuth {
         access_token: tokens.access_token.clone(),

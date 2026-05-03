@@ -1,9 +1,9 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Cell, HighlightSpacing, Paragraph, Row, Table},
-    Frame,
 };
 
 const TITLE_HEIGHT: u16 = 1;
@@ -453,7 +453,7 @@ fn two_line_header_sub(top: &str, bottom: &str, budget: usize) -> Cell<'static> 
 mod tests {
     use super::*;
     use crate::adapters::view_models::{DashboardViewModel, DayPivotRowVM, ModelBreakdownVM};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn sample_vm(model_name: &str) -> DashboardViewModel {
         let cell = ModelBreakdownVM {

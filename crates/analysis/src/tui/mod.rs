@@ -6,4 +6,4 @@ pub mod terminal;
 
 pub use app_state::{AppState, Focus, View};
 pub use event_loop::run;
-pub use terminal::{enter, restore, Term};
+pub use terminal::{Term, enter, restore};

@@ -8,9 +8,9 @@
 //! `AdminState` for admin — merged into one `Router<()>`.
 
 use crate::application::use_cases::HandleMessages;
-use crate::frameworks::admin::{build_admin_router, AdminState};
+use crate::frameworks::admin::{AdminState, build_admin_router};
 use crate::frameworks::handler::{chat_completions, messages};
-use axum::{routing::post, Router};
+use axum::{Router, routing::post};
 use std::sync::Arc;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;

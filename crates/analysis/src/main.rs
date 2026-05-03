@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use analysis::adapters::gateways::claudecode::{default_projects_root, ClaudeCodeUsageRepository};
+use analysis::adapters::gateways::claudecode::{ClaudeCodeUsageRepository, default_projects_root};
 use analysis::adapters::gateways::http::LiteLlmPricingSource;
 use analysis::adapters::gateways::sqlite::SqliteUsageRepository;
 use analysis::adapters::gateways::{DataSource, DataSourceCell, DispatchingUsageRepository};
@@ -14,7 +14,7 @@ use analysis::tui::{self, AppState};
 use shared::adapters::clock::SystemClock;
 use shared::adapters::gateways::sqlite::connection::default_db_path;
 use shared::adapters::gateways::sqlite::{
-    default_pricing_db_path, open_readonly, open_writable, SqlitePricingRepository,
+    SqlitePricingRepository, default_pricing_db_path, open_readonly, open_writable,
 };
 use shared::application::ports::{Clock, PricingRepository};
 

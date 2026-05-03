@@ -5,9 +5,9 @@
 //! the desired behavior — the request itself succeeded; cost is just
 //! best-effort metadata.
 
+use axum::Json;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 
 pub use crate::application::errors::ProxyError;
 

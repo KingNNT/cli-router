@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use chrono::NaiveDate;
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use crate::adapters::errors::AdapterError;
 use crate::application::errors::ApplicationError;

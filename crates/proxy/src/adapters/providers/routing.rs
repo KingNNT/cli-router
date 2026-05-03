@@ -22,8 +22,8 @@ use async_trait::async_trait;
 use axum::http::HeaderMap;
 use bytes::Bytes;
 use globset::{Glob, GlobMatcher};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Default cooldown when upstream doesn't send Retry-After (seconds).
 const DEFAULT_COOLDOWN_SECS: u64 = 60;
@@ -73,7 +73,8 @@ impl PoolEntry {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        self.cooldown_until.store(now_ms + duration_ms, Ordering::Relaxed);
+        self.cooldown_until
+            .store(now_ms + duration_ms, Ordering::Relaxed);
     }
 
     fn remaining_cooldown_ms(&self) -> u64 {
@@ -90,7 +91,6 @@ impl PoolEntry {
 }
 
 // ── RoutingProvider ────────────────────────────────────────────────────────────
-
 
 /// Split `model` on the first `/`. Returns `Some((namespace, bare_model))`
 /// if a `/` is present, `None` otherwise.
@@ -207,10 +207,12 @@ impl Provider for RoutingProvider {
         // Namespace routing: if model contains "/", extract namespace and route
         // directly to the named provider.
         if let Some((provider, bare_model)) = self.resolve_provider(&model) {
-            let rewritten = rewrite_model_in_body(&body, bare_model)
-                .map_err(ProxyError::BadRequest)?;
+            let rewritten =
+                rewrite_model_in_body(&body, bare_model).map_err(ProxyError::BadRequest)?;
             let rewritten_body = Bytes::from(rewritten);
-            return provider.forward(path, headers, rewritten_body, streaming).await;
+            return provider
+                .forward(path, headers, rewritten_body, streaming)
+                .await;
         }
 
         // If model contains "/" but we couldn't resolve, it's an unknown namespace.
@@ -227,10 +229,12 @@ impl Provider for RoutingProvider {
 
         match route.strategy {
             RoutingStrategy::Failover => {
-                self.forward_failover(route, path, headers, body, streaming).await
+                self.forward_failover(route, path, headers, body, streaming)
+                    .await
             }
             RoutingStrategy::RoundRobin => {
-                self.forward_round_robin(route, path, headers, body, streaming).await
+                self.forward_round_robin(route, path, headers, body, streaming)
+                    .await
             }
         }
     }
@@ -246,8 +250,8 @@ impl Provider for RoutingProvider {
 
         // Namespace routing.
         if let Some((provider, bare_model)) = self.resolve_provider(&model) {
-            let rewritten = rewrite_model_in_body(&body, bare_model)
-                .map_err(ProxyError::BadRequest)?;
+            let rewritten =
+                rewrite_model_in_body(&body, bare_model).map_err(ProxyError::BadRequest)?;
             let rewritten_body = Bytes::from(rewritten);
             return provider
                 .forward_openai(path, headers, rewritten_body, streaming)
@@ -293,7 +297,11 @@ impl RoutingProvider {
 
         for (i, entry) in route.pool.iter().enumerate() {
             let attempt_name = entry.provider.name();
-            match entry.provider.forward(path, headers, body.clone(), streaming).await {
+            match entry
+                .provider
+                .forward(path, headers, body.clone(), streaming)
+                .await
+            {
                 Ok(UpstreamResponse::Buffered {
                     status,
                     headers: resp_headers,
@@ -365,7 +373,11 @@ impl RoutingProvider {
                 continue;
             }
 
-            match entry.provider.forward(path, headers, body.clone(), streaming).await {
+            match entry
+                .provider
+                .forward(path, headers, body.clone(), streaming)
+                .await
+            {
                 Ok(UpstreamResponse::Buffered {
                     status,
                     headers: resp_headers,
@@ -455,8 +467,7 @@ impl RoutingProvider {
                     body: resp_body,
                 }) if status >= 500 => {
                     let preview =
-                        String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)])
-                            .to_string();
+                        String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)]).to_string();
                     tracing::warn!(
                         provider = attempt_name,
                         status,
@@ -542,8 +553,7 @@ impl RoutingProvider {
                     body: resp_body,
                 }) if status >= 500 => {
                     let preview =
-                        String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)])
-                            .to_string();
+                        String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)]).to_string();
                     tracing::warn!(
                         provider = attempt_name,
                         status,
@@ -657,7 +667,8 @@ mod tests {
 
     #[test]
     fn rule_rejects_invalid_glob() {
-        let res = RoutingProvider::builder().rule("[invalid", RoutingStrategy::Failover, dummy(), vec![]);
+        let res =
+            RoutingProvider::builder().rule("[invalid", RoutingStrategy::Failover, dummy(), vec![]);
         assert!(res.is_err());
     }
 
@@ -705,7 +716,10 @@ mod tests {
 
     #[test]
     fn split_namespace_splits_on_first_slash_only() {
-        assert_eq!(split_namespace("zai/glm-5/extra"), Some(("zai", "glm-5/extra")));
+        assert_eq!(
+            split_namespace("zai/glm-5/extra"),
+            Some(("zai", "glm-5/extra"))
+        );
     }
 
     #[test]
@@ -766,9 +780,7 @@ mod tests {
         let mut leaves = std::collections::HashMap::new();
         leaves.insert("zai".to_string(), dummy());
 
-        let router = RoutingProvider::builder()
-            .leaves(leaves)
-            .build();
+        let router = RoutingProvider::builder().leaves(leaves).build();
 
         assert!(router.resolve_provider("nonexistent/glm-5").is_none());
     }
@@ -781,10 +793,15 @@ mod tests {
             .build();
 
         let body = Bytes::from_static(br#"{"model":"nonexistent/glm-5","messages":[]}"#);
-        let result = router.forward("/v1/messages", &HeaderMap::new(), body, false).await;
+        let result = router
+            .forward("/v1/messages", &HeaderMap::new(), body, false)
+            .await;
         match result {
             Err(ProxyError::BadRequest(msg)) => {
-                assert!(msg.contains("nonexistent"), "error should mention the namespace, got: {msg}");
+                assert!(
+                    msg.contains("nonexistent"),
+                    "error should mention the namespace, got: {msg}"
+                );
             }
             _other => panic!("expected BadRequest, got success response"),
         }

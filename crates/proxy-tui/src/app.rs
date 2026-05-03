@@ -171,10 +171,10 @@ impl AppState {
     }
 
     pub fn set_recent(&mut self, r: Result<RecentRequestsResponse, String>) {
-        if let Ok(resp) = &r {
-            if self.requests_selected >= resp.items.len() {
-                self.requests_selected = resp.items.len().saturating_sub(1);
-            }
+        if let Ok(resp) = &r
+            && self.requests_selected >= resp.items.len()
+        {
+            self.requests_selected = resp.items.len().saturating_sub(1);
         }
         self.recent = Some(r);
     }
@@ -191,17 +191,17 @@ impl AppState {
     pub fn move_selection_down(&mut self) {
         match self.view {
             View::Providers => {
-                if let Some(Ok(cfg)) = &self.config {
-                    if self.providers_selected + 1 < cfg.providers.len() {
-                        self.providers_selected += 1;
-                    }
+                if let Some(Ok(cfg)) = &self.config
+                    && self.providers_selected + 1 < cfg.providers.len()
+                {
+                    self.providers_selected += 1;
                 }
             }
             View::Requests => {
-                if let Some(Ok(r)) = &self.recent {
-                    if self.requests_selected + 1 < r.items.len() {
-                        self.requests_selected += 1;
-                    }
+                if let Some(Ok(r)) = &self.recent
+                    && self.requests_selected + 1 < r.items.len()
+                {
+                    self.requests_selected += 1;
                 }
             }
             _ => {}

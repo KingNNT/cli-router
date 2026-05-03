@@ -10,7 +10,7 @@ pub mod zai;
 
 pub use anthropic::AnthropicProvider;
 pub use builder::{
-    build_from_config, build_leaf, build_leaves, build_routing_provider, BuildError,
+    BuildError, build_from_config, build_leaf, build_leaves, build_routing_provider,
 };
 pub use live::LiveProvider;
 pub use messages_protocol::AuthHeader;

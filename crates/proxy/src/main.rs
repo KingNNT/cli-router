@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use proxy::adapters::oauth::OAuthSessionStore;
-use proxy::adapters::providers::{build_from_config, LiveProvider};
-use proxy::adapters::storage::{ensure_current, SqliteRequestLogRepository};
+use proxy::adapters::providers::{LiveProvider, build_from_config};
+use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
 use proxy::application::ports::{Provider, RequestLogPort, RequestLogReadPort};
 use proxy::application::use_cases::{
     CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, HandleMessages,
@@ -14,8 +14,8 @@ use proxy::config::Config;
 use proxy::frameworks::AdminState;
 use rusqlite::Connection;
 use shared::adapters::clock::SystemClock;
-use shared::adapters::gateways::sqlite::{open_readonly, SqlitePricingRepository};
 use shared::adapters::gateways::CompositePricingRepository;
+use shared::adapters::gateways::sqlite::{SqlitePricingRepository, open_readonly};
 use shared::application::ports::{Clock, PricingRepository};
 use tracing_subscriber::EnvFilter;
 

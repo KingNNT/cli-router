@@ -179,9 +179,10 @@ mod tests {
         let (uc, _) = setup(vec![row("unknown/model", 1000, 7.77)], vec![]);
         let out = uc.execute(GetDashboardInput::default()).unwrap();
         assert_eq!(out.missing_pricing_count, 1);
-        assert!(out
-            .unpriced_models
-            .contains(&ModelId::new("unknown/model").unwrap()));
+        assert!(
+            out.unpriced_models
+                .contains(&ModelId::new("unknown/model").unwrap())
+        );
         assert!((out.rows[0].cost.value() - 7.77).abs() < 1e-9);
     }
 

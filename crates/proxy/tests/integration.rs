@@ -5,13 +5,13 @@ use std::sync::{Arc, Mutex};
 
 use chrono::NaiveDate;
 use proxy::adapters::providers::AnthropicProvider;
-use proxy::adapters::storage::{ensure_current, SqliteRequestLogRepository};
+use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
 use proxy::application::ports::{Provider, RequestLogPort};
 use proxy::application::use_cases::HandleMessages;
 use rusqlite::Connection;
 use shared::adapters::clock::SystemClock;
 use shared::application::ports::{Clock, PricingRepository};
-use wiremock::{matchers, Mock, MockServer, ResponseTemplate};
+use wiremock::{Mock, MockServer, ResponseTemplate, matchers};
 
 struct NullPricing;
 impl PricingRepository for NullPricing {
@@ -356,13 +356,15 @@ async fn admin_test_provider_returns_failure_for_unknown_provider() {
 
 #[tokio::test]
 async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
-    use proxy::adapters::providers::{build_from_config, LiveProvider};
+    use proxy::adapters::providers::{LiveProvider, build_from_config};
     use proxy::application::ports::Provider;
     use proxy::application::use_cases::{
         CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, StartAnthropicOAuth,
         TestProvider, UpdateConfig,
     };
-    use proxy::config::{AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule, RoutingStrategy};
+    use proxy::config::{
+        AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule, RoutingStrategy,
+    };
     use std::sync::RwLock;
     use std::time::SystemTime;
 
@@ -684,7 +686,14 @@ async fn start_routing_proxy(rules: Vec<(&'static str, String, Vec<String>)>) ->
             .iter()
             .map(|u| leaves.get(u).unwrap().clone())
             .collect();
-        builder = builder.rule(pattern, proxy::config::RoutingStrategy::Failover, primary, fb).unwrap();
+        builder = builder
+            .rule(
+                pattern,
+                proxy::config::RoutingStrategy::Failover,
+                primary,
+                fb,
+            )
+            .unwrap();
     }
     let provider: Arc<dyn Provider> = Arc::new(builder.build());
 

@@ -6,7 +6,7 @@
 //! out before doing any work, so a concurrent `swap()` doesn't block in-flight
 //! requests. Writes (`swap`) are rare (admin PUT, OAuth complete) and quick.
 
-use super::builder::{build_from_config, BuildError};
+use super::builder::{BuildError, build_from_config};
 use crate::application::errors::ProxyError;
 use crate::application::ports::{Provider, UpstreamResponse, UsageParser};
 use crate::config::Config;

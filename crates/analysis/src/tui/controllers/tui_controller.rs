@@ -178,36 +178,35 @@ impl TuiController {
                 }
 
                 // "?" help hint → toggle help.
-                if let Some(hit) = state.hit_regions.help_hint {
-                    if hit.contains(col, row) {
-                        state.help_open = true;
-                        return Ok(());
-                    }
+                if let Some(hit) = state.hit_regions.help_hint
+                    && hit.contains(col, row)
+                {
+                    state.help_open = true;
+                    return Ok(());
                 }
 
                 // Clicking inside the content area enters Content focus.
-                if let Some(hit) = state.hit_regions.content {
-                    if hit.contains(col, row)
-                        && state.focus == crate::tui::app_state::Focus::Sidebar
-                    {
-                        state.enter_content();
-                    }
+                if let Some(hit) = state.hit_regions.content
+                    && hit.contains(col, row)
+                    && state.focus == crate::tui::app_state::Focus::Sidebar
+                {
+                    state.enter_content();
                 }
             }
             MouseEventKind::ScrollDown => {
-                if let Some(hit) = state.hit_regions.content {
-                    if hit.contains(event.column, event.row) {
-                        let o = state.current_offset();
-                        state.set_current_offset(o.saturating_add(3));
-                    }
+                if let Some(hit) = state.hit_regions.content
+                    && hit.contains(event.column, event.row)
+                {
+                    let o = state.current_offset();
+                    state.set_current_offset(o.saturating_add(3));
                 }
             }
             MouseEventKind::ScrollUp => {
-                if let Some(hit) = state.hit_regions.content {
-                    if hit.contains(event.column, event.row) {
-                        let o = state.current_offset();
-                        state.set_current_offset(o.saturating_sub(3));
-                    }
+                if let Some(hit) = state.hit_regions.content
+                    && hit.contains(event.column, event.row)
+                {
+                    let o = state.current_offset();
+                    state.set_current_offset(o.saturating_sub(3));
                 }
             }
             MouseEventKind::ScrollRight if state.view == View::Dashboard => {
@@ -503,11 +502,13 @@ mod tests {
         assert!(state.dashboard_vm.is_none());
         assert!(state.models_vm.is_none());
         assert!(state.pricing_vm.is_none());
-        assert!(state
-            .status_message
-            .as_deref()
-            .unwrap()
-            .starts_with("Synced 2 models"));
+        assert!(
+            state
+                .status_message
+                .as_deref()
+                .unwrap()
+                .starts_with("Synced 2 models")
+        );
     }
 
     #[test]
