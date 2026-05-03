@@ -110,6 +110,7 @@ fn dummy_admin_state_with_path(
         providers: vec![],
         routing: vec![],
         affinity: Default::default(),
+        quota: Vec::new(),
     }));
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
     let http = reqwest::Client::new();
@@ -426,6 +427,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             priority: None,
         }],
         affinity: Default::default(),
+        quota: Vec::new(),
     };
 
     let nanos = SystemTime::now()

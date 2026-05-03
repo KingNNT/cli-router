@@ -527,6 +527,7 @@ fn payload_to_config(
         // admin API ever gains affinity editing, surface it on `ConfigPayload` and
         // remove this comment.
         affinity: Default::default(),
+        quota: Vec::new(),
     })
 }
 
@@ -684,6 +685,7 @@ mod tests {
             providers: vec![],
             routing: vec![],
             affinity: Default::default(),
+            quota: Vec::new(),
         }));
         let uc = GetStatus::new(stub(), 1_000, cfg);
         let s = uc.execute().unwrap();
@@ -728,6 +730,7 @@ mod tests {
                 priority: None,
             }],
             affinity: Default::default(),
+            quota: Vec::new(),
         };
         let payload = config_to_payload(&cfg);
         assert_eq!(payload.port, 8787);
