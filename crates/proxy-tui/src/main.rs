@@ -60,11 +60,15 @@ fn refresh_all(client: &AdminClient, state: &mut AppState) {
     state.set_status(client.get_status().map_err(|e| e.to_string()));
     state.set_config(client.get_config().map_err(|e| e.to_string()));
     state.set_recent(client.get_recent(50).map_err(|e| e.to_string()));
+    state.quota = Some(client.get_quota_status().map_err(|e| e.to_string()));
 }
 
 fn refresh_view(client: &AdminClient, state: &mut AppState) {
     match state.view {
-        View::Status => state.set_status(client.get_status().map_err(|e| e.to_string())),
+        View::Status => {
+            state.set_status(client.get_status().map_err(|e| e.to_string()));
+            state.quota = Some(client.get_quota_status().map_err(|e| e.to_string()));
+        }
         View::Providers | View::Routing => {
             state.set_config(client.get_config().map_err(|e| e.to_string()))
         }

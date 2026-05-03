@@ -227,6 +227,41 @@ pub struct ModelUsageRow {
     pub cost_usd: f64,
 }
 
+// ---- Quota status ----
+
+/// `GET /admin/quota/status`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuotaStatusListDto {
+    pub quotas: Vec<QuotaStatusDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuotaStatusDto {
+    pub provider: String,
+    pub window: String,
+    pub window_resets_in_ms: u64,
+    pub requests: QuotaMetricDto,
+    pub input_tokens: QuotaMetricDto,
+    pub output_tokens: QuotaMetricDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuotaMetricDto {
+    pub used: u64,
+    pub max: Option<u64>,
+    pub pct: u8,
+    pub state: QuotaMetricState,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum QuotaMetricState {
+    Ok,
+    Warn,
+    Rejecting,
+    Unconfigured,
+}
+
 #[cfg(test)]
 mod usage_summary_tests {
     use super::*;

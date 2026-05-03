@@ -1,6 +1,7 @@
 //! SQLite-backed RequestLogPort adapter.
 
 use crate::application::errors::ProxyError;
+use crate::application::ports::QuotaSeedRow;
 use crate::application::ports::RequestLogPort;
 use crate::domain::{DailyTotal, ModelTotal, RequestStart, RequestUsage, UsageSummary};
 use rusqlite::{Connection, params};
@@ -154,6 +155,28 @@ impl crate::application::ports::RequestLogReadPort for SqliteRequestLogRepositor
             daily,
             models,
         })
+    }
+
+    fn quota_seed(&self, cutoff_ms: i64) -> Result<Vec<QuotaSeedRow>, ProxyError> {
+        let conn = self.conn.lock().expect("repo mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT provider, started_at, input_tokens, output_tokens \
+             FROM requests \
+             WHERE started_at > ?1 AND status = 'completed'",
+        )?;
+        let rows = stmt.query_map(params![cutoff_ms], |row| {
+            Ok(QuotaSeedRow {
+                provider: row.get::<_, String>(0)?,
+                started_at_ms: row.get::<_, i64>(1)?,
+                input_tokens: row.get::<_, Option<i64>>(2)?.map(|n| n.max(0) as u64),
+                output_tokens: row.get::<_, Option<i64>>(3)?.map(|n| n.max(0) as u64),
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
 }
 
@@ -582,5 +605,55 @@ mod tests {
 
         let names: Vec<_> = summary.models.iter().map(|m| m.model.clone()).collect();
         assert_eq!(names, vec!["high", "mid", "low"]);
+    }
+
+    #[test]
+    fn quota_seed_returns_only_completed_rows_after_cutoff() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+
+        let cutoff_ms: i64 = 5_000;
+
+        // Before cutoff — completed; must be excluded.
+        seed_completed(&conn, "before", 1_000, "anthropic", "m", 10, 20, 0, 0, 0.01);
+
+        // After cutoff — completed; must be included.
+        seed_completed(
+            &conn,
+            "after-ok",
+            10_000,
+            "anthropic",
+            "m",
+            50,
+            60,
+            0,
+            0,
+            0.05,
+        );
+
+        // After cutoff — errored; must be excluded.
+        seed_errored(&conn, "after-err", 10_000, "anthropic", "m");
+
+        // After cutoff — still in 'started' state (no finished_at); must be excluded.
+        conn.execute(
+            r#"INSERT INTO requests
+               (id, user_id, provider, model, status, started_at)
+               VALUES ('after-started', 1, 'anthropic', 'm', 'started', 10000)"#,
+            [],
+        )
+        .unwrap();
+
+        let repo = SqliteRequestLogRepository::new(Arc::new(Mutex::new(conn)));
+        let rows = repo.quota_seed(cutoff_ms).unwrap();
+
+        assert_eq!(
+            rows.len(),
+            1,
+            "only the completed-after-cutoff row should appear"
+        );
+        assert_eq!(rows[0].provider, "anthropic");
+        assert_eq!(rows[0].started_at_ms, 10_000);
+        assert_eq!(rows[0].input_tokens, Some(50));
+        assert_eq!(rows[0].output_tokens, Some(60));
     }
 }

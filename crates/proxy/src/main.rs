@@ -3,12 +3,13 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use proxy::adapters::oauth::OAuthSessionStore;
-use proxy::adapters::providers::{LiveProvider, build_from_config};
+use proxy::adapters::providers::{LiveProvider, build_leaves, build_routing_provider};
+use proxy::adapters::quota::InMemoryQuota;
 use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
-use proxy::application::ports::{Provider, RequestLogPort, RequestLogReadPort};
+use proxy::application::ports::{Provider, QuotaPort, RequestLogPort, RequestLogReadPort};
 use proxy::application::use_cases::{
-    CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, GetUsageSummary,
-    HandleMessages, StartAnthropicOAuth, TestProvider, UpdateConfig,
+    CompleteAnthropicOAuth, GetConfig, GetQuotaStatus, GetRecentRequests, GetStatus,
+    GetUsageSummary, HandleMessages, StartAnthropicOAuth, TestProvider, UpdateConfig,
 };
 use proxy::config::Config;
 use proxy::frameworks::AdminState;
@@ -72,11 +73,52 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let http = reqwest::Client::builder().build()?;
-    let initial_router = build_from_config(&cfg, http.clone())?;
-    let live = Arc::new(LiveProvider::new(initial_router));
-    let provider: Arc<dyn Provider> = live.clone();
 
     let port = cfg.port;
+
+    // Build quota adapter from config, then seed from historical request log.
+    let now_ms_u64 = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    let quota_configs = cfg
+        .quota
+        .iter()
+        .map(|r| r.to_domain())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e: proxy::config::ConfigError| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string())
+        })?;
+
+    let quota = Arc::new(InMemoryQuota::new(quota_configs));
+
+    let max_window_ms: u64 = cfg
+        .quota
+        .iter()
+        .filter_map(|r| {
+            proxy::domain::quota::parse_window(&r.window)
+                .ok()
+                .map(|w| w.duration_ms())
+        })
+        .max()
+        .unwrap_or(0);
+
+    if max_window_ms > 0 {
+        let cutoff_ms = (now_ms_u64 as i64).saturating_sub(max_window_ms as i64);
+        let seed_rows = request_read
+            .quota_seed(cutoff_ms)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        quota.seed(seed_rows);
+    }
+
+    // Wire quota into the routing provider so pre-flight checks use leaf provider names.
+    let quota_port: Arc<dyn QuotaPort> = quota.clone();
+    let leaves = build_leaves(&cfg.providers, http.clone());
+    let initial_router = build_routing_provider(&cfg, &leaves, quota_port.clone())?;
+    let live = Arc::new(LiveProvider::new(initial_router, quota_port.clone()));
+    let provider: Arc<dyn Provider> = live.clone();
+
     let cfg_lock = Arc::new(RwLock::new(cfg));
 
     let use_case = Arc::new(HandleMessages::new(
@@ -85,6 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pricing,
         clock,
         local_user_id,
+        quota_port.clone(),
     ));
 
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
@@ -98,6 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let usage_summary = Arc::new(GetUsageSummary::new(request_read.clone()));
+    let quota_status = Arc::new(GetQuotaStatus::new(quota_port.clone()));
 
     let admin = AdminState {
         get_status: Arc::new(GetStatus::new(
@@ -123,6 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             live,
         )),
         usage_summary,
+        quota_status,
     };
 
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;

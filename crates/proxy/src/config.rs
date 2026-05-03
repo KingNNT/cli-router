@@ -30,6 +30,8 @@ pub struct Config {
     /// Conversation-affinity hashing. Defaults to enabled with sensible header list.
     #[serde(default)]
     pub affinity: AffinityConfig,
+    #[serde(default)]
+    pub quota: Vec<QuotaRule>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,6 +115,46 @@ pub struct MatchSpec {
     pub model: Option<String>,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuotaRule {
+    pub provider: String,
+    pub window: String,
+    #[serde(default)]
+    pub max_requests: Option<u64>,
+    #[serde(default)]
+    pub max_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub max_output_tokens: Option<u64>,
+    #[serde(default = "default_warn_pct")]
+    pub warn_pct: u8,
+}
+
+fn default_warn_pct() -> u8 {
+    80
+}
+
+impl QuotaRule {
+    pub fn to_domain(&self) -> Result<crate::domain::quota::QuotaConfig, ConfigError> {
+        let window = crate::domain::quota::parse_window(&self.window)
+            .map_err(|e| ConfigError::InvalidQuota(format!("provider {}: {e}", self.provider)))?;
+        if self.warn_pct > 100 {
+            return Err(ConfigError::InvalidQuota(format!(
+                "provider {}: warn_pct must be 0..=100",
+                self.provider
+            )));
+        }
+        Ok(crate::domain::quota::QuotaConfig {
+            provider: self.provider.clone(),
+            window,
+            max_requests: self.max_requests,
+            max_input_tokens: self.max_input_tokens,
+            max_output_tokens: self.max_output_tokens,
+            warn_pct: self.warn_pct,
+        })
+    }
+}
+
 /// Affinity hashing config — controls how requests are pinned to upstream keys.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -151,6 +193,8 @@ pub enum ConfigError {
     Toml(#[from] toml::de::Error),
     #[error("config validation: {0}")]
     Validation(String),
+    #[error("invalid quota: {0}")]
+    InvalidQuota(String),
 }
 
 impl Config {
@@ -219,6 +263,7 @@ impl Config {
                 priority: None,
             }],
             affinity: AffinityConfig::default(),
+            quota: Vec::new(),
         }
     }
 
@@ -459,6 +504,7 @@ mod tests {
             providers: vec![],
             routing: vec![],
             affinity: AffinityConfig::default(),
+            quota: Vec::new(),
         };
         assert!(cfg.validate().is_err());
     }
@@ -544,5 +590,73 @@ mod tests {
         let cfg: Config = toml::from_str(toml).unwrap();
         assert!(!cfg.affinity.enabled);
         assert_eq!(cfg.affinity.headers, vec!["x-trace-id".to_string()]);
+    }
+
+    #[test]
+    fn quota_section_parses_with_defaults() {
+        let toml = r#"
+            [[providers]]
+            name = "anthropic"
+            kind = "anthropic"
+            auth = { type = "passthrough" }
+
+            [[routing]]
+            match = { model = "*" }
+            provider = "anthropic"
+
+            [[quota]]
+            provider = "anthropic"
+            window = "rolling:1h"
+            max_requests = 100
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.quota.len(), 1);
+        assert_eq!(cfg.quota[0].warn_pct, 80);
+        let domain = cfg.quota[0].to_domain().unwrap();
+        assert_eq!(domain.window.duration_ms(), 60 * 60 * 1_000);
+    }
+
+    #[test]
+    fn quota_invalid_window_string_errors_at_conversion() {
+        let rule = QuotaRule {
+            provider: "anthropic".into(),
+            window: "not-valid".into(),
+            max_requests: None,
+            max_input_tokens: None,
+            max_output_tokens: None,
+            warn_pct: 80,
+        };
+        let err = rule.to_domain().unwrap_err();
+        assert!(format!("{err}").contains("anthropic"));
+    }
+
+    #[test]
+    fn quota_warn_pct_over_100_errors_at_conversion() {
+        let rule = QuotaRule {
+            provider: "zai".into(),
+            window: "rolling:1h".into(),
+            max_requests: Some(10),
+            max_input_tokens: None,
+            max_output_tokens: None,
+            warn_pct: 101,
+        };
+        let err = rule.to_domain().unwrap_err();
+        assert!(format!("{err}").contains("warn_pct"));
+    }
+
+    #[test]
+    fn quota_section_optional() {
+        let toml = r#"
+            [[providers]]
+            name = "anthropic"
+            kind = "anthropic"
+            auth = { type = "passthrough" }
+
+            [[routing]]
+            match = { model = "*" }
+            provider = "anthropic"
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert!(cfg.quota.is_empty());
     }
 }

@@ -6,7 +6,10 @@ use crate::app::{
     TestState, View,
 };
 use chrono::{Local, TimeZone};
-use proxy_admin_api::{AuthPayload, ConfigPayload, RecentRequestsResponse, StatusResponse};
+use proxy_admin_api::{
+    AuthPayload, ConfigPayload, QuotaMetricDto, QuotaMetricState, QuotaStatusListDto,
+    RecentRequestsResponse, StatusResponse,
+};
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -25,7 +28,7 @@ pub fn draw(f: &mut Frame, state: &AppState) {
 
     draw_tabs(f, chunks[0], state);
     match state.view {
-        View::Status => draw_status(f, chunks[1], state.status.as_ref()),
+        View::Status => draw_status(f, chunks[1], state.status.as_ref(), state.quota.as_ref()),
         View::Providers => draw_providers(f, chunks[1], state),
         View::Routing => draw_routing(f, chunks[1], state.config.as_ref()),
         View::Requests => draw_requests(f, chunks[1], state),
@@ -64,7 +67,22 @@ fn draw_tabs(f: &mut Frame, area: Rect, state: &AppState) {
 
 // ---- Status view ----
 
-fn draw_status(f: &mut Frame, area: Rect, status: Option<&Result<StatusResponse, String>>) {
+fn draw_status(
+    f: &mut Frame,
+    area: Rect,
+    status: Option<&Result<StatusResponse, String>>,
+    quota: Option<&Result<QuotaStatusListDto, String>>,
+) {
+    let halves = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(area);
+
+    draw_status_panel(f, halves[0], status);
+    draw_quota_panel(f, halves[1], quota);
+}
+
+fn draw_status_panel(f: &mut Frame, area: Rect, status: Option<&Result<StatusResponse, String>>) {
     let block = Block::default().borders(Borders::ALL).title(" Status ");
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -119,6 +137,94 @@ fn draw_status(f: &mut Frame, area: Rect, status: Option<&Result<StatusResponse,
         }
     };
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+// ---- Quota panel ----
+
+fn draw_quota_panel(f: &mut Frame, area: Rect, quota: Option<&Result<QuotaStatusListDto, String>>) {
+    let block = Block::default()
+        .title(" Quota Usage ")
+        .borders(Borders::ALL);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let quotas = match quota {
+        Some(Ok(q)) => &q.quotas,
+        Some(Err(e)) => {
+            let p = Paragraph::new(format!("error: {e}")).style(Style::default().fg(Color::Red));
+            f.render_widget(p, inner);
+            return;
+        }
+        None => {
+            f.render_widget(
+                Paragraph::new("loading…").style(Style::default().fg(Color::DarkGray)),
+                inner,
+            );
+            return;
+        }
+    };
+
+    if quotas.is_empty() {
+        f.render_widget(
+            Paragraph::new("(no quotas configured)").style(Style::default().fg(Color::DarkGray)),
+            inner,
+        );
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    for q in quotas {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "{}  ({})  resets in {}",
+                q.provider,
+                q.window,
+                fmt_duration_ms(q.window_resets_in_ms)
+            ),
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        push_metric_line(&mut lines, "req    ", &q.requests);
+        push_metric_line(&mut lines, "in_tok ", &q.input_tokens);
+        push_metric_line(&mut lines, "out_tok", &q.output_tokens);
+        lines.push(Line::from(""));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+fn push_metric_line(out: &mut Vec<Line<'static>>, label: &str, m: &QuotaMetricDto) {
+    if matches!(m.state, QuotaMetricState::Unconfigured) {
+        return;
+    }
+    let bar = bar_string(m.pct);
+    let color = match m.state {
+        QuotaMetricState::Ok => Color::Green,
+        QuotaMetricState::Warn => Color::Yellow,
+        QuotaMetricState::Rejecting => Color::Red,
+        QuotaMetricState::Unconfigured => Color::DarkGray,
+    };
+    let max_str = m.max.map(|n| n.to_string()).unwrap_or_else(|| "—".into());
+    out.push(Line::from(vec![
+        Span::raw(format!("  {} ", label)),
+        Span::styled(bar, Style::default().fg(color)),
+        Span::raw(format!(" {}% ({}/{})", m.pct, m.used, max_str)),
+    ]));
+}
+
+fn bar_string(pct: u8) -> String {
+    let filled = (pct as usize).min(100) / 5; // 20-char bar
+    let empty = 20 - filled;
+    "\u{2588}".repeat(filled) + &"\u{2591}".repeat(empty)
+}
+
+fn fmt_duration_ms(ms: u64) -> String {
+    let secs = ms / 1000;
+    if secs >= 3600 {
+        format!("{}h{}m", secs / 3600, (secs % 3600) / 60)
+    } else if secs >= 60 {
+        format!("{}m{}s", secs / 60, secs % 60)
+    } else {
+        format!("{secs}s")
+    }
 }
 
 // ---- Providers view ----

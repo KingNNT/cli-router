@@ -4,7 +4,7 @@
 //! transport.
 
 use crate::application::errors::ProxyError;
-use crate::application::ports::{RequestLogReadPort, UpstreamResponse};
+use crate::application::ports::{QuotaPort, RequestLogReadPort, UpstreamResponse};
 use crate::config::{AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule};
 use crate::domain::RequestRow;
 use axum::http::HeaderMap;
@@ -182,11 +182,11 @@ impl UpdateConfig {
     /// live provider tree so subsequent requests use the new config without
     /// requiring a daemon restart.
     pub fn execute(&self, payload: ConfigPayload) -> Result<(), ProxyError> {
-        let (proxy_db, pricing_db) = {
+        let (proxy_db, pricing_db, existing) = {
             let cur = self.config.read().expect("config rwlock poisoned");
-            (cur.proxy_db.clone(), cur.pricing_db.clone())
+            (cur.proxy_db.clone(), cur.pricing_db.clone(), cur.clone())
         };
-        let new_cfg = payload_to_config(payload, proxy_db, pricing_db)?;
+        let new_cfg = payload_to_config(payload, proxy_db, pricing_db, &existing)?;
         new_cfg
             .validate()
             .map_err(|e| ProxyError::BadRequest(format!("{e}")))?;
@@ -429,6 +429,81 @@ impl CompleteAnthropicOAuth {
     }
 }
 
+// ---- GetQuotaStatus ----
+
+pub struct GetQuotaStatus {
+    quota: Arc<dyn QuotaPort>,
+}
+
+impl GetQuotaStatus {
+    pub fn new(quota: Arc<dyn QuotaPort>) -> Self {
+        Self { quota }
+    }
+
+    pub fn execute(&self) -> proxy_admin_api::QuotaStatusListDto {
+        let snapshots = self.quota.snapshot();
+        proxy_admin_api::QuotaStatusListDto {
+            quotas: snapshots.into_iter().map(snapshot_to_dto).collect(),
+        }
+    }
+}
+
+fn snapshot_to_dto(s: crate::domain::quota::QuotaSnapshot) -> proxy_admin_api::QuotaStatusDto {
+    let window_str = match s.config.window {
+        crate::domain::quota::QuotaWindow::Rolling { duration_ms } => {
+            let secs = duration_ms / 1000;
+            if secs > 0 && secs % (24 * 3600) == 0 {
+                format!("rolling:{}d", secs / 86400)
+            } else if secs > 0 && secs % 3600 == 0 {
+                format!("rolling:{}h", secs / 3600)
+            } else if secs > 0 && secs % 60 == 0 {
+                format!("rolling:{}m", secs / 60)
+            } else {
+                format!("rolling:{secs}s")
+            }
+        }
+        crate::domain::quota::QuotaWindow::Calendar { unit } => match unit {
+            crate::domain::quota::CalendarUnit::Minute => "calendar:minute".into(),
+            crate::domain::quota::CalendarUnit::Hour => "calendar:hour".into(),
+            crate::domain::quota::CalendarUnit::Day => "calendar:day".into(),
+        },
+    };
+
+    let warn_pct = s.config.warn_pct;
+    let mk = |used: u64, max: Option<u64>| {
+        let pct = if let Some(m) = max {
+            if m > 0 {
+                ((used as u128 * 100) / m as u128).min(100) as u8
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        let state = match max {
+            None => proxy_admin_api::QuotaMetricState::Unconfigured,
+            Some(m) if used >= m => proxy_admin_api::QuotaMetricState::Rejecting,
+            Some(_) if pct >= warn_pct => proxy_admin_api::QuotaMetricState::Warn,
+            _ => proxy_admin_api::QuotaMetricState::Ok,
+        };
+        proxy_admin_api::QuotaMetricDto {
+            used,
+            max,
+            pct,
+            state,
+        }
+    };
+
+    proxy_admin_api::QuotaStatusDto {
+        provider: s.config.provider.clone(),
+        window: window_str,
+        window_resets_in_ms: s.next_boundary_ms,
+        requests: mk(s.totals.requests, s.config.max_requests),
+        input_tokens: mk(s.totals.input_tokens, s.config.max_input_tokens),
+        output_tokens: mk(s.totals.output_tokens, s.config.max_output_tokens),
+    }
+}
+
 // ---- helpers (DTO ↔ domain mapping) ----
 
 fn now_epoch_ms() -> i64 {
@@ -489,6 +564,7 @@ fn payload_to_config(
     p: ConfigPayload,
     proxy_db: PathBuf,
     pricing_db: PathBuf,
+    existing: &Config,
 ) -> Result<Config, ProxyError> {
     let providers = p
         .providers
@@ -523,10 +599,13 @@ fn payload_to_config(
         providers,
         routing,
         // Affinity is intentionally NOT round-tripped through `ConfigPayload` — it
-        // has no DTO field. PUT /admin/config falls back to defaults here. If the
-        // admin API ever gains affinity editing, surface it on `ConfigPayload` and
-        // remove this comment.
-        affinity: Default::default(),
+        // has no DTO field. Preserve the existing value across PUT /admin/config so
+        // a config update via the admin API doesn't silently reset affinity.
+        affinity: existing.affinity.clone(),
+        // Quota rules are NOT round-tripped through ConfigPayload — they have no
+        // DTO field. Preserve the existing rules across PUT /admin/config so a
+        // config update via the admin API doesn't silently disable quota enforcement.
+        quota: existing.quota.clone(),
     })
 }
 
@@ -661,6 +740,12 @@ mod tests {
                 }],
             })
         }
+        fn quota_seed(
+            &self,
+            _cutoff_ms: i64,
+        ) -> Result<Vec<crate::application::ports::QuotaSeedRow>, ProxyError> {
+            Ok(vec![])
+        }
     }
 
     fn stub() -> Arc<dyn RequestLogReadPort> {
@@ -681,6 +766,7 @@ mod tests {
             providers: vec![],
             routing: vec![],
             affinity: Default::default(),
+            quota: Vec::new(),
         }));
         let uc = GetStatus::new(stub(), 1_000, cfg);
         let s = uc.execute().unwrap();
@@ -725,6 +811,7 @@ mod tests {
                 priority: None,
             }],
             affinity: Default::default(),
+            quota: Vec::new(),
         };
         let payload = config_to_payload(&cfg);
         assert_eq!(payload.port, 8787);
@@ -768,7 +855,52 @@ mod tests {
             }],
             routing: vec![],
         };
-        let err = payload_to_config(p, PathBuf::new(), PathBuf::new()).unwrap_err();
+        let existing = Config {
+            port: 8787,
+            proxy_db: PathBuf::new(),
+            pricing_db: PathBuf::new(),
+            providers: vec![],
+            routing: vec![],
+            affinity: Default::default(),
+            quota: Vec::new(),
+        };
+        let err = payload_to_config(p, PathBuf::new(), PathBuf::new(), &existing).unwrap_err();
         assert!(format!("{err}").contains("bogus"));
+    }
+
+    #[test]
+    fn payload_to_config_preserves_quota_rules() {
+        use crate::config::QuotaRule;
+
+        let original = Config {
+            port: 8787,
+            proxy_db: PathBuf::from("/tmp/proxy.db"),
+            pricing_db: PathBuf::from("/tmp/pricing.db"),
+            providers: vec![],
+            routing: vec![],
+            affinity: Default::default(),
+            quota: vec![QuotaRule {
+                provider: "zai".into(),
+                window: "rolling:1h".into(),
+                max_requests: Some(100),
+                max_input_tokens: None,
+                max_output_tokens: None,
+                warn_pct: 80,
+            }],
+        };
+        let payload = config_to_payload(&original);
+        let roundtripped = payload_to_config(
+            payload,
+            original.proxy_db.clone(),
+            original.pricing_db.clone(),
+            &original,
+        )
+        .unwrap();
+        assert_eq!(
+            roundtripped.quota.len(),
+            1,
+            "quota rules must survive a config PUT round-trip"
+        );
+        assert_eq!(roundtripped.quota[0].provider, "zai");
     }
 }

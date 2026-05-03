@@ -4,8 +4,8 @@
 //! event loop and the results are fed back via `AppState::set_*` setters.
 
 use proxy_admin_api::{
-    AuthPayload, ConfigPayload, ProviderPayload, RecentRequestsResponse, StatusResponse,
-    TestProviderResponse, UsageSummaryResponse,
+    AuthPayload, ConfigPayload, ProviderPayload, QuotaStatusListDto, RecentRequestsResponse,
+    StatusResponse, TestProviderResponse, UsageSummaryResponse,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +180,7 @@ pub struct AppState {
     pub status: Option<Result<StatusResponse, String>>,
     pub config: Option<Result<ConfigPayload, String>>,
     pub recent: Option<Result<RecentRequestsResponse, String>>,
+    pub quota: Option<Result<QuotaStatusListDto, String>>,
     pub providers_selected: usize,
     pub requests_selected: usize,
     pub usage: UsagePaneState,
@@ -195,6 +196,7 @@ impl AppState {
             status: None,
             config: None,
             recent: None,
+            quota: None,
             providers_selected: 0,
             requests_selected: 0,
             usage: UsagePaneState::default(),

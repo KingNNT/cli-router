@@ -5,9 +5,9 @@
 //! show "daemon offline" without crashing.
 
 use proxy_admin_api::{
-    CompleteOAuthRequest, CompleteOAuthResponse, ConfigPayload, RecentRequestsResponse,
-    StartOAuthRequest, StartOAuthResponse, StatusResponse, TestProviderRequest,
-    TestProviderResponse, UsageSummaryResponse,
+    CompleteOAuthRequest, CompleteOAuthResponse, ConfigPayload, QuotaStatusListDto,
+    RecentRequestsResponse, StartOAuthRequest, StartOAuthResponse, StatusResponse,
+    TestProviderRequest, TestProviderResponse, UsageSummaryResponse,
 };
 use thiserror::Error;
 
@@ -99,6 +99,10 @@ impl AdminClient {
             .map_err(map_ureq_err)?;
         resp.into_json::<CompleteOAuthResponse>()
             .map_err(|e| ClientError::Decode(e.to_string()))
+    }
+
+    pub fn get_quota_status(&self) -> Result<QuotaStatusListDto, ClientError> {
+        get_json(&format!("{}/admin/quota/status", self.base_url))
     }
 
     pub fn test_provider(

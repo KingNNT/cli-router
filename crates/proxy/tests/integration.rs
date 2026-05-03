@@ -69,6 +69,7 @@ async fn start_proxy(upstream_url: String) -> (SocketAddr, Arc<Mutex<Connection>
         pricing,
         clock,
         local_user_id,
+        Arc::new(proxy::adapters::quota::InMemoryQuota::new(vec![])),
     ));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -95,8 +96,8 @@ fn dummy_admin_state_with_path(
     use proxy::adapters::providers::{AnthropicProvider, LiveProvider};
     use proxy::application::ports::{Provider, RequestLogReadPort};
     use proxy::application::use_cases::{
-        CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, GetUsageSummary,
-        StartAnthropicOAuth, TestProvider, UpdateConfig,
+        CompleteAnthropicOAuth, GetConfig, GetQuotaStatus, GetRecentRequests, GetStatus,
+        GetUsageSummary, StartAnthropicOAuth, TestProvider, UpdateConfig,
     };
     use proxy::config::Config;
     use std::path::PathBuf;
@@ -110,11 +111,15 @@ fn dummy_admin_state_with_path(
         providers: vec![],
         routing: vec![],
         affinity: Default::default(),
+        quota: Vec::new(),
     }));
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
     let http = reqwest::Client::new();
     let stub_provider: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(http.clone()));
-    let live = Arc::new(LiveProvider::new(stub_provider));
+    let live = Arc::new(LiveProvider::new(
+        stub_provider,
+        Arc::new(proxy::adapters::quota::NoopQuota),
+    ));
     proxy::frameworks::AdminState {
         get_status: Arc::new(GetStatus::new(read.clone(), 0, cfg.clone())),
         get_config: Arc::new(GetConfig::new(cfg.clone())),
@@ -134,7 +139,10 @@ fn dummy_admin_state_with_path(
             config_path,
             live,
         )),
-        usage_summary: Arc::new(GetUsageSummary::new(read)),
+        usage_summary: Arc::new(GetUsageSummary::new(read.clone())),
+        quota_status: Arc::new(GetQuotaStatus::new(Arc::new(
+            proxy::adapters::quota::InMemoryQuota::new(vec![]),
+        ))),
     }
 }
 
@@ -284,6 +292,7 @@ async fn admin_config_put_writes_file_and_replaces_in_memory() {
         pricing,
         clock,
         local_user_id,
+        Arc::new(proxy::adapters::quota::InMemoryQuota::new(vec![])),
     ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -361,8 +370,8 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
     use proxy::adapters::providers::{LiveProvider, build_from_config};
     use proxy::application::ports::Provider;
     use proxy::application::use_cases::{
-        CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, GetUsageSummary,
-        StartAnthropicOAuth, TestProvider, UpdateConfig,
+        CompleteAnthropicOAuth, GetConfig, GetQuotaStatus, GetRecentRequests, GetStatus,
+        GetUsageSummary, StartAnthropicOAuth, TestProvider, UpdateConfig,
     };
     use proxy::config::{
         AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule, RoutingStrategy,
@@ -426,6 +435,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             priority: None,
         }],
         affinity: Default::default(),
+        quota: Vec::new(),
     };
 
     let nanos = SystemTime::now()
@@ -436,8 +446,11 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
     let _ = std::fs::remove_file(&path);
 
     let http = reqwest::Client::new();
+    let quota: Arc<dyn proxy::application::ports::QuotaPort> =
+        Arc::new(proxy::adapters::quota::NoopQuota);
     let live = Arc::new(LiveProvider::new(
-        build_from_config(&cfg, http.clone()).unwrap(),
+        build_from_config(&cfg, http.clone(), quota.clone()).unwrap(),
+        quota,
     ));
     let cfg_lock = Arc::new(RwLock::new(cfg));
 
@@ -452,6 +465,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
         pricing,
         clock,
         local_user_id,
+        Arc::new(proxy::adapters::quota::InMemoryQuota::new(vec![])),
     ));
     let oauth_sessions = Arc::new(proxy::adapters::oauth::OAuthSessionStore::new());
     let admin = proxy::frameworks::AdminState {
@@ -473,7 +487,10 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             path.clone(),
             live,
         )),
-        usage_summary: Arc::new(GetUsageSummary::new(read)),
+        usage_summary: Arc::new(GetUsageSummary::new(read.clone())),
+        quota_status: Arc::new(GetQuotaStatus::new(Arc::new(
+            proxy::adapters::quota::InMemoryQuota::new(vec![]),
+        ))),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -712,6 +729,7 @@ async fn start_routing_proxy(rules: Vec<(&'static str, String, Vec<String>)>) ->
         pricing,
         clock,
         local_user_id,
+        Arc::new(proxy::adapters::quota::InMemoryQuota::new(vec![])),
     ));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

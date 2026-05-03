@@ -49,6 +49,30 @@ impl IntoResponse for ProxyError {
                 )
                     .into_response()
             }
+            ProxyError::QuotaExceeded {
+                provider,
+                metric,
+                retry_after_ms,
+            } => {
+                tracing::warn!(provider=%provider, metric=%metric, retry_after_ms, "proxy quota exceeded");
+                let mut headers = HeaderMap::new();
+                let retry_after_secs = retry_after_ms.div_ceil(1000);
+                if let Ok(val) = HeaderValue::from_str(&retry_after_secs.to_string()) {
+                    headers.insert("retry-after", val);
+                }
+                (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    headers,
+                    Json(serde_json::json!({
+                        "error": {
+                            "type": "rate_limit_error",
+                            "message": format!("proxy quota exceeded for {provider} on {metric}"),
+                            "retry_after": retry_after_secs,
+                        }
+                    })),
+                )
+                    .into_response()
+            }
             other => {
                 tracing::error!(error = %other, "internal proxy error");
                 (

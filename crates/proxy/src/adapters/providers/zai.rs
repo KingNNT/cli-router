@@ -115,6 +115,7 @@ impl Provider for ZaiProvider {
             headers,
             body,
             streaming,
+            self.name(),
         )
         .await
     }
@@ -145,6 +146,7 @@ impl Provider for ZaiProvider {
             headers,
             body,
             streaming,
+            self.name(),
         )
         .await
     }

@@ -7,10 +7,20 @@ use crate::application::errors::ProxyError;
 use crate::domain::{RequestRow, UsageSummary};
 use std::collections::BTreeMap;
 
+/// A single completed request, projected for quota counter seeding.
+#[derive(Debug, Clone)]
+pub struct QuotaSeedRow {
+    pub provider: String,
+    pub started_at_ms: i64,
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+}
+
 pub trait RequestLogReadPort: Send + Sync {
     fn total_count(&self) -> Result<u64, ProxyError>;
     fn count_by_provider(&self) -> Result<BTreeMap<String, u64>, ProxyError>;
     fn count_by_status(&self) -> Result<BTreeMap<String, u64>, ProxyError>;
     fn recent(&self, limit: u32) -> Result<Vec<RequestRow>, ProxyError>;
     fn summarize(&self, from_ms: i64, to_ms: i64) -> Result<UsageSummary, ProxyError>;
+    fn quota_seed(&self, cutoff_ms: i64) -> Result<Vec<QuotaSeedRow>, ProxyError>;
 }

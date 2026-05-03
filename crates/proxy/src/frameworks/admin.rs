@@ -7,16 +7,16 @@
 
 use crate::application::errors::ProxyError;
 use crate::application::use_cases::{
-    CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, GetUsageSummary,
-    StartAnthropicOAuth, TestProvider, UpdateConfig,
+    CompleteAnthropicOAuth, GetConfig, GetQuotaStatus, GetRecentRequests, GetStatus,
+    GetUsageSummary, StartAnthropicOAuth, TestProvider, UpdateConfig,
 };
 use axum::extract::{FromRef, Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use proxy_admin_api::{
-    CompleteOAuthRequest, CompleteOAuthResponse, ConfigPayload, RecentRequestsResponse,
-    StartOAuthRequest, StartOAuthResponse, StatusResponse, TestProviderRequest,
-    TestProviderResponse, UsageSummaryResponse,
+    CompleteOAuthRequest, CompleteOAuthResponse, ConfigPayload, QuotaStatusListDto,
+    RecentRequestsResponse, StartOAuthRequest, StartOAuthResponse, StatusResponse,
+    TestProviderRequest, TestProviderResponse, UsageSummaryResponse,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -31,6 +31,7 @@ pub struct AdminState {
     pub start_oauth: Arc<StartAnthropicOAuth>,
     pub complete_oauth: Arc<CompleteAnthropicOAuth>,
     pub usage_summary: Arc<GetUsageSummary>,
+    pub quota_status: Arc<GetQuotaStatus>,
 }
 
 impl FromRef<AdminState> for Arc<GetUsageSummary> {
@@ -48,6 +49,7 @@ pub fn build_admin_router(state: AdminState) -> Router {
         )
         .route("/admin/requests/recent", get(recent_handler))
         .route("/admin/usage/summary", get(usage_summary_handler))
+        .route("/admin/quota/status", get(quota_status_handler))
         .route("/admin/providers/:name/test", post(test_provider_handler))
         .route("/admin/oauth/anthropic/start", post(oauth_start_handler))
         .route(
@@ -120,4 +122,8 @@ async fn oauth_complete_handler(
     Json(req): Json<CompleteOAuthRequest>,
 ) -> Json<CompleteOAuthResponse> {
     Json(s.complete_oauth.execute(req).await)
+}
+
+async fn quota_status_handler(State(s): State<AdminState>) -> Json<QuotaStatusListDto> {
+    Json(s.quota_status.execute())
 }
