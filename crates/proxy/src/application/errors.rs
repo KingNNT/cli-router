@@ -25,4 +25,10 @@ pub enum ProxyError {
         retry_after_secs: u64,
         message: String,
     },
+    #[error("quota exceeded for {provider} on {metric}; retry after {retry_after_ms}ms")]
+    QuotaExceeded {
+        provider: String,
+        metric: &'static str,
+        retry_after_ms: u64,
+    },
 }
