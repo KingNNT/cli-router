@@ -448,9 +448,7 @@ impl GetQuotaStatus {
     }
 }
 
-fn snapshot_to_dto(
-    s: crate::adapters::quota::QuotaSnapshot,
-) -> proxy_admin_api::QuotaStatusDto {
+fn snapshot_to_dto(s: crate::adapters::quota::QuotaSnapshot) -> proxy_admin_api::QuotaStatusDto {
     let window_str = match s.config.window {
         crate::domain::quota::QuotaWindow::Rolling { duration_ms } => {
             let secs = duration_ms / 1000;
@@ -474,7 +472,11 @@ fn snapshot_to_dto(
     let warn_pct = s.config.warn_pct;
     let mk = |used: u64, max: Option<u64>| {
         let pct = if let Some(m) = max {
-            if m > 0 { ((used as u128 * 100) / m as u128).min(100) as u8 } else { 0 }
+            if m > 0 {
+                ((used as u128 * 100) / m as u128).min(100) as u8
+            } else {
+                0
+            }
         } else {
             0
         };
@@ -484,7 +486,12 @@ fn snapshot_to_dto(
             Some(_) if pct >= warn_pct => proxy_admin_api::QuotaMetricState::Warn,
             _ => proxy_admin_api::QuotaMetricState::Ok,
         };
-        proxy_admin_api::QuotaMetricDto { used, max, pct, state }
+        proxy_admin_api::QuotaMetricDto {
+            used,
+            max,
+            pct,
+            state,
+        }
     };
 
     proxy_admin_api::QuotaStatusDto {
@@ -730,7 +737,10 @@ mod tests {
                 }],
             })
         }
-        fn quota_seed(&self, _cutoff_ms: i64) -> Result<Vec<crate::application::ports::QuotaSeedRow>, ProxyError> {
+        fn quota_seed(
+            &self,
+            _cutoff_ms: i64,
+        ) -> Result<Vec<crate::application::ports::QuotaSeedRow>, ProxyError> {
             Ok(vec![])
         }
     }

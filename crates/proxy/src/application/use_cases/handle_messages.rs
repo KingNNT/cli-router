@@ -96,7 +96,10 @@ impl HandleMessages {
             crate::domain::quota::QuotaCheck::Warn { metric, used_pct } => {
                 tracing::warn!(provider=%provider_name, metric, used_pct, "quota approaching limit");
             }
-            crate::domain::quota::QuotaCheck::Reject { metric, retry_after_ms } => {
+            crate::domain::quota::QuotaCheck::Reject {
+                metric,
+                retry_after_ms,
+            } => {
                 return Err(ProxyError::QuotaExceeded {
                     provider: provider_name.to_string(),
                     metric,
@@ -470,7 +473,14 @@ mod tests {
             Arc::new(FakeProvider::new(Err("missing 'model'".into())));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
-        let uc = HandleMessages::new(provider, log_dyn, fake_pricing(), fake_clock(), 1, noop_quota());
+        let uc = HandleMessages::new(
+            provider,
+            log_dyn,
+            fake_pricing(),
+            fake_clock(),
+            1,
+            noop_quota(),
+        );
 
         let result = uc
             .execute(HandleMessagesInput {
@@ -497,7 +507,14 @@ mod tests {
         })));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
-        let uc = HandleMessages::new(Arc::new(prov), log_dyn, fake_pricing(), fake_clock(), 1, noop_quota());
+        let uc = HandleMessages::new(
+            Arc::new(prov),
+            log_dyn,
+            fake_pricing(),
+            fake_clock(),
+            1,
+            noop_quota(),
+        );
 
         let output = uc
             .execute(HandleMessagesInput {
@@ -529,7 +546,14 @@ mod tests {
         })));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
-        let uc = HandleMessages::new(Arc::new(prov), log_dyn, fake_pricing(), fake_clock(), 1, noop_quota());
+        let uc = HandleMessages::new(
+            Arc::new(prov),
+            log_dyn,
+            fake_pricing(),
+            fake_clock(),
+            1,
+            noop_quota(),
+        );
 
         let output = uc
             .execute(HandleMessagesInput {
@@ -562,7 +586,14 @@ mod tests {
         })));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
-        let uc = HandleMessages::new(Arc::new(prov), log_dyn, fake_pricing(), fake_clock(), 1, noop_quota());
+        let uc = HandleMessages::new(
+            Arc::new(prov),
+            log_dyn,
+            fake_pricing(),
+            fake_clock(),
+            1,
+            noop_quota(),
+        );
 
         let output = uc
             .execute(HandleMessagesInput {
@@ -657,7 +688,14 @@ mod tests {
         prov.forward_response = Mutex::new(Some(Err(ProxyError::BadRequest("simulated".into()))));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
-        let uc = HandleMessages::new(Arc::new(prov), log_dyn, fake_pricing(), fake_clock(), 1, noop_quota());
+        let uc = HandleMessages::new(
+            Arc::new(prov),
+            log_dyn,
+            fake_pricing(),
+            fake_clock(),
+            1,
+            noop_quota(),
+        );
 
         let result = uc
             .execute(HandleMessagesInput {

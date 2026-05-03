@@ -2,11 +2,11 @@
 //! counters. Seeded from the SQLite request log on startup so counters
 //! survive proxy restarts (within the window).
 
-use crate::application::ports::{QuotaSeedRow, QuotaPort};
+use crate::application::ports::{QuotaPort, QuotaSeedRow};
+use crate::domain::RequestUsage;
 use crate::domain::quota::{
     CalendarCounter, CalendarUnit, QuotaCheck, QuotaConfig, QuotaWindow, RingBuffer, evaluate,
 };
-use crate::domain::RequestUsage;
 use std::sync::Mutex;
 
 fn now_epoch_ms() -> u64 {
@@ -18,7 +18,10 @@ fn now_epoch_ms() -> u64 {
 
 enum Counter {
     Rolling(RingBuffer),
-    Calendar { counter: CalendarCounter, unit: CalendarUnit },
+    Calendar {
+        counter: CalendarCounter,
+        unit: CalendarUnit,
+    },
 }
 
 impl Counter {
@@ -64,11 +67,15 @@ struct Entry {
 impl Entry {
     fn new(config: QuotaConfig) -> Self {
         let window = config.window;
-        Self { config, counter: Counter::new(window) }
+        Self {
+            config,
+            counter: Counter::new(window),
+        }
     }
 
     fn add(&mut self, now_ms: u64, requests: u64, input_tokens: u64, output_tokens: u64) {
-        self.counter.add(now_ms, requests, input_tokens, output_tokens);
+        self.counter
+            .add(now_ms, requests, input_tokens, output_tokens);
     }
 }
 
@@ -87,7 +94,9 @@ pub struct QuotaSnapshot {
 impl InMemoryQuota {
     pub fn new(configs: Vec<QuotaConfig>) -> Self {
         let entries = configs.into_iter().map(Entry::new).collect();
-        Self { entries: Mutex::new(entries) }
+        Self {
+            entries: Mutex::new(entries),
+        }
     }
 
     /// Returns a point-in-time snapshot of all configured quotas and their
@@ -158,7 +167,9 @@ mod tests {
     fn cfg(provider: &str, max_requests: u64) -> QuotaConfig {
         QuotaConfig {
             provider: provider.into(),
-            window: QuotaWindow::Rolling { duration_ms: 60 * 60 * 1_000 }, // 1h
+            window: QuotaWindow::Rolling {
+                duration_ms: 60 * 60 * 1_000,
+            }, // 1h
             max_requests: Some(max_requests),
             max_input_tokens: None,
             max_output_tokens: None,
@@ -228,7 +239,13 @@ mod tests {
         quota.record("anthropic", &usage(10, 5));
         let result = quota.check("anthropic");
         assert!(
-            matches!(result, QuotaCheck::Reject { metric: "requests", .. }),
+            matches!(
+                result,
+                QuotaCheck::Reject {
+                    metric: "requests",
+                    ..
+                }
+            ),
             "expected Reject at max, got {result:?}"
         );
     }

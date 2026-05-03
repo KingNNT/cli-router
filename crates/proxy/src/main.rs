@@ -109,9 +109,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if max_window_ms > 0 {
         let cutoff_ms = (now_ms_u64 as i64).saturating_sub(max_window_ms as i64);
-        let seed_rows = request_read.quota_seed(cutoff_ms).map_err(|e| {
-            std::io::Error::other(e.to_string())
-        })?;
+        let seed_rows = request_read
+            .quota_seed(cutoff_ms)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         quota.seed(seed_rows);
     }
 

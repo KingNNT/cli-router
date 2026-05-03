@@ -49,7 +49,11 @@ impl IntoResponse for ProxyError {
                 )
                     .into_response()
             }
-            ProxyError::QuotaExceeded { provider, metric, retry_after_ms } => {
+            ProxyError::QuotaExceeded {
+                provider,
+                metric,
+                retry_after_ms,
+            } => {
                 tracing::warn!(provider=%provider, metric=%metric, retry_after_ms, "proxy quota exceeded");
                 let mut headers = HeaderMap::new();
                 let retry_after_secs = retry_after_ms.div_ceil(1000);

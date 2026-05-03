@@ -4,13 +4,15 @@ use std::sync::Arc;
 
 use proxy::adapters::quota::InMemoryQuota;
 use proxy::application::ports::QuotaPort;
-use proxy::domain::quota::{QuotaCheck, QuotaConfig, QuotaWindow};
 use proxy::domain::RequestUsage;
+use proxy::domain::quota::{QuotaCheck, QuotaConfig, QuotaWindow};
 
 fn cfg(provider: &str, max_req: u64) -> QuotaConfig {
     QuotaConfig {
         provider: provider.into(),
-        window: QuotaWindow::Rolling { duration_ms: 60 * 60 * 1000 }, // 1h
+        window: QuotaWindow::Rolling {
+            duration_ms: 60 * 60 * 1000,
+        }, // 1h
         max_requests: Some(max_req),
         max_input_tokens: None,
         max_output_tokens: None,
@@ -31,9 +33,15 @@ fn quota_blocks_after_max_requests() {
     }
     let result = q.check("zai");
     match result {
-        QuotaCheck::Reject { metric, retry_after_ms } => {
+        QuotaCheck::Reject {
+            metric,
+            retry_after_ms,
+        } => {
             assert_eq!(metric, "requests");
-            assert!(retry_after_ms > 0, "retry_after_ms must be positive when rejecting");
+            assert!(
+                retry_after_ms > 0,
+                "retry_after_ms must be positive when rejecting"
+            );
         }
         other => panic!("expected Reject, got {other:?}"),
     }
@@ -59,7 +67,10 @@ fn warn_at_80_then_reject_at_100() {
     for _ in 0..2 {
         q.record("zai", &u);
     }
-    assert!(matches!(q.check("zai"), QuotaCheck::Reject { .. }), "100% should be Reject");
+    assert!(
+        matches!(q.check("zai"), QuotaCheck::Reject { .. }),
+        "100% should be Reject"
+    );
 }
 
 #[test]

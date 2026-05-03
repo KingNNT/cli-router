@@ -1,7 +1,7 @@
 //! QuotaPort — application-layer interface for usage-quota tracking.
 
-use crate::domain::quota::QuotaCheck;
 use crate::domain::RequestUsage;
+use crate::domain::quota::QuotaCheck;
 
 pub trait QuotaPort: Send + Sync {
     /// Pre-flight check for the given provider name. Returns `Ok` when no

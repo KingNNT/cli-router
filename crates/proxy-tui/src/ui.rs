@@ -141,12 +141,10 @@ fn draw_status_panel(f: &mut Frame, area: Rect, status: Option<&Result<StatusRes
 
 // ---- Quota panel ----
 
-fn draw_quota_panel(
-    f: &mut Frame,
-    area: Rect,
-    quota: Option<&Result<QuotaStatusListDto, String>>,
-) {
-    let block = Block::default().title(" Quota Usage ").borders(Borders::ALL);
+fn draw_quota_panel(f: &mut Frame, area: Rect, quota: Option<&Result<QuotaStatusListDto, String>>) {
+    let block = Block::default()
+        .title(" Quota Usage ")
+        .borders(Borders::ALL);
     let inner = block.inner(area);
     f.render_widget(block, area);
 

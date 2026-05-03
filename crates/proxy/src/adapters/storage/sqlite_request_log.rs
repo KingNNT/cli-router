@@ -1,8 +1,8 @@
 //! SQLite-backed RequestLogPort adapter.
 
 use crate::application::errors::ProxyError;
-use crate::application::ports::RequestLogPort;
 use crate::application::ports::QuotaSeedRow;
+use crate::application::ports::RequestLogPort;
 use crate::domain::{DailyTotal, ModelTotal, RequestStart, RequestUsage, UsageSummary};
 use rusqlite::{Connection, params};
 use std::sync::{Arc, Mutex};
@@ -618,7 +618,18 @@ mod tests {
         seed_completed(&conn, "before", 1_000, "anthropic", "m", 10, 20, 0, 0, 0.01);
 
         // After cutoff — completed; must be included.
-        seed_completed(&conn, "after-ok", 10_000, "anthropic", "m", 50, 60, 0, 0, 0.05);
+        seed_completed(
+            &conn,
+            "after-ok",
+            10_000,
+            "anthropic",
+            "m",
+            50,
+            60,
+            0,
+            0,
+            0.05,
+        );
 
         // After cutoff — errored; must be excluded.
         seed_errored(&conn, "after-err", 10_000, "anthropic", "m");
@@ -635,7 +646,11 @@ mod tests {
         let repo = SqliteRequestLogRepository::new(Arc::new(Mutex::new(conn)));
         let rows = repo.quota_seed(cutoff_ms).unwrap();
 
-        assert_eq!(rows.len(), 1, "only the completed-after-cutoff row should appear");
+        assert_eq!(
+            rows.len(),
+            1,
+            "only the completed-after-cutoff row should appear"
+        );
         assert_eq!(rows[0].provider, "anthropic");
         assert_eq!(rows[0].started_at_ms, 10_000);
         assert_eq!(rows[0].input_tokens, Some(50));
