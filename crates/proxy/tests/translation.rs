@@ -151,6 +151,52 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
     }
 }
 
+/// Like `start_translation_proxy` but also returns the repo so callers can
+/// inspect persisted rows.
+async fn start_translation_proxy_with_repo(
+    leaf: Arc<dyn Provider>,
+) -> (SocketAddr, Arc<SqliteRequestLogRepository>) {
+    let conn = Connection::open_in_memory().unwrap();
+    ensure_current(&conn).unwrap();
+    let local_user_id: i64 = conn
+        .query_row("SELECT id FROM users WHERE external_id='local'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    let conn = Arc::new(Mutex::new(conn));
+
+    let provider: Arc<dyn Provider> = Arc::new(
+        RoutingProvider::builder()
+            .rule("*", RoutingStrategy::Failover, leaf, vec![])
+            .unwrap()
+            .build(),
+    );
+
+    let repo = Arc::new(SqliteRequestLogRepository::new(conn));
+    let request_log: Arc<dyn RequestLogPort> = repo.clone();
+    let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+    let pricing: Arc<dyn PricingRepository> = Arc::new(NullPricing);
+
+    let use_case = Arc::new(HandleMessages::new(
+        provider,
+        request_log,
+        pricing,
+        clock,
+        local_user_id,
+        Arc::new(proxy::adapters::quota::InMemoryQuota::new(vec![])),
+    ));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let admin = dummy_admin_state(repo.clone());
+    let app = proxy::frameworks::build_router(use_case, admin);
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (addr, repo)
+}
+
 // ── Test 1: Anthropic client → OpenAI upstream ─────────────────────────────────
 //
 // Client sends POST /v1/messages (Anthropic format).
@@ -397,4 +443,82 @@ async fn passthrough_when_formats_match_no_translation() {
     assert_eq!(sent_body["model"], original_model);
     // max_tokens preserved (Anthropic field).
     assert_eq!(sent_body["max_tokens"], 50);
+}
+
+// ── Test 4: translation_direction persists in the request log ──────────────────
+//
+// After an anthropic→openai translation completes, the DB row written by
+// complete() must have translation_direction = 'anthropic→openai' and
+// /admin/status must report translations_completed == 1.
+
+#[tokio::test(flavor = "multi_thread")]
+async fn translation_direction_persists_in_request_log() {
+    use proxy::application::ports::RequestLogReadPort;
+
+    let upstream = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl-persist",
+            "object": "chat.completion",
+            "created": 1_700_000_000u64,
+            "model": "test-model",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "ok"},
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 5,
+                "completion_tokens": 3,
+                "total_tokens": 8
+            }
+        })))
+        .mount(&upstream)
+        .await;
+
+    let leaf: Arc<dyn Provider> = Arc::new(ZaiProvider::configure(
+        reqwest::Client::new(),
+        None,
+        Some(upstream.uri()),
+        proxy::adapters::providers::AuthHeader::Passthrough,
+    ));
+
+    let (proxy_addr, repo) = start_translation_proxy_with_repo(leaf).await;
+
+    // Anthropic-format client → OpenAI-native upstream → anthropic→openai translation.
+    let resp = reqwest::Client::new()
+        .post(format!("http://{proxy_addr}/v1/messages"))
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({
+                "model": "test-model",
+                "max_tokens": 50,
+                "messages": [{"role": "user", "content": "hello"}]
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200, "proxy should return 200");
+
+    // Verify the persisted row has translation_direction set.
+    let rows = repo.recent(10).unwrap();
+    assert_eq!(rows.len(), 1, "exactly one request row");
+    assert_eq!(
+        rows[0].translation_direction.as_deref(),
+        Some("anthropic→openai"),
+        "translation_direction must be persisted on the completed row"
+    );
+    assert_eq!(rows[0].status, "completed", "row must be completed");
+
+    // Verify /admin/status reports the translation.
+    let counts = repo.count_translations().unwrap();
+    assert_eq!(counts.completed, 1, "translations_completed must be 1");
+    assert_eq!(
+        counts.by_direction.get("anthropic→openai"),
+        Some(&1),
+        "by_direction must record anthropic→openai"
+    );
 }

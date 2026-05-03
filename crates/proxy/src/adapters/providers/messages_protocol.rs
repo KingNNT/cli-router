@@ -273,6 +273,7 @@ async fn send_request(
             headers: headers_out,
             body,
             provider_id: provider_id.to_string(),
+            translation_direction: None,
         })
     } else {
         let body = resp.bytes().await?;
@@ -281,6 +282,7 @@ async fn send_request(
             headers: headers_out,
             body,
             provider_id: provider_id.to_string(),
+            translation_direction: None,
         })
     }
 }

@@ -7,8 +7,6 @@ pub struct RequestStart {
     pub provider: String, // 'anthropic'
     pub model: String,
     pub started_at: i64, // epoch ms
-    /// e.g. "anthropic→openai" or "openai→anthropic"; None when passthrough.
-    pub translation_direction: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -18,6 +16,8 @@ pub struct RequestUsage {
     pub cache_read_tokens: Option<u64>,
     pub cache_creation_tokens: Option<u64>,
     pub cost_usd: Option<f64>,
+    /// e.g. "anthropic→openai" or "openai→anthropic"; None when passthrough.
+    pub translation_direction: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -24,15 +24,14 @@ impl RequestLogPort for SqliteRequestLogRepository {
         let conn = self.conn.lock().expect("repo mutex poisoned");
         conn.execute(
             "INSERT INTO requests \
-             (id, user_id, provider, model, status, started_at, translation_direction) \
-             VALUES (?1, ?2, ?3, ?4, 'started', ?5, ?6)",
+             (id, user_id, provider, model, status, started_at) \
+             VALUES (?1, ?2, ?3, ?4, 'started', ?5)",
             params![
                 start.id,
                 start.user_id,
                 start.provider,
                 start.model,
                 start.started_at,
-                start.translation_direction,
             ],
         )?;
         Ok(())
@@ -48,7 +47,8 @@ impl RequestLogPort for SqliteRequestLogRepository {
                 output_tokens = ?4, \
                 cache_read_tokens = ?5, \
                 cache_creation_tokens = ?6, \
-                cost_usd = ?7 \
+                cost_usd = ?7, \
+                translation_direction = ?8 \
              WHERE id = ?1",
             params![
                 id,
@@ -58,6 +58,7 @@ impl RequestLogPort for SqliteRequestLogRepository {
                 usage.cache_read_tokens.map(|v| v as i64),
                 usage.cache_creation_tokens.map(|v| v as i64),
                 usage.cost_usd,
+                usage.translation_direction.as_deref(),
             ],
         )?;
         Ok(())
@@ -416,7 +417,6 @@ mod tests {
             provider: "anthropic".into(),
             model: "claude-3-5-sonnet-20241022".into(),
             started_at: 1_700_000_000_000,
-            translation_direction: None,
         })
         .unwrap();
 
@@ -442,7 +442,6 @@ mod tests {
             provider: "anthropic".into(),
             model: "m".into(),
             started_at: 1,
-            translation_direction: None,
         })
         .unwrap();
         repo.complete(
@@ -454,6 +453,7 @@ mod tests {
                 cache_read_tokens: Some(0),
                 cache_creation_tokens: Some(0),
                 cost_usd: Some(0.0123),
+                translation_direction: None,
             },
         )
         .unwrap();
@@ -483,7 +483,6 @@ mod tests {
             provider: "anthropic".into(),
             model: "m".into(),
             started_at: 1,
-            translation_direction: None,
         })
         .unwrap();
         repo.fail(

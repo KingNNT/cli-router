@@ -271,9 +271,7 @@ impl Provider for RoutingProvider {
             let direction = Direction::from_pair(ApiFormat::Anthropic, provider.native_format());
             let send_body = Self::translate_request(&rewritten_body, direction)?;
             let raw_resp = match provider.native_format() {
-                ApiFormat::Anthropic => {
-                    provider.forward(path, headers, send_body, streaming).await
-                }
+                ApiFormat::Anthropic => provider.forward(path, headers, send_body, streaming).await,
                 ApiFormat::OpenAI => {
                     provider
                         .forward_openai(path, headers, send_body, streaming)
@@ -301,8 +299,15 @@ impl Provider for RoutingProvider {
                     .await
             }
             RoutingStrategy::RoundRobin => {
-                self.forward_round_robin(route, path, headers, body, streaming, ApiFormat::Anthropic)
-                    .await
+                self.forward_round_robin(
+                    route,
+                    path,
+                    headers,
+                    body,
+                    streaming,
+                    ApiFormat::Anthropic,
+                )
+                .await
             }
         }
     }
@@ -330,9 +335,7 @@ impl Provider for RoutingProvider {
                         .forward_openai(path, headers, send_body, streaming)
                         .await
                 }
-                ApiFormat::Anthropic => {
-                    provider.forward(path, headers, send_body, streaming).await
-                }
+                ApiFormat::Anthropic => provider.forward(path, headers, send_body, streaming).await,
             }?;
             return Self::translate_upstream_response(raw_resp, direction);
         }
@@ -364,10 +367,7 @@ impl Provider for RoutingProvider {
 impl RoutingProvider {
     /// Translate a request body from `client_format` to the provider's native format.
     /// Returns `(translated_body, direction)`. For `Passthrough` the original body is returned.
-    fn translate_request(
-        body: &Bytes,
-        direction: Direction,
-    ) -> Result<Bytes, ProxyError> {
+    fn translate_request(body: &Bytes, direction: Direction) -> Result<Bytes, ProxyError> {
         match direction {
             Direction::Passthrough => Ok(body.clone()),
             Direction::AnthropicToOpenAI => {
@@ -407,6 +407,7 @@ impl RoutingProvider {
         resp: UpstreamResponse,
         direction: Direction,
     ) -> Result<UpstreamResponse, ProxyError> {
+        let direction_label = direction.as_label().map(str::to_string);
         match direction {
             Direction::Passthrough => Ok(resp),
             Direction::AnthropicToOpenAI => match resp {
@@ -415,6 +416,7 @@ impl RoutingProvider {
                     headers,
                     body,
                     provider_id,
+                    ..
                 } => {
                     let translated_body = Self::translate_response_buffered(&body, direction)?;
                     Ok(UpstreamResponse::Buffered {
@@ -422,6 +424,7 @@ impl RoutingProvider {
                         headers,
                         body: translated_body,
                         provider_id,
+                        translation_direction: direction_label,
                     })
                 }
                 UpstreamResponse::Streaming {
@@ -429,11 +432,13 @@ impl RoutingProvider {
                     headers,
                     body,
                     provider_id,
+                    ..
                 } => Ok(UpstreamResponse::Streaming {
                     status,
                     headers,
                     body: stream_wrap::wrap_openai_to_anthropic(body),
                     provider_id,
+                    translation_direction: direction_label,
                 }),
             },
             Direction::OpenAIToAnthropic => match resp {
@@ -442,6 +447,7 @@ impl RoutingProvider {
                     headers,
                     body,
                     provider_id,
+                    ..
                 } => {
                     let translated_body = Self::translate_response_buffered(&body, direction)?;
                     Ok(UpstreamResponse::Buffered {
@@ -449,6 +455,7 @@ impl RoutingProvider {
                         headers,
                         body: translated_body,
                         provider_id,
+                        translation_direction: direction_label,
                     })
                 }
                 UpstreamResponse::Streaming {
@@ -456,11 +463,13 @@ impl RoutingProvider {
                     headers,
                     body,
                     provider_id,
+                    ..
                 } => Ok(UpstreamResponse::Streaming {
                     status,
                     headers,
                     body: stream_wrap::wrap_anthropic_to_openai(body),
                     provider_id,
+                    translation_direction: direction_label,
                 }),
             },
         }
@@ -577,6 +586,7 @@ impl RoutingProvider {
                     headers: resp_headers,
                     body: resp_body,
                     provider_id,
+                    ..
                 }) if status >= 500 => {
                     let preview =
                         String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)]).to_string();
@@ -590,22 +600,25 @@ impl RoutingProvider {
                     if i + 1 == total {
                         // Return the last 5xx — apply translation anyway so the client
                         // gets the shape it expects.
-                        let translated =
-                            Self::translate_upstream_response(
-                                UpstreamResponse::Buffered {
-                                    status,
-                                    headers: resp_headers,
-                                    body: resp_body,
-                                    provider_id,
-                                },
-                                direction,
-                            )
-                            .unwrap_or_else(|_| UpstreamResponse::Buffered {
-                                status: 502,
-                                headers: HeaderMap::new(),
-                                body: Bytes::from_static(b"{\"error\":{\"type\":\"translation_error\"}}"),
-                                provider_id: attempt_name.to_string(),
-                            });
+                        let translated = Self::translate_upstream_response(
+                            UpstreamResponse::Buffered {
+                                status,
+                                headers: resp_headers,
+                                body: resp_body,
+                                provider_id,
+                                translation_direction: None,
+                            },
+                            direction,
+                        )
+                        .unwrap_or_else(|_| UpstreamResponse::Buffered {
+                            status: 502,
+                            headers: HeaderMap::new(),
+                            body: Bytes::from_static(
+                                b"{\"error\":{\"type\":\"translation_error\"}}",
+                            ),
+                            provider_id: attempt_name.to_string(),
+                            translation_direction: None,
+                        });
                         return Ok(translated);
                     }
                     continue;
@@ -796,6 +809,7 @@ impl RoutingProvider {
                     headers: resp_headers,
                     body: resp_body,
                     provider_id,
+                    ..
                 }) if status >= 500 => {
                     let preview =
                         String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)]).to_string();
@@ -807,22 +821,25 @@ impl RoutingProvider {
                         "upstream 5xx; trying next fallback"
                     );
                     if i + 1 == total {
-                        let translated =
-                            Self::translate_upstream_response(
-                                UpstreamResponse::Buffered {
-                                    status,
-                                    headers: resp_headers,
-                                    body: resp_body,
-                                    provider_id,
-                                },
-                                direction,
-                            )
-                            .unwrap_or_else(|_| UpstreamResponse::Buffered {
-                                status: 502,
-                                headers: HeaderMap::new(),
-                                body: Bytes::from_static(b"{\"error\":{\"type\":\"translation_error\"}}"),
-                                provider_id: attempt_name.to_string(),
-                            });
+                        let translated = Self::translate_upstream_response(
+                            UpstreamResponse::Buffered {
+                                status,
+                                headers: resp_headers,
+                                body: resp_body,
+                                provider_id,
+                                translation_direction: None,
+                            },
+                            direction,
+                        )
+                        .unwrap_or_else(|_| UpstreamResponse::Buffered {
+                            status: 502,
+                            headers: HeaderMap::new(),
+                            body: Bytes::from_static(
+                                b"{\"error\":{\"type\":\"translation_error\"}}",
+                            ),
+                            provider_id: attempt_name.to_string(),
+                            translation_direction: None,
+                        });
                         return Ok(translated);
                     }
                     continue;
