@@ -522,6 +522,10 @@ fn payload_to_config(
         pricing_db,
         providers,
         routing,
+        // Affinity is intentionally NOT round-tripped through `ConfigPayload` — it
+        // has no DTO field. PUT /admin/config falls back to defaults here. If the
+        // admin API ever gains affinity editing, surface it on `ConfigPayload` and
+        // remove this comment.
         affinity: Default::default(),
     })
 }

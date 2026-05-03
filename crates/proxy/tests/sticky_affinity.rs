@@ -146,8 +146,8 @@ fn header_priority_over_body_via_public_api() {
 }
 
 #[test]
-fn unused_score_for_helper_is_consistent() {
-    // The score_for export is what `routing.rs::compute_attempt_order` uses;
+fn score_for_agrees_with_pick_sticky_entry() {
+    // `score_for` is what `routing.rs::compute_attempt_order` uses;
     // assert it agrees with pick_sticky_entry under the same inputs.
     let pool: Vec<MockEntry> = vec![
         MockEntry {
