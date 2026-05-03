@@ -1,7 +1,7 @@
 //! QuotaPort — application-layer interface for usage-quota tracking.
 
 use crate::domain::RequestUsage;
-use crate::domain::quota::QuotaCheck;
+use crate::domain::quota::{QuotaCheck, QuotaSnapshot};
 
 pub trait QuotaPort: Send + Sync {
     /// Pre-flight check for the given provider name. Returns `Ok` when no
@@ -12,4 +12,8 @@ pub trait QuotaPort: Send + Sync {
     /// Post-response record. Adds the request to the counter for the
     /// matching provider. Idempotent if no quota config matches.
     fn record(&self, provider: &str, usage: &RequestUsage);
+
+    /// Returns a point-in-time snapshot of all configured quotas and their
+    /// current counters. Used by the admin endpoint.
+    fn snapshot(&self) -> Vec<QuotaSnapshot>;
 }

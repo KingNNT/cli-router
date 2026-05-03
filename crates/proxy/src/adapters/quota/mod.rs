@@ -5,7 +5,8 @@
 use crate::application::ports::{QuotaPort, QuotaSeedRow};
 use crate::domain::RequestUsage;
 use crate::domain::quota::{
-    CalendarCounter, CalendarUnit, QuotaCheck, QuotaConfig, QuotaWindow, RingBuffer, evaluate,
+    CalendarCounter, CalendarUnit, QuotaCheck, QuotaConfig, QuotaSnapshot, QuotaWindow, RingBuffer,
+    evaluate,
 };
 use std::sync::Mutex;
 
@@ -83,12 +84,19 @@ pub struct InMemoryQuota {
     entries: Mutex<Vec<Entry>>,
 }
 
-/// Point-in-time snapshot of one configured quota.
-#[derive(Debug, Clone)]
-pub struct QuotaSnapshot {
-    pub config: QuotaConfig,
-    pub totals: crate::domain::quota::Totals,
-    pub next_boundary_ms: u64,
+/// No-op quota adapter — passes all checks without enforcement. Used as a
+/// placeholder when no quota config is loaded (e.g. in hot-reload paths or
+/// test helpers).
+pub struct NoopQuota;
+
+impl QuotaPort for NoopQuota {
+    fn check(&self, _: &str) -> QuotaCheck {
+        QuotaCheck::Ok
+    }
+    fn record(&self, _: &str, _: &crate::domain::RequestUsage) {}
+    fn snapshot(&self) -> Vec<QuotaSnapshot> {
+        vec![]
+    }
 }
 
 impl InMemoryQuota {
@@ -97,21 +105,6 @@ impl InMemoryQuota {
         Self {
             entries: Mutex::new(entries),
         }
-    }
-
-    /// Returns a point-in-time snapshot of all configured quotas and their
-    /// current counters. Used by the admin endpoint to surface live status.
-    pub fn snapshot(&self) -> Vec<QuotaSnapshot> {
-        let now_ms = now_epoch_ms();
-        let entries = self.entries.lock().expect("quota mutex poisoned");
-        entries
-            .iter()
-            .map(|e| QuotaSnapshot {
-                config: e.config.clone(),
-                totals: e.counter.totals(now_ms),
-                next_boundary_ms: e.counter.next_boundary_ms(now_ms),
-            })
-            .collect()
     }
 
     /// Replay historical rows from the request log into the counters. Call
@@ -156,6 +149,19 @@ impl QuotaPort for InMemoryQuota {
                 return;
             }
         }
+    }
+
+    fn snapshot(&self) -> Vec<QuotaSnapshot> {
+        let now_ms = now_epoch_ms();
+        let entries = self.entries.lock().expect("quota mutex poisoned");
+        entries
+            .iter()
+            .map(|e| QuotaSnapshot {
+                config: e.config.clone(),
+                totals: e.counter.totals(now_ms),
+                next_boundary_ms: e.counter.next_boundary_ms(now_ms),
+            })
+            .collect()
     }
 }
 

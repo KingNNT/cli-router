@@ -32,6 +32,15 @@ impl QuotaWindow {
     }
 }
 
+/// Point-in-time snapshot of one configured quota — used by the admin API
+/// to surface live counters without coupling it to a concrete adapter type.
+#[derive(Debug, Clone)]
+pub struct QuotaSnapshot {
+    pub config: QuotaConfig,
+    pub totals: Totals,
+    pub next_boundary_ms: u64,
+}
+
 #[derive(Debug, Clone)]
 pub struct QuotaConfig {
     pub provider: String,
