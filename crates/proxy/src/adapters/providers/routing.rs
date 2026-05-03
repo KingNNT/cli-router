@@ -112,6 +112,8 @@ pub struct RoutingProvider {
     rules: Vec<Route>,
     /// Counter for round-robin rotation. Incremented per request.
     rr_counter: AtomicUsize,
+    /// Name → provider map for namespace routing (e.g. "zai" → ZaiProvider).
+    leaves: std::collections::HashMap<String, Arc<dyn Provider>>,
 }
 
 impl RoutingProvider {
@@ -122,14 +124,29 @@ impl RoutingProvider {
     fn select(&self, model: &str) -> Option<&Route> {
         self.rules.iter().find(|r| r.matcher.is_match(model))
     }
+
+    /// If `model` contains a namespace prefix (e.g. "zai/glm-5"), look up
+    /// the provider by name. Returns the provider and the bare model name.
+    fn resolve_provider<'a>(&'a self, model: &'a str) -> Option<(&'a Arc<dyn Provider>, &'a str)> {
+        let (namespace, bare_model) = split_namespace(model)?;
+        let provider = self.leaves.get(namespace)?;
+        Some((provider, bare_model))
+    }
 }
 
 #[derive(Default)]
 pub struct RoutingProviderBuilder {
     rules: Vec<Route>,
+    leaves: std::collections::HashMap<String, Arc<dyn Provider>>,
 }
 
 impl RoutingProviderBuilder {
+    /// Set the name→provider map for namespace routing.
+    pub fn leaves(mut self, leaves: std::collections::HashMap<String, Arc<dyn Provider>>) -> Self {
+        self.leaves = leaves;
+        self
+    }
+
     pub fn rule(
         mut self,
         pattern: &str,
@@ -155,6 +172,7 @@ impl RoutingProviderBuilder {
         RoutingProvider {
             rules: self.rules,
             rr_counter: AtomicUsize::new(0),
+            leaves: self.leaves,
         }
     }
 }
@@ -494,5 +512,47 @@ mod tests {
         assert_eq!(v["model"].as_str().unwrap(), "glm-5");
         assert_eq!(v["max_tokens"].as_u64().unwrap(), 50);
         assert_eq!(v["stream"].as_bool().unwrap(), true);
+    }
+
+    #[test]
+    fn resolve_provider_finds_named_provider() {
+        use crate::adapters::providers::ZaiProvider;
+
+        let zai: Arc<dyn Provider> = Arc::new(ZaiProvider::new(reqwest::Client::new()));
+        let anthropic: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(reqwest::Client::new()));
+
+        let mut leaves = std::collections::HashMap::new();
+        leaves.insert("zai".to_string(), zai);
+        leaves.insert("anthropic".to_string(), anthropic);
+
+        let router = RoutingProvider::builder()
+            .rule("*", RoutingStrategy::Failover, dummy(), vec![])
+            .unwrap()
+            .leaves(leaves)
+            .build();
+
+        let resolved = router.resolve_provider("zai/glm-5");
+        assert!(resolved.is_some(), "namespace should resolve provider");
+        let (provider, bare_model) = resolved.unwrap();
+        assert_eq!(provider.name(), "zai");
+        assert_eq!(bare_model, "glm-5");
+    }
+
+    #[test]
+    fn resolve_provider_returns_none_for_no_namespace() {
+        let router = RoutingProvider::builder().build();
+        assert!(router.resolve_provider("glm-5").is_none());
+    }
+
+    #[test]
+    fn resolve_provider_returns_none_for_unknown_namespace() {
+        let mut leaves = std::collections::HashMap::new();
+        leaves.insert("zai".to_string(), dummy());
+
+        let router = RoutingProvider::builder()
+            .leaves(leaves)
+            .build();
+
+        assert!(router.resolve_provider("nonexistent/glm-5").is_none());
     }
 }
