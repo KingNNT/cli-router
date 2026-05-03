@@ -91,6 +91,14 @@ impl PoolEntry {
 
 // ── RoutingProvider ────────────────────────────────────────────────────────────
 
+
+/// Split `model` on the first `/`. Returns `Some((namespace, bare_model))`
+/// if a `/` is present, `None` otherwise.
+fn split_namespace(model: &str) -> Option<(&str, &str)> {
+    let idx = model.find('/')?;
+    Some((&model[..idx], &model[idx + 1..]))
+}
+
 pub struct RoutingProvider {
     rules: Vec<Route>,
     /// Counter for round-robin rotation. Incremented per request.
@@ -439,5 +447,25 @@ mod tests {
         entry.cooldown_until.store(1, Ordering::Relaxed);
         assert!(!entry.is_cooling_down());
         assert_eq!(entry.remaining_cooldown_ms(), 0);
+    }
+
+    #[test]
+    fn split_namespace_returns_some_for_slash_separated() {
+        assert_eq!(split_namespace("zai/glm-5"), Some(("zai", "glm-5")));
+    }
+
+    #[test]
+    fn split_namespace_returns_none_for_no_slash() {
+        assert_eq!(split_namespace("glm-5"), None);
+    }
+
+    #[test]
+    fn split_namespace_splits_on_first_slash_only() {
+        assert_eq!(split_namespace("zai/glm-5/extra"), Some(("zai", "glm-5/extra")));
+    }
+
+    #[test]
+    fn split_namespace_empty_after_slash() {
+        assert_eq!(split_namespace("zai/"), Some(("zai", "")));
     }
 }
