@@ -116,6 +116,29 @@ fallback = ["zai"]
 - `glm-*` models → Z.ai
 - Everything else → Anthropic, with Z.ai as fallback on 5xx
 
+### Z.ai Coding Plan vs Pay-As-You-Go
+
+Z.ai routes requests to different billing ledgers based on the auth header:
+
+| Auth header sent | Billed against |
+|---|---|
+| `Authorization: Bearer <token>` | Coding Plan quota |
+| `x-api-key: <token>` | Pay-as-you-go balance |
+
+If you're on the **GLM Coding Plan**, use `type = "bearer"` — not `type = "api_key"`:
+
+```toml
+[[providers]]
+name = "zai"
+kind = "zai"
+auth = { type = "bearer", value = "${ZAI_CODING_PLAN_TOKEN}" }
+openai_base_url = "https://api.z.ai/api/paas/v4"
+```
+
+Using `type = "api_key"` with a Coding Plan token causes Z.ai to charge your (likely empty) PAYG balance instead of your Coding Plan quota — surfacing as a billing/insufficient-credit error even though your plan has quota left.
+
+Pay-as-you-go users can use either header; `type = "api_key"` matches the Anthropic SDK default.
+
 ---
 
 ## Multiple Accounts
