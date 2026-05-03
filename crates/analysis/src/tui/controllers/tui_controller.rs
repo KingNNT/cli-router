@@ -85,7 +85,7 @@ impl TuiController {
                     return Ok(());
                 }
                 KeyCode::Char('s') => {
-                    self.handle_sync(state);
+                    self.handle_sync(state)?;
                     return Ok(());
                 }
                 KeyCode::Char('d') => {
@@ -358,7 +358,7 @@ impl TuiController {
         Ok(())
     }
 
-    fn handle_sync(&self, state: &mut AppState) {
+    fn handle_sync(&self, state: &mut AppState) -> Result<(), AdapterError> {
         state.status_message = Some("Syncing…".to_string());
         match self.sync_pricing.execute(SyncPricingInput) {
             Ok(out) => {
@@ -367,11 +367,13 @@ impl TuiController {
                     out.synced_count, out.last_synced_at
                 ));
                 state.invalidate_all_vms();
+                self.ensure_vm_for_current_view(state)?;
             }
             Err(e) => {
                 state.status_message = Some(format!("Sync failed: {}", e));
             }
         }
+        Ok(())
     }
 
     fn ensure_vm_for_current_view(&self, state: &mut AppState) -> Result<(), AdapterError> {
@@ -477,7 +479,6 @@ mod tests {
             cache_read_rate: None,
             cache_write_rate: None,
             last_synced: NaiveDate::from_ymd_opt(2026, 4, 23).unwrap(),
-            alias: None,
         }
     }
 
@@ -491,7 +492,7 @@ mod tests {
     }
 
     #[test]
-    fn pressing_s_syncs_and_invalidates_all_vms() {
+    fn pressing_s_syncs_and_rebuilds_current_view_vm() {
         let (controller, repo) = ctl_with_source_rows(vec![pricing_row("m1"), pricing_row("m2")]);
         let mut state = AppState::new();
         controller.warmup(&mut state).unwrap();
@@ -499,7 +500,9 @@ mod tests {
         let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
         controller.handle(key, &mut state).unwrap();
         assert_eq!(repo.rows.lock().unwrap().len(), 2);
-        assert!(state.dashboard_vm.is_none());
+        // Current view (Dashboard) is rebuilt against the freshly-synced pricing;
+        // lazy views (Models, Pricing) remain invalidated until visited.
+        assert!(state.dashboard_vm.is_some());
         assert!(state.models_vm.is_none());
         assert!(state.pricing_vm.is_none());
         assert!(
