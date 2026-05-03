@@ -42,6 +42,7 @@ impl GetStatus {
         let total = self.read.total_count()?;
         let by_provider = self.read.count_by_provider()?;
         let by_status = self.read.count_by_status()?;
+        let translations = self.read.count_translations()?;
         let now_ms = now_epoch_ms();
         let uptime_seconds = ((now_ms - self.started_at_ms) / 1000).max(0) as u64;
         let cfg = self.config.read().expect("config rwlock poisoned");
@@ -55,6 +56,9 @@ impl GetStatus {
                 enabled: cfg.affinity.enabled,
                 headers: cfg.affinity.headers.clone(),
             },
+            translations_completed: translations.completed,
+            translations_failed: translations.failed,
+            translation_directions: translations.by_direction,
         })
     }
 }
@@ -527,6 +531,7 @@ fn row_to_dto(r: RequestRow) -> RecentRequestItem {
         cache_creation_tokens: r.cache_creation_tokens,
         cost_usd: r.cost_usd,
         error_message: r.error_message,
+        translation_direction: r.translation_direction,
     }
 }
 
@@ -745,6 +750,11 @@ mod tests {
             _cutoff_ms: i64,
         ) -> Result<Vec<crate::application::ports::QuotaSeedRow>, ProxyError> {
             Ok(vec![])
+        }
+        fn count_translations(
+            &self,
+        ) -> Result<crate::application::ports::TranslationCounts, ProxyError> {
+            Ok(crate::application::ports::TranslationCounts::default())
         }
     }
 

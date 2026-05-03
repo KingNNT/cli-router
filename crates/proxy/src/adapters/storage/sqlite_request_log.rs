@@ -3,6 +3,7 @@
 use crate::application::errors::ProxyError;
 use crate::application::ports::QuotaSeedRow;
 use crate::application::ports::RequestLogPort;
+use crate::application::ports::TranslationCounts;
 use crate::domain::{DailyTotal, ModelTotal, RequestStart, RequestUsage, UsageSummary};
 use rusqlite::{Connection, params};
 use std::sync::{Arc, Mutex};
@@ -116,7 +117,8 @@ impl crate::application::ports::RequestLogReadPort for SqliteRequestLogRepositor
         let mut stmt = c.prepare(
             "SELECT id, started_at, finished_at, provider, model, status,
                     input_tokens, output_tokens, cache_read_tokens,
-                    cache_creation_tokens, cost_usd, error_message
+                    cache_creation_tokens, cost_usd, error_message,
+                    translation_direction
              FROM requests
              ORDER BY started_at DESC
              LIMIT ?1",
@@ -135,6 +137,7 @@ impl crate::application::ports::RequestLogReadPort for SqliteRequestLogRepositor
                 cache_creation_tokens: r.get(9)?,
                 cost_usd: r.get(10)?,
                 error_message: r.get(11)?,
+                translation_direction: r.get(12)?,
             })
         })?;
         let mut out = Vec::new();
@@ -178,6 +181,34 @@ impl crate::application::ports::RequestLogReadPort for SqliteRequestLogRepositor
             out.push(r?);
         }
         Ok(out)
+    }
+
+    fn count_translations(&self) -> Result<TranslationCounts, ProxyError> {
+        let conn = self.conn.lock().expect("conn mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT translation_direction, status, COUNT(*) \
+             FROM requests \
+             WHERE translation_direction IS NOT NULL \
+             GROUP BY translation_direction, status",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)? as u64,
+            ))
+        })?;
+        let mut counts = TranslationCounts::default();
+        for row in rows {
+            let (dir, status, n) = row?;
+            *counts.by_direction.entry(dir).or_insert(0) += n;
+            match status.as_str() {
+                "completed" => counts.completed += n,
+                "errored" => counts.failed += n,
+                _ => {}
+            }
+        }
+        Ok(counts)
     }
 }
 
@@ -609,6 +640,57 @@ mod tests {
 
         let names: Vec<_> = summary.models.iter().map(|m| m.model.clone()).collect();
         assert_eq!(names, vec!["high", "mid", "low"]);
+    }
+
+    #[test]
+    fn count_translations_aggregates_by_direction_and_status() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+
+        // anthropic→openai completed
+        conn.execute(
+            "INSERT INTO requests (id, user_id, provider, model, status, started_at, translation_direction) \
+             VALUES ('t1', 1, 'anthropic', 'm', 'completed', 1000, 'anthropic→openai')",
+            [],
+        )
+        .unwrap();
+        // anthropic→openai errored
+        conn.execute(
+            "INSERT INTO requests (id, user_id, provider, model, status, started_at, translation_direction) \
+             VALUES ('t2', 1, 'anthropic', 'm', 'errored', 1001, 'anthropic→openai')",
+            [],
+        )
+        .unwrap();
+        // openai→anthropic completed
+        conn.execute(
+            "INSERT INTO requests (id, user_id, provider, model, status, started_at, translation_direction) \
+             VALUES ('t3', 1, 'anthropic', 'm', 'completed', 1002, 'openai→anthropic')",
+            [],
+        )
+        .unwrap();
+        // no translation_direction — must be excluded
+        conn.execute(
+            "INSERT INTO requests (id, user_id, provider, model, status, started_at) \
+             VALUES ('t4', 1, 'anthropic', 'm', 'completed', 1003)",
+            [],
+        )
+        .unwrap();
+
+        let repo = SqliteRequestLogRepository::new(Arc::new(Mutex::new(conn)));
+        let counts = repo.count_translations().unwrap();
+
+        assert_eq!(counts.completed, 2, "two completed translations");
+        assert_eq!(counts.failed, 1, "one errored translation");
+        assert_eq!(
+            counts.by_direction.get("anthropic→openai"),
+            Some(&2),
+            "anthropic→openai has 2 total (completed + errored)"
+        );
+        assert_eq!(
+            counts.by_direction.get("openai→anthropic"),
+            Some(&1),
+            "openai→anthropic has 1 completed"
+        );
     }
 
     #[test]
