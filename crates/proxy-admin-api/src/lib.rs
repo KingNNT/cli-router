@@ -19,6 +19,15 @@ pub struct StatusResponse {
     pub requests_by_provider: BTreeMap<String, u64>,
     /// Per-status counts (`started`, `completed`, `errored`).
     pub requests_by_status: BTreeMap<String, u64>,
+    /// Current affinity (sticky-auth) configuration.
+    pub affinity: AffinityStatus,
+}
+
+/// Affinity (sticky-auth) status reported by `GET /admin/status`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AffinityStatus {
+    pub enabled: bool,
+    pub headers: Vec<String>,
 }
 
 /// `GET /admin/config` and `PUT /admin/config` body.

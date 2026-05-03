@@ -22,13 +22,19 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub struct GetStatus {
     read: Arc<dyn RequestLogReadPort>,
     started_at_ms: i64,
+    config: Arc<RwLock<Config>>,
 }
 
 impl GetStatus {
-    pub fn new(read: Arc<dyn RequestLogReadPort>, started_at_ms: i64) -> Self {
+    pub fn new(
+        read: Arc<dyn RequestLogReadPort>,
+        started_at_ms: i64,
+        config: Arc<RwLock<Config>>,
+    ) -> Self {
         Self {
             read,
             started_at_ms,
+            config,
         }
     }
 
@@ -38,12 +44,17 @@ impl GetStatus {
         let by_status = self.read.count_by_status()?;
         let now_ms = now_epoch_ms();
         let uptime_seconds = ((now_ms - self.started_at_ms) / 1000).max(0) as u64;
+        let cfg = self.config.read().expect("config rwlock poisoned");
         Ok(StatusResponse {
             started_at_ms: self.started_at_ms,
             uptime_seconds,
             total_requests: total,
             requests_by_provider: by_provider,
             requests_by_status: by_status,
+            affinity: proxy_admin_api::AffinityStatus {
+                enabled: cfg.affinity.enabled,
+                headers: cfg.affinity.headers.clone(),
+            },
         })
     }
 }
@@ -659,12 +670,21 @@ mod tests {
 
     #[test]
     fn get_status_aggregates_counts() {
-        let uc = GetStatus::new(stub(), 1_000);
+        let cfg = Arc::new(RwLock::new(Config {
+            port: 8787,
+            proxy_db: PathBuf::from("/tmp/proxy.db"),
+            pricing_db: PathBuf::from("/tmp/pricing.db"),
+            providers: vec![],
+            routing: vec![],
+            affinity: Default::default(),
+        }));
+        let uc = GetStatus::new(stub(), 1_000, cfg);
         let s = uc.execute().unwrap();
         assert_eq!(s.total_requests, 7);
         assert_eq!(s.requests_by_provider.get("anthropic"), Some(&4));
         assert_eq!(s.requests_by_status.get("completed"), Some(&6));
         assert_eq!(s.started_at_ms, 1_000);
+        assert!(s.affinity.enabled); // default is enabled
     }
 
     #[test]
