@@ -75,7 +75,7 @@ pub fn build_routing_provider(
             })
             .collect::<Result<_, _>>()?;
         builder = builder
-            .rule(pattern, primary, fallback)
+            .rule(pattern, rule.strategy, primary, fallback)
             .map_err(|e| BuildError::BadPattern(pattern.into(), e.to_string()))?;
     }
     Ok(Arc::new(builder.build()))

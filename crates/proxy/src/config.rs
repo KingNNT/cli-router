@@ -73,6 +73,17 @@ pub enum AuthConfig {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingStrategy {
+    /// Always try `provider` first, then `fallback` in order on 5xx/error.
+    #[default]
+    Failover,
+    /// Round-robin across all providers in the pool. On 429/5xx, skip and
+    /// try next with cooldown.
+    RoundRobin,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingRule {
     #[serde(rename = "match")]
@@ -80,6 +91,8 @@ pub struct RoutingRule {
     pub provider: String,
     #[serde(default)]
     pub fallback: Vec<String>,
+    #[serde(default)]
+    pub strategy: RoutingStrategy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +174,7 @@ impl Config {
                 },
                 provider: name.into(),
                 fallback: vec![],
+                strategy: Default::default(),
             }],
         }
     }

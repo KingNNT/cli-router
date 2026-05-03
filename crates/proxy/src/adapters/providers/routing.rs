@@ -1,30 +1,100 @@
 //! Routing provider — selects an upstream provider per-request based on glob
-//! matching on the body's `model` field. First match wins. Each rule may
-//! declare a fallback chain that is tried on transport error or buffered 5xx.
+//! matching on the body's `model` field. First match wins across rules.
 //!
-//! Phase 1 limitation: `name()` returns `"router"` because the trait method
-//! is `&self` and not request-scoped. The actual leaf provider that handled a
-//! request will be exposed through the admin API in Phase 2 — for now the
-//! `provider` column in `proxy.db` will read `router` for routed requests.
+//! Two strategies per rule:
+//! - **failover** (default) — always try `provider` first, then `fallback`
+//!   in order on transport error or buffered 5xx.
+//! - **round_robin** — rotate across all providers in the pool. On 429 or
+//!   5xx, mark that provider as cooling down and try next.
+//!
+//! Cooldown tracking: each provider in a round-robin pool has a
+//! `cooldown_until` timestamp. When a provider returns 429/5xx, it's marked
+//! with `now + retry_after_ms`. The rotation skips cooling-down providers.
+//! If all providers are cooling down, returns 429 to the client with the
+//! shortest remaining cooldown as `Retry-After`.
 
 use super::messages_protocol;
 use crate::application::errors::ProxyError;
 use crate::application::ports::{Provider, UpstreamResponse, UsageParser};
+use crate::config::RoutingStrategy;
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
 use axum::http::HeaderMap;
 use bytes::Bytes;
 use globset::{Glob, GlobMatcher};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
-pub struct RoutingProvider {
-    rules: Vec<Route>,
-}
+/// Default cooldown when upstream doesn't send Retry-After (seconds).
+const DEFAULT_COOLDOWN_SECS: u64 = 60;
+
+// ── Route ──────────────────────────────────────────────────────────────────────
 
 struct Route {
     matcher: GlobMatcher,
-    primary: Arc<dyn Provider>,
-    fallback: Vec<Arc<dyn Provider>>,
+    strategy: RoutingStrategy,
+    /// Ordered pool of providers: index 0 is `provider`, rest are `fallback`.
+    pool: Vec<PoolEntry>,
+}
+
+struct PoolEntry {
+    provider: Arc<dyn Provider>,
+    /// Epoch millis when cooldown expires. 0 = healthy.
+    cooldown_until: AtomicU64,
+}
+
+impl PoolEntry {
+    fn new(provider: Arc<dyn Provider>) -> Self {
+        Self {
+            provider,
+            cooldown_until: AtomicU64::new(0),
+        }
+    }
+
+    fn is_cooling_down(&self) -> bool {
+        let until = self.cooldown_until.load(Ordering::Relaxed);
+        if until == 0 {
+            return false;
+        }
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        if now_ms >= until {
+            // Cooldown expired, clear it.
+            self.cooldown_until.store(0, Ordering::Relaxed);
+            return false;
+        }
+        true
+    }
+
+    fn set_cooldown(&self, duration_ms: u64) {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.cooldown_until.store(now_ms + duration_ms, Ordering::Relaxed);
+    }
+
+    fn remaining_cooldown_ms(&self) -> u64 {
+        let until = self.cooldown_until.load(Ordering::Relaxed);
+        if until == 0 {
+            return 0;
+        }
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        until.saturating_sub(now_ms)
+    }
+}
+
+// ── RoutingProvider ────────────────────────────────────────────────────────────
+
+pub struct RoutingProvider {
+    rules: Vec<Route>,
+    /// Counter for round-robin rotation. Incremented per request.
+    rr_counter: AtomicUsize,
 }
 
 impl RoutingProvider {
@@ -46,20 +116,29 @@ impl RoutingProviderBuilder {
     pub fn rule(
         mut self,
         pattern: &str,
+        strategy: RoutingStrategy,
         primary: Arc<dyn Provider>,
         fallback: Vec<Arc<dyn Provider>>,
     ) -> Result<Self, globset::Error> {
         let matcher = Glob::new(pattern)?.compile_matcher();
+        let mut pool = Vec::with_capacity(1 + fallback.len());
+        pool.push(PoolEntry::new(primary));
+        for fb in fallback {
+            pool.push(PoolEntry::new(fb));
+        }
         self.rules.push(Route {
             matcher,
-            primary,
-            fallback,
+            strategy,
+            pool,
         });
         Ok(self)
     }
 
     pub fn build(self) -> RoutingProvider {
-        RoutingProvider { rules: self.rules }
+        RoutingProvider {
+            rules: self.rules,
+            rr_counter: AtomicUsize::new(0),
+        }
     }
 }
 
@@ -93,15 +172,31 @@ impl Provider for RoutingProvider {
             ProxyError::BadRequest(format!("no routing rule matches model '{model}'"))
         })?;
 
-        let chain: Vec<&Arc<dyn Provider>> = std::iter::once(&route.primary)
-            .chain(route.fallback.iter())
-            .collect();
-        let total = chain.len();
+        match route.strategy {
+            RoutingStrategy::Failover => self.forward_failover(route, path, headers, body, streaming).await,
+            RoutingStrategy::RoundRobin => {
+                self.forward_round_robin(route, path, headers, body, streaming).await
+            }
+        }
+    }
+}
 
+impl RoutingProvider {
+    /// Failover: try pool[0] first, then pool[1..] on 5xx/error.
+    async fn forward_failover(
+        &self,
+        route: &Route,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        let total = route.pool.len();
         let mut last_err: Option<ProxyError> = None;
-        for (i, prov) in chain.iter().enumerate() {
-            let attempt_name = prov.name();
-            match prov.forward(path, headers, body.clone(), streaming).await {
+
+        for (i, entry) in route.pool.iter().enumerate() {
+            let attempt_name = entry.provider.name();
+            match entry.provider.forward(path, headers, body.clone(), streaming).await {
                 Ok(UpstreamResponse::Buffered {
                     status,
                     headers: resp_headers,
@@ -141,6 +236,111 @@ impl Provider for RoutingProvider {
 
         Err(last_err.unwrap_or_else(|| ProxyError::BadRequest("routing chain exhausted".into())))
     }
+
+    /// Round-robin: rotate across pool, skip cooling-down providers,
+    /// set cooldown on 429/5xx.
+    async fn forward_round_robin(
+        &self,
+        route: &Route,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        let pool_size = route.pool.len();
+
+        // Advance counter to pick the starting index.
+        let start = self.rr_counter.fetch_add(1, Ordering::Relaxed) % pool_size;
+
+        // Try every provider in the pool, starting from `start`.
+        for offset in 0..pool_size {
+            let idx = (start + offset) % pool_size;
+            let entry = &route.pool[idx];
+            let attempt_name = entry.provider.name();
+
+            // Skip if cooling down.
+            if entry.is_cooling_down() {
+                tracing::debug!(
+                    provider = attempt_name,
+                    idx,
+                    "skipping cooling-down provider"
+                );
+                continue;
+            }
+
+            match entry.provider.forward(path, headers, body.clone(), streaming).await {
+                Ok(UpstreamResponse::Buffered {
+                    status,
+                    headers: resp_headers,
+                    body: _,
+                }) if status == 429 => {
+                    let cooldown_ms = extract_retry_after_ms(&resp_headers) * 1000;
+                    tracing::warn!(
+                        provider = attempt_name,
+                        status,
+                        cooldown_secs = cooldown_ms / 1000,
+                        "upstream 429 (rate limited); cooling down"
+                    );
+                    entry.set_cooldown(cooldown_ms);
+                    continue;
+                }
+                Ok(UpstreamResponse::Buffered {
+                    status,
+                    headers: _,
+                    body: resp_body,
+                }) if status >= 500 => {
+                    let preview =
+                        String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)]).to_string();
+                    tracing::warn!(
+                        provider = attempt_name,
+                        status,
+                        body = %preview,
+                        "upstream 5xx; cooling down"
+                    );
+                    entry.set_cooldown(DEFAULT_COOLDOWN_SECS * 1000);
+                    continue;
+                }
+                Ok(other) => return Ok(other),
+                Err(e) => {
+                    tracing::warn!(
+                        provider = attempt_name,
+                        error = %e,
+                        "upstream error; cooling down"
+                    );
+                    entry.set_cooldown(DEFAULT_COOLDOWN_SECS * 1000);
+                    continue;
+                }
+            }
+        }
+
+        // All providers are cooling down. Return 429 with shortest remaining cooldown.
+        let min_remaining = route
+            .pool
+            .iter()
+            .map(|e| e.remaining_cooldown_ms())
+            .filter(|&ms| ms > 0)
+            .min()
+            .unwrap_or(DEFAULT_COOLDOWN_SECS * 1000);
+
+        let retry_after_secs = (min_remaining + 999) / 1000; // ceil division
+
+        Err(ProxyError::UpstreamRateLimited {
+            retry_after_secs,
+            message: format!(
+                "all {} providers in round-robin pool are rate-limited",
+                pool_size
+            ),
+        })
+    }
+}
+
+/// Extract `retry-after` header value in seconds. Defaults to DEFAULT_COOLDOWN_SECS.
+fn extract_retry_after_ms(headers: &HeaderMap) -> u64 {
+    headers
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_COOLDOWN_SECS)
 }
 
 #[cfg(test)]
@@ -155,9 +355,9 @@ mod tests {
     #[test]
     fn select_matches_glob_prefix() {
         let p = RoutingProvider::builder()
-            .rule("glm-*", dummy(), vec![])
+            .rule("glm-*", RoutingStrategy::Failover, dummy(), vec![])
             .unwrap()
-            .rule("*", dummy(), vec![])
+            .rule("*", RoutingStrategy::Failover, dummy(), vec![])
             .unwrap()
             .build();
         assert_eq!(p.select("glm-4.6").unwrap().matcher.glob().glob(), "glm-*");
@@ -170,9 +370,9 @@ mod tests {
     #[test]
     fn select_first_match_wins() {
         let p = RoutingProvider::builder()
-            .rule("claude-*", dummy(), vec![])
+            .rule("claude-*", RoutingStrategy::Failover, dummy(), vec![])
             .unwrap()
-            .rule("*", dummy(), vec![])
+            .rule("*", RoutingStrategy::Failover, dummy(), vec![])
             .unwrap()
             .build();
         assert_eq!(
@@ -184,7 +384,7 @@ mod tests {
     #[test]
     fn select_returns_none_when_no_rule_matches() {
         let p = RoutingProvider::builder()
-            .rule("glm-*", dummy(), vec![])
+            .rule("glm-*", RoutingStrategy::Failover, dummy(), vec![])
             .unwrap()
             .build();
         assert!(p.select("claude-x").is_none());
@@ -205,7 +405,39 @@ mod tests {
 
     #[test]
     fn rule_rejects_invalid_glob() {
-        let res = RoutingProvider::builder().rule("[invalid", dummy(), vec![]);
+        let res = RoutingProvider::builder().rule("[invalid", RoutingStrategy::Failover, dummy(), vec![]);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn round_robin_pool_has_all_providers() {
+        let p = RoutingProvider::builder()
+            .rule(
+                "*",
+                RoutingStrategy::RoundRobin,
+                dummy(),
+                vec![dummy(), dummy()],
+            )
+            .unwrap()
+            .build();
+        let route = p.select("anything").unwrap();
+        assert_eq!(route.pool.len(), 3);
+        assert!(matches!(route.strategy, RoutingStrategy::RoundRobin));
+    }
+
+    #[test]
+    fn pool_entry_cooldown_lifecycle() {
+        let entry = PoolEntry::new(dummy());
+        assert!(!entry.is_cooling_down());
+
+        // Set cooldown for 5 seconds.
+        entry.set_cooldown(5000);
+        assert!(entry.is_cooling_down());
+        assert!(entry.remaining_cooldown_ms() > 0);
+
+        // Set cooldown in the past — should auto-expire.
+        entry.cooldown_until.store(1, Ordering::Relaxed);
+        assert!(!entry.is_cooling_down());
+        assert_eq!(entry.remaining_cooldown_ms(), 0);
     }
 }

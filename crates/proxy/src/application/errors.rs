@@ -20,4 +20,9 @@ pub enum ProxyError {
     BadRequest(String),
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    #[error("rate limited: {message}")]
+    UpstreamRateLimited {
+        retry_after_secs: u64,
+        message: String,
+    },
 }

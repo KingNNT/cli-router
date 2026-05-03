@@ -415,6 +415,7 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                 },
                 provider: r.provider.clone(),
                 fallback: r.fallback.clone(),
+                strategy: strategy_to_payload(r.strategy),
             })
             .collect(),
     }
@@ -446,6 +447,7 @@ fn payload_to_config(
             },
             provider: rr.provider,
             fallback: rr.fallback,
+            strategy: payload_to_strategy(rr.strategy),
         })
         .collect();
     Ok(Config {
@@ -455,6 +457,20 @@ fn payload_to_config(
         providers,
         routing,
     })
+}
+
+fn strategy_to_payload(s: crate::config::RoutingStrategy) -> proxy_admin_api::RoutingStrategyPayload {
+    match s {
+        crate::config::RoutingStrategy::Failover => proxy_admin_api::RoutingStrategyPayload::Failover,
+        crate::config::RoutingStrategy::RoundRobin => proxy_admin_api::RoutingStrategyPayload::RoundRobin,
+    }
+}
+
+fn payload_to_strategy(s: proxy_admin_api::RoutingStrategyPayload) -> crate::config::RoutingStrategy {
+    match s {
+        proxy_admin_api::RoutingStrategyPayload::Failover => crate::config::RoutingStrategy::Failover,
+        proxy_admin_api::RoutingStrategyPayload::RoundRobin => crate::config::RoutingStrategy::RoundRobin,
+    }
 }
 
 fn kind_to_str(k: ProviderKind) -> &'static str {
@@ -587,6 +603,7 @@ mod tests {
                 },
                 provider: "anthropic".into(),
                 fallback: vec![],
+                strategy: Default::default(),
             }],
         };
         let payload = config_to_payload(&cfg);

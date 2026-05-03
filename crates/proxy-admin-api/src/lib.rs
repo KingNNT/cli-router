@@ -65,12 +65,22 @@ pub enum AuthPayload {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingStrategyPayload {
+    #[default]
+    Failover,
+    RoundRobin,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RoutingRulePayload {
     pub r#match: MatchPayload,
     pub provider: String,
     #[serde(default)]
     pub fallback: Vec<String>,
+    #[serde(default)]
+    pub strategy: RoutingStrategyPayload,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

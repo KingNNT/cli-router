@@ -362,7 +362,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
         CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, StartAnthropicOAuth,
         TestProvider, UpdateConfig,
     };
-    use proxy::config::{AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule};
+    use proxy::config::{AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule, RoutingStrategy};
     use std::sync::RwLock;
     use std::time::SystemTime;
 
@@ -417,6 +417,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             },
             provider: "anthropic".into(),
             fallback: vec![],
+            strategy: RoutingStrategy::Failover,
         }],
     };
 
@@ -680,7 +681,7 @@ async fn start_routing_proxy(rules: Vec<(&'static str, String, Vec<String>)>) ->
             .iter()
             .map(|u| leaves.get(u).unwrap().clone())
             .collect();
-        builder = builder.rule(pattern, primary, fb).unwrap();
+        builder = builder.rule(pattern, proxy::config::RoutingStrategy::Failover, primary, fb).unwrap();
     }
     let provider: Arc<dyn Provider> = Arc::new(builder.build());
 

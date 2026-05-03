@@ -5,7 +5,7 @@
 //! the desired behavior — the request itself succeeded; cost is just
 //! best-effort metadata.
 
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 
@@ -24,6 +24,28 @@ impl IntoResponse for ProxyError {
                 (
                     StatusCode::BAD_GATEWAY,
                     Json(serde_json::json!({"error":{"type":"upstream_unavailable"}})),
+                )
+                    .into_response()
+            }
+            ProxyError::UpstreamRateLimited {
+                retry_after_secs,
+                message,
+            } => {
+                tracing::warn!(retry_after = retry_after_secs, %message, "all providers rate limited");
+                let mut headers = HeaderMap::new();
+                if let Ok(val) = HeaderValue::from_str(&retry_after_secs.to_string()) {
+                    headers.insert("retry-after", val);
+                }
+                (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    headers,
+                    Json(serde_json::json!({
+                        "error": {
+                            "type": "rate_limit_error",
+                            "message": message,
+                            "retry_after": retry_after_secs
+                        }
+                    })),
                 )
                     .into_response()
             }
