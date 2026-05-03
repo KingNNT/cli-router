@@ -9,7 +9,7 @@
 
 use crate::application::use_cases::HandleMessages;
 use crate::frameworks::admin::{build_admin_router, AdminState};
-use crate::frameworks::handler::messages;
+use crate::frameworks::handler::{chat_completions, messages};
 use axum::{routing::post, Router};
 use std::sync::Arc;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -22,6 +22,7 @@ pub fn build_router(use_case: Arc<HandleMessages>, admin: AdminState) -> Router 
     );
     let data = Router::new()
         .route("/v1/messages", post(messages))
+        .route("/v1/chat/completions", post(chat_completions))
         .with_state(use_case);
     data.merge(build_admin_router(admin))
         .layer(PropagateRequestIdLayer::x_request_id())

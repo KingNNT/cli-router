@@ -1,4 +1,8 @@
-//! /v1/messages handler — thin axum glue over HandleMessages.
+//! HTTP handlers — thin axum glue over HandleMessages.
+//!
+//! Two routes share the same use case but differ in `ApiFormat`:
+//! - `/v1/messages` → Anthropic Messages API
+//! - `/v1/chat/completions` → OpenAI Chat Completions API
 
 use crate::application::use_cases::{ApiFormat, HandleMessages, HandleMessagesInput, HandleMessagesOutput};
 use crate::frameworks::error::ProxyError;
@@ -38,6 +42,42 @@ pub async fn messages(
             headers: parts.headers,
             body: body_bytes,
             api_format: ApiFormat::Anthropic,
+        })
+        .await?;
+
+    Ok(match output {
+        HandleMessagesOutput::Buffered {
+            status,
+            headers,
+            body,
+        } => build_response(status, headers, Body::from(body)),
+        HandleMessagesOutput::Streaming {
+            status,
+            headers,
+            body,
+            usage_parser,
+            on_finish,
+        } => {
+            let teed = TeedStream::new(body, usage_parser, on_finish);
+            build_response(status, headers, Body::from_stream(teed))
+        }
+    })
+}
+
+pub async fn chat_completions(
+    State(use_case): State<Arc<HandleMessages>>,
+    req: Request,
+) -> Result<Response, ProxyError> {
+    let (parts, body) = req.into_parts();
+    let body_bytes = axum::body::to_bytes(body, BODY_LIMIT)
+        .await
+        .map_err(|e| ProxyError::BadRequest(format!("body read: {e}")))?;
+
+    let output = use_case
+        .execute(HandleMessagesInput {
+            headers: parts.headers,
+            body: body_bytes,
+            api_format: ApiFormat::OpenAI,
         })
         .await?;
 
