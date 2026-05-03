@@ -78,6 +78,17 @@ impl Provider for LiveProvider {
         let cur = self.current();
         cur.forward(path, headers, body, streaming).await
     }
+
+    async fn forward_openai(
+        &self,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        let cur = self.current();
+        cur.forward_openai(path, headers, body, streaming).await
+    }
 }
 
 #[cfg(test)]

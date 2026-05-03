@@ -234,6 +234,48 @@ impl Provider for RoutingProvider {
             }
         }
     }
+
+    async fn forward_openai(
+        &self,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        let model = messages_protocol::parse_model(&body).map_err(ProxyError::BadRequest)?;
+
+        // Namespace routing.
+        if let Some((provider, bare_model)) = self.resolve_provider(&model) {
+            let rewritten = rewrite_model_in_body(&body, bare_model)
+                .map_err(ProxyError::BadRequest)?;
+            let rewritten_body = Bytes::from(rewritten);
+            return provider
+                .forward_openai(path, headers, rewritten_body, streaming)
+                .await;
+        }
+
+        if let Some((ns, _)) = split_namespace(&model) {
+            return Err(ProxyError::BadRequest(format!(
+                "unknown provider namespace '{ns}'"
+            )));
+        }
+
+        // Glob-based routing.
+        let route = self.select(&model).ok_or_else(|| {
+            ProxyError::BadRequest(format!("no routing rule matches model '{model}'"))
+        })?;
+
+        match route.strategy {
+            RoutingStrategy::Failover => {
+                self.forward_failover_openai(route, path, headers, body, streaming)
+                    .await
+            }
+            RoutingStrategy::RoundRobin => {
+                self.forward_round_robin_openai(route, path, headers, body, streaming)
+                    .await
+            }
+        }
+    }
 }
 
 impl RoutingProvider {
@@ -369,6 +411,161 @@ impl RoutingProvider {
         }
 
         // All providers are cooling down. Return 429 with shortest remaining cooldown.
+        let min_remaining = route
+            .pool
+            .iter()
+            .map(|e| e.remaining_cooldown_ms())
+            .filter(|&ms| ms > 0)
+            .min()
+            .unwrap_or(DEFAULT_COOLDOWN_SECS * 1000);
+
+        let retry_after_secs = min_remaining.div_ceil(1000);
+
+        Err(ProxyError::UpstreamRateLimited {
+            retry_after_secs,
+            message: format!(
+                "all {} providers in round-robin pool are rate-limited",
+                pool_size
+            ),
+        })
+    }
+
+    /// Failover using `forward_openai` on each pool entry.
+    async fn forward_failover_openai(
+        &self,
+        route: &Route,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        let total = route.pool.len();
+        let mut last_err: Option<ProxyError> = None;
+
+        for (i, entry) in route.pool.iter().enumerate() {
+            let attempt_name = entry.provider.name();
+            match entry
+                .provider
+                .forward_openai(path, headers, body.clone(), streaming)
+                .await
+            {
+                Ok(UpstreamResponse::Buffered {
+                    status,
+                    headers: resp_headers,
+                    body: resp_body,
+                }) if status >= 500 => {
+                    let preview =
+                        String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)])
+                            .to_string();
+                    tracing::warn!(
+                        provider = attempt_name,
+                        status,
+                        body = %preview,
+                        attempt = i,
+                        "upstream 5xx; trying next fallback"
+                    );
+                    if i + 1 == total {
+                        return Ok(UpstreamResponse::Buffered {
+                            status,
+                            headers: resp_headers,
+                            body: resp_body,
+                        });
+                    }
+                    continue;
+                }
+                Ok(other) => return Ok(other),
+                Err(e) => {
+                    tracing::warn!(
+                        provider = attempt_name,
+                        error = %e,
+                        attempt = i,
+                        "upstream error; trying next fallback"
+                    );
+                    last_err = Some(e);
+                    continue;
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| ProxyError::BadRequest("routing chain exhausted".into())))
+    }
+
+    /// Round-robin using `forward_openai` on each pool entry.
+    async fn forward_round_robin_openai(
+        &self,
+        route: &Route,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        let pool_size = route.pool.len();
+        let start = self.rr_counter.fetch_add(1, Ordering::Relaxed) % pool_size;
+
+        for offset in 0..pool_size {
+            let idx = (start + offset) % pool_size;
+            let entry = &route.pool[idx];
+            let attempt_name = entry.provider.name();
+
+            if entry.is_cooling_down() {
+                tracing::debug!(
+                    provider = attempt_name,
+                    idx,
+                    "skipping cooling-down provider"
+                );
+                continue;
+            }
+
+            match entry
+                .provider
+                .forward_openai(path, headers, body.clone(), streaming)
+                .await
+            {
+                Ok(UpstreamResponse::Buffered {
+                    status,
+                    headers: resp_headers,
+                    body: _,
+                }) if status == 429 => {
+                    let cooldown_ms = extract_retry_after_ms(&resp_headers) * 1000;
+                    tracing::warn!(
+                        provider = attempt_name,
+                        status,
+                        cooldown_secs = cooldown_ms / 1000,
+                        "upstream 429 (rate limited); cooling down"
+                    );
+                    entry.set_cooldown(cooldown_ms);
+                    continue;
+                }
+                Ok(UpstreamResponse::Buffered {
+                    status,
+                    headers: _,
+                    body: resp_body,
+                }) if status >= 500 => {
+                    let preview =
+                        String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)])
+                            .to_string();
+                    tracing::warn!(
+                        provider = attempt_name,
+                        status,
+                        body = %preview,
+                        "upstream 5xx; cooling down"
+                    );
+                    entry.set_cooldown(DEFAULT_COOLDOWN_SECS * 1000);
+                    continue;
+                }
+                Ok(other) => return Ok(other),
+                Err(e) => {
+                    tracing::warn!(
+                        provider = attempt_name,
+                        error = %e,
+                        "upstream error; cooling down"
+                    );
+                    entry.set_cooldown(DEFAULT_COOLDOWN_SECS * 1000);
+                    continue;
+                }
+            }
+        }
+
         let min_remaining = route
             .pool
             .iter()
