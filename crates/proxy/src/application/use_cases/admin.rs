@@ -566,6 +566,18 @@ mod tests {
         fn recent(&self, _: u32) -> Result<Vec<RequestRow>, ProxyError> {
             Ok(self.rows.clone())
         }
+        fn summarize(
+            &self,
+            from_ms: i64,
+            to_ms: i64,
+        ) -> Result<crate::domain::UsageSummary, ProxyError> {
+            Ok(crate::domain::UsageSummary {
+                from_ms,
+                to_ms,
+                daily: vec![],
+                models: vec![],
+            })
+        }
     }
 
     fn stub() -> Arc<dyn RequestLogReadPort> {
