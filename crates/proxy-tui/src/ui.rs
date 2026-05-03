@@ -29,9 +29,7 @@ pub fn draw(f: &mut Frame, state: &AppState) {
         View::Providers => draw_providers(f, chunks[1], state),
         View::Routing => draw_routing(f, chunks[1], state.config.as_ref()),
         View::Requests => draw_requests(f, chunks[1], state),
-        View::Usage => {
-            // Wired up in Task 10.
-        }
+        View::Usage => crate::views::usage::draw(f, chunks[1], &state.usage),
     }
     draw_status_line(f, chunks[2], state);
 

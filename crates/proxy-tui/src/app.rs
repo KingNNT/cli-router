@@ -37,7 +37,6 @@ pub const ALL_VIEWS: &[View] = &[
     View::Usage,
 ];
 
-#[allow(dead_code)] // wired up in the Usage controller (Task 10)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RangePreset {
     Today,
@@ -47,7 +46,6 @@ pub enum RangePreset {
 }
 
 impl RangePreset {
-    #[allow(dead_code)] // consumed by the Usage renderer (Task 10)
     pub fn label(self) -> &'static str {
         match self {
             RangePreset::Today => "Today",
@@ -60,7 +58,6 @@ impl RangePreset {
     /// Resolve the preset to an inclusive `(from_ms, to_ms)` window using the
     /// supplied "now" (epoch ms in local timezone). Splitting `now` out makes
     /// this trivially testable with deterministic times.
-    #[allow(dead_code)] // consumed by the Usage controller (Task 10)
     pub fn to_range(self, now_ms: i64, local_midnight_ms: i64) -> (i64, i64) {
         const DAY_MS: i64 = 86_400_000;
         match self {
@@ -72,7 +69,6 @@ impl RangePreset {
     }
 }
 
-#[allow(dead_code)] // fields read by the Usage renderer/controller (Task 10)
 #[derive(Debug, Clone, Default)]
 pub struct UsagePaneState {
     pub range_preset: Option<RangePreset>,
@@ -186,7 +182,6 @@ pub struct AppState {
     pub recent: Option<Result<RecentRequestsResponse, String>>,
     pub providers_selected: usize,
     pub requests_selected: usize,
-    #[allow(dead_code)] // read by the Usage renderer/controller (Task 10)
     pub usage: UsagePaneState,
     pub flash: Option<String>,
     pub should_quit: bool,

@@ -57,7 +57,6 @@ impl AdminClient {
         ))
     }
 
-    #[allow(dead_code)] // wired up by Usage tab in subsequent tasks
     pub fn get_usage_summary(
         &self,
         from_ms: i64,
