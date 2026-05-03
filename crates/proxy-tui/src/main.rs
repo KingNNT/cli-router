@@ -66,6 +66,9 @@ fn refresh_view(client: &AdminClient, state: &mut AppState) {
             state.set_config(client.get_config().map_err(|e| e.to_string()))
         }
         View::Requests => state.set_recent(client.get_recent(50).map_err(|e| e.to_string())),
+        View::Usage => {
+            // Wired up in Task 10.
+        }
     }
 }
 
