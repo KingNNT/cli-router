@@ -3,7 +3,7 @@
 //! (`LiveProvider::reload`) call the same code.
 
 use super::{AnthropicProvider, AuthHeader, RoutingProvider, ZaiProvider};
-use crate::application::ports::Provider;
+use crate::application::ports::{Provider, QuotaPort};
 use crate::config::{AuthConfig, Config, ProviderConfig, ProviderKind};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -61,6 +61,7 @@ pub fn build_leaves(
 pub fn build_routing_provider(
     cfg: &Config,
     leaves: &HashMap<String, Arc<dyn Provider>>,
+    quota: Arc<dyn QuotaPort>,
 ) -> Result<Arc<dyn Provider>, BuildError> {
     // Collect rules with their original index as default priority.
     let mut indexed: Vec<(u32, &crate::config::RoutingRule)> = cfg
@@ -97,15 +98,18 @@ pub fn build_routing_provider(
         builder
             .leaves(leaves.clone())
             .affinity(cfg.affinity.clone())
+            .quota(quota)
             .build(),
     ))
 }
 
-/// Convenience: leaves + routing in one shot.
+/// Convenience: leaves + routing in one shot. Uses a no-op quota (routing
+/// tests and hot-reload paths that don't have a quota handle). Callers that
+/// need quota enforcement should call `build_routing_provider` directly.
 pub fn build_from_config(
     cfg: &Config,
     http: reqwest::Client,
 ) -> Result<Arc<dyn Provider>, BuildError> {
     let leaves = build_leaves(&cfg.providers, http);
-    build_routing_provider(cfg, &leaves)
+    build_routing_provider(cfg, &leaves, Arc::new(crate::adapters::quota::NoopQuota))
 }

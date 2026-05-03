@@ -84,6 +84,7 @@ impl Provider for AnthropicProvider {
             headers,
             body,
             streaming,
+            self.name(),
         )
         .await
     }

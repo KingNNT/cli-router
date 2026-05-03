@@ -14,10 +14,16 @@ pub enum UpstreamResponse {
         status: u16,
         headers: HeaderMap,
         body: Bytes,
+        /// The leaf provider config name that served this request (e.g. `"zai"`
+        /// or `"anthropic"`). Populated by `RoutingProvider`; leaf providers
+        /// populate it with their own `name()`.
+        provider_id: String,
     },
     Streaming {
         status: u16,
         headers: HeaderMap,
         body: BoxedByteStream,
+        /// See `Buffered::provider_id`.
+        provider_id: String,
     },
 }

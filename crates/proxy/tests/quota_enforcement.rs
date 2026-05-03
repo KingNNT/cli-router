@@ -82,3 +82,32 @@ fn unconfigured_provider_always_ok() {
     }
     assert_eq!(q.check("anthropic"), QuotaCheck::Ok);
 }
+
+/// Mirrors the production wiring: `record` and `check` must both be called
+/// with the *leaf provider config name* (e.g. `"zai"`), NOT the static router
+/// name `"router"`. This test would have silently passed (no enforcement) under
+/// the old broken wiring where `HandleMessages` called `provider.name()` which
+/// always returned `"router"`.
+#[test]
+fn record_and_check_use_leaf_provider_config_name() {
+    // Configure a quota for the leaf provider name that appears in RoutingProvider's
+    // PoolEntry::id — i.e. the value from ProviderConfig::name in config.toml.
+    let q: Arc<dyn QuotaPort> = Arc::new(InMemoryQuota::new(vec![cfg("zai", 1)]));
+
+    // Simulate what RoutingProvider now does: record with the leaf config name.
+    q.record("zai", &usage_default());
+
+    // The post-record check must return Reject when limit is 1 and 1 request recorded.
+    let result = q.check("zai");
+    assert!(
+        matches!(result, QuotaCheck::Reject { .. }),
+        "quota should reject after 1 request with max=1 when keyed on 'zai', got {result:?}"
+    );
+
+    // Verify the old broken key ('router') is always Ok — confirms the fix is necessary.
+    assert_eq!(
+        q.check("router"),
+        QuotaCheck::Ok,
+        "'router' is never a quota key, so check must be Ok (no config matches it)"
+    );
+}

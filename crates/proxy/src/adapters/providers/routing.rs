@@ -15,7 +15,7 @@
 
 use super::messages_protocol;
 use crate::application::errors::ProxyError;
-use crate::application::ports::{Provider, UpstreamResponse, UsageParser};
+use crate::application::ports::{Provider, QuotaPort, UpstreamResponse, UsageParser};
 use crate::config::RoutingStrategy;
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
@@ -129,6 +129,8 @@ pub struct RoutingProvider {
     leaves: std::collections::HashMap<String, Arc<dyn Provider>>,
     /// Conversation-affinity config. Controls sticky rendezvous hashing.
     affinity: crate::config::AffinityConfig,
+    /// Quota enforcement — checked per leaf provider before forwarding.
+    quota: Arc<dyn QuotaPort>,
 }
 
 impl RoutingProvider {
@@ -149,11 +151,22 @@ impl RoutingProvider {
     }
 }
 
-#[derive(Default)]
 pub struct RoutingProviderBuilder {
     rules: Vec<Route>,
     leaves: std::collections::HashMap<String, Arc<dyn Provider>>,
     affinity: crate::config::AffinityConfig,
+    quota: Arc<dyn QuotaPort>,
+}
+
+impl Default for RoutingProviderBuilder {
+    fn default() -> Self {
+        Self {
+            rules: Vec::new(),
+            leaves: std::collections::HashMap::new(),
+            affinity: Default::default(),
+            quota: Arc::new(crate::adapters::quota::NoopQuota),
+        }
+    }
 }
 
 impl RoutingProviderBuilder {
@@ -165,6 +178,11 @@ impl RoutingProviderBuilder {
 
     pub fn affinity(mut self, affinity: crate::config::AffinityConfig) -> Self {
         self.affinity = affinity;
+        self
+    }
+
+    pub fn quota(mut self, quota: Arc<dyn QuotaPort>) -> Self {
+        self.quota = quota;
         self
     }
 
@@ -196,6 +214,7 @@ impl RoutingProviderBuilder {
             rr_counter: AtomicUsize::new(0),
             leaves: self.leaves,
             affinity: self.affinity,
+            quota: self.quota,
         }
     }
 }
@@ -238,6 +257,7 @@ impl Provider for RoutingProvider {
         // Namespace routing: if model contains "/", extract namespace and route
         // directly to the named provider.
         if let Some((provider, bare_model)) = self.resolve_provider(&model) {
+            self.check_quota(provider.name())?;
             let rewritten =
                 rewrite_model_in_body(&body, bare_model).map_err(ProxyError::BadRequest)?;
             let rewritten_body = Bytes::from(rewritten);
@@ -281,6 +301,7 @@ impl Provider for RoutingProvider {
 
         // Namespace routing.
         if let Some((provider, bare_model)) = self.resolve_provider(&model) {
+            self.check_quota(provider.name())?;
             let rewritten =
                 rewrite_model_in_body(&body, bare_model).map_err(ProxyError::BadRequest)?;
             let rewritten_body = Bytes::from(rewritten);
@@ -314,6 +335,31 @@ impl Provider for RoutingProvider {
 }
 
 impl RoutingProvider {
+    /// Pre-flight quota check for a leaf provider. Returns `Err(QuotaExceeded)`
+    /// when the quota is exhausted, logs a warning on `Warn`, and is a no-op on `Ok`.
+    fn check_quota(&self, provider_id: &str) -> Result<(), ProxyError> {
+        match self.quota.check(provider_id) {
+            crate::domain::quota::QuotaCheck::Ok => Ok(()),
+            crate::domain::quota::QuotaCheck::Warn { metric, used_pct } => {
+                tracing::warn!(
+                    provider = %provider_id,
+                    metric,
+                    used_pct,
+                    "quota approaching limit"
+                );
+                Ok(())
+            }
+            crate::domain::quota::QuotaCheck::Reject {
+                metric,
+                retry_after_ms,
+            } => Err(ProxyError::QuotaExceeded {
+                provider: provider_id.to_string(),
+                metric,
+                retry_after_ms,
+            }),
+        }
+    }
+
     /// Return pool indices in the order they should be attempted.
     ///
     /// Sticky path: if affinity is enabled and a hash can be derived from the
@@ -364,6 +410,14 @@ impl RoutingProvider {
 
         for (i, entry) in route.pool.iter().enumerate() {
             let attempt_name = entry.provider.name();
+            // Pre-flight quota check against the leaf provider's config name.
+            if let Err(e) = self.check_quota(&entry.id) {
+                if i + 1 == total {
+                    return Err(e);
+                }
+                last_err = Some(e);
+                continue;
+            }
             match entry
                 .provider
                 .forward(path, headers, body.clone(), streaming)
@@ -373,6 +427,7 @@ impl RoutingProvider {
                     status,
                     headers: resp_headers,
                     body: resp_body,
+                    provider_id,
                 }) if status >= 500 => {
                     let preview =
                         String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)]).to_string();
@@ -388,6 +443,7 @@ impl RoutingProvider {
                             status,
                             headers: resp_headers,
                             body: resp_body,
+                            provider_id,
                         });
                     }
                     continue;
@@ -436,6 +492,13 @@ impl RoutingProvider {
                 continue;
             }
 
+            // Pre-flight quota check against the leaf provider's config name.
+            if let Err(e) = self.check_quota(&entry.id) {
+                tracing::debug!(provider = %entry.id, "skipping quota-exceeded provider in round-robin");
+                let _ = e; // try next provider
+                continue;
+            }
+
             match entry
                 .provider
                 .forward(path, headers, body.clone(), streaming)
@@ -445,6 +508,7 @@ impl RoutingProvider {
                     status,
                     headers: resp_headers,
                     body: _,
+                    ..
                 }) if status == 429 => {
                     let cooldown_ms = extract_retry_after_ms(&resp_headers) * 1000;
                     tracing::warn!(
@@ -458,8 +522,8 @@ impl RoutingProvider {
                 }
                 Ok(UpstreamResponse::Buffered {
                     status,
-                    headers: _,
                     body: resp_body,
+                    ..
                 }) if status >= 500 => {
                     let preview =
                         String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)]).to_string();
@@ -519,6 +583,14 @@ impl RoutingProvider {
 
         for (i, entry) in route.pool.iter().enumerate() {
             let attempt_name = entry.provider.name();
+            // Pre-flight quota check against the leaf provider's config name.
+            if let Err(e) = self.check_quota(&entry.id) {
+                if i + 1 == total {
+                    return Err(e);
+                }
+                last_err = Some(e);
+                continue;
+            }
             match entry
                 .provider
                 .forward_openai(path, headers, body.clone(), streaming)
@@ -528,6 +600,7 @@ impl RoutingProvider {
                     status,
                     headers: resp_headers,
                     body: resp_body,
+                    provider_id,
                 }) if status >= 500 => {
                     let preview =
                         String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)]).to_string();
@@ -543,6 +616,7 @@ impl RoutingProvider {
                             status,
                             headers: resp_headers,
                             body: resp_body,
+                            provider_id,
                         });
                     }
                     continue;
@@ -589,6 +663,13 @@ impl RoutingProvider {
                 continue;
             }
 
+            // Pre-flight quota check against the leaf provider's config name.
+            if let Err(e) = self.check_quota(&entry.id) {
+                tracing::debug!(provider = %entry.id, "skipping quota-exceeded provider in round-robin");
+                let _ = e; // try next provider
+                continue;
+            }
+
             match entry
                 .provider
                 .forward_openai(path, headers, body.clone(), streaming)
@@ -598,6 +679,7 @@ impl RoutingProvider {
                     status,
                     headers: resp_headers,
                     body: _,
+                    ..
                 }) if status == 429 => {
                     let cooldown_ms = extract_retry_after_ms(&resp_headers) * 1000;
                     tracing::warn!(
@@ -611,8 +693,8 @@ impl RoutingProvider {
                 }
                 Ok(UpstreamResponse::Buffered {
                     status,
-                    headers: _,
                     body: resp_body,
+                    ..
                 }) if status >= 500 => {
                     let preview =
                         String::from_utf8_lossy(&resp_body[..resp_body.len().min(200)]).to_string();

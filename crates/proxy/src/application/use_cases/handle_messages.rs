@@ -90,24 +90,6 @@ impl HandleMessages {
             started_at,
         })?;
 
-        let provider_name = self.provider.name();
-        match self.quota.check(provider_name) {
-            crate::domain::quota::QuotaCheck::Ok => {}
-            crate::domain::quota::QuotaCheck::Warn { metric, used_pct } => {
-                tracing::warn!(provider=%provider_name, metric, used_pct, "quota approaching limit");
-            }
-            crate::domain::quota::QuotaCheck::Reject {
-                metric,
-                retry_after_ms,
-            } => {
-                return Err(ProxyError::QuotaExceeded {
-                    provider: provider_name.to_string(),
-                    metric,
-                    retry_after_ms,
-                });
-            }
-        }
-
         let streaming = is_streaming(&input.body);
         let upstream = match input.api_format {
             ApiFormat::Anthropic => {
@@ -146,11 +128,21 @@ impl HandleMessages {
                 status,
                 headers,
                 body,
-            } => self.handle_buffered(request_id, model, status, headers, body, input.api_format),
+                provider_id,
+            } => self.handle_buffered(
+                request_id,
+                model,
+                status,
+                headers,
+                body,
+                input.api_format,
+                provider_id,
+            ),
             UpstreamResponse::Streaming {
                 status,
                 headers,
                 body,
+                provider_id,
             } => Ok(self.handle_streaming(
                 request_id,
                 model,
@@ -158,10 +150,12 @@ impl HandleMessages {
                 headers,
                 body,
                 input.api_format,
+                provider_id,
             )),
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_buffered(
         &self,
         request_id: String,
@@ -170,6 +164,7 @@ impl HandleMessages {
         headers: HeaderMap,
         body: Bytes,
         api_format: ApiFormat,
+        provider_id: String,
     ) -> Result<HandleMessagesOutput, ProxyError> {
         if (200..300).contains(&status) {
             let usage = match api_format {
@@ -187,7 +182,7 @@ impl HandleMessages {
             {
                 tracing::error!(request_id = %request_id, error = %e, "failed to record completed row");
             }
-            self.quota.record(self.provider.name(), &req_usage);
+            self.quota.record(&provider_id, &req_usage);
             Ok(HandleMessagesOutput::Buffered {
                 status,
                 headers,
@@ -211,6 +206,7 @@ impl HandleMessages {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn handle_streaming(
         &self,
         request_id: String,
@@ -219,6 +215,7 @@ impl HandleMessages {
         headers: HeaderMap,
         body: BoxedByteStream,
         api_format: ApiFormat,
+        provider_id: String,
     ) -> HandleMessagesOutput {
         let parser = match api_format {
             ApiFormat::Anthropic => self.provider.usage_parser(),
@@ -230,7 +227,6 @@ impl HandleMessages {
         let quota = self.quota.clone();
         let req_id = request_id.clone();
         let model_clone = model.clone();
-        let provider_name_owned = self.provider.name().to_string();
         let on_finish = Box::new(move |usage: UsageRecord, normal: bool| {
             let cost = compute_cost(&pricing, &model_clone, &usage);
             let req_usage = to_request_usage(&usage, cost);
@@ -246,7 +242,7 @@ impl HandleMessages {
                     "failed to record streaming completion"
                 );
             }
-            quota.record(&provider_name_owned, &req_usage);
+            quota.record(&provider_id, &req_usage);
         });
         HandleMessagesOutput::Streaming {
             status,
@@ -461,6 +457,9 @@ mod tests {
             crate::domain::quota::QuotaCheck::Ok
         }
         fn record(&self, _: &str, _: &crate::domain::RequestUsage) {}
+        fn snapshot(&self) -> Vec<crate::domain::quota::QuotaSnapshot> {
+            vec![]
+        }
     }
 
     fn noop_quota() -> Arc<dyn crate::application::ports::QuotaPort> {
@@ -504,6 +503,7 @@ mod tests {
             status: 200,
             headers: HeaderMap::new(),
             body: Bytes::from_static(br#"{"usage":{"input_tokens":10,"output_tokens":20}}"#),
+            provider_id: "fake".into(),
         })));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
@@ -543,6 +543,7 @@ mod tests {
             status: 401,
             headers: HeaderMap::new(),
             body: Bytes::from_static(br#"{"error":"unauthorized"}"#),
+            provider_id: "fake".into(),
         })));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
@@ -583,6 +584,7 @@ mod tests {
             status: 200,
             headers: HeaderMap::new(),
             body,
+            provider_id: "fake".into(),
         })));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();

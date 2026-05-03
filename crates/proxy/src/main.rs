@@ -3,10 +3,10 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use proxy::adapters::oauth::OAuthSessionStore;
-use proxy::adapters::providers::{LiveProvider, build_from_config};
+use proxy::adapters::providers::{LiveProvider, build_leaves, build_routing_provider};
 use proxy::adapters::quota::InMemoryQuota;
 use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
-use proxy::application::ports::{Provider, RequestLogPort, RequestLogReadPort};
+use proxy::application::ports::{Provider, QuotaPort, RequestLogPort, RequestLogReadPort};
 use proxy::application::use_cases::{
     CompleteAnthropicOAuth, GetConfig, GetQuotaStatus, GetRecentRequests, GetStatus,
     GetUsageSummary, HandleMessages, StartAnthropicOAuth, TestProvider, UpdateConfig,
@@ -73,9 +73,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let http = reqwest::Client::builder().build()?;
-    let initial_router = build_from_config(&cfg, http.clone())?;
-    let live = Arc::new(LiveProvider::new(initial_router));
-    let provider: Arc<dyn Provider> = live.clone();
 
     let port = cfg.port;
 
@@ -115,6 +112,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         quota.seed(seed_rows);
     }
 
+    // Wire quota into the routing provider so pre-flight checks use leaf provider names.
+    let quota_port: Arc<dyn QuotaPort> = quota.clone();
+    let leaves = build_leaves(&cfg.providers, http.clone());
+    let initial_router = build_routing_provider(&cfg, &leaves, quota_port.clone())?;
+    let live = Arc::new(LiveProvider::new(initial_router));
+    let provider: Arc<dyn Provider> = live.clone();
+
     let cfg_lock = Arc::new(RwLock::new(cfg));
 
     let use_case = Arc::new(HandleMessages::new(
@@ -123,7 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pricing,
         clock,
         local_user_id,
-        quota.clone(),
+        quota_port.clone(),
     ));
 
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
@@ -137,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let usage_summary = Arc::new(GetUsageSummary::new(request_read.clone()));
-    let quota_status = Arc::new(GetQuotaStatus::new(quota.clone()));
+    let quota_status = Arc::new(GetQuotaStatus::new(quota_port.clone()));
 
     let admin = AdminState {
         get_status: Arc::new(GetStatus::new(

@@ -137,6 +137,7 @@ impl UsageParser for OpenAiUsageParser {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn forward(
     http: &reqwest::Client,
     base_url: &str,
@@ -145,9 +146,20 @@ pub(super) async fn forward(
     headers: &HeaderMap,
     body: Bytes,
     streaming: bool,
+    provider_id: &str,
 ) -> Result<UpstreamResponse, ProxyError> {
     // Send the request using the current auth.
-    let resp = send_request(http, base_url, auth, path, headers, &body, streaming).await?;
+    let resp = send_request(
+        http,
+        base_url,
+        auth,
+        path,
+        headers,
+        &body,
+        streaming,
+        provider_id,
+    )
+    .await?;
 
     // On 401 with OAuth, refresh and retry once. This handles both Buffered
     // and Streaming response shapes — a 401 can come as either.
@@ -164,8 +176,17 @@ pub(super) async fn forward(
         match crate::adapters::oauth::refresh_token(http, refresh_token).await {
             Ok(tokens) => {
                 let refreshed = oauth_tokens_to_auth_header(&tokens);
-                return send_request(http, base_url, &refreshed, path, headers, &body, streaming)
-                    .await;
+                return send_request(
+                    http,
+                    base_url,
+                    &refreshed,
+                    path,
+                    headers,
+                    &body,
+                    streaming,
+                    provider_id,
+                )
+                .await;
             }
             Err(e) => {
                 tracing::warn!(error = %e, "OAuth refresh on 401 failed");
@@ -196,6 +217,7 @@ fn oauth_tokens_to_auth_header(tokens: &crate::adapters::oauth::OAuthTokens) -> 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn send_request(
     http: &reqwest::Client,
     base_url: &str,
@@ -204,6 +226,7 @@ async fn send_request(
     headers: &HeaderMap,
     body: &[u8],
     streaming: bool,
+    provider_id: &str,
 ) -> Result<UpstreamResponse, ProxyError> {
     let url = format!("{base_url}{path}");
     let mut req = http.post(&url).body(body.to_vec());
@@ -249,6 +272,7 @@ async fn send_request(
             status,
             headers: headers_out,
             body,
+            provider_id: provider_id.to_string(),
         })
     } else {
         let body = resp.bytes().await?;
@@ -256,6 +280,7 @@ async fn send_request(
             status,
             headers: headers_out,
             body,
+            provider_id: provider_id.to_string(),
         })
     }
 }
