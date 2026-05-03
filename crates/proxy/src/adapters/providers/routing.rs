@@ -39,14 +39,17 @@ struct Route {
 
 struct PoolEntry {
     provider: Arc<dyn Provider>,
+    /// Stable identifier — provider name from config. Used for affinity scoring.
+    id: String,
     /// Epoch millis when cooldown expires. 0 = healthy.
     cooldown_until: AtomicU64,
 }
 
 impl PoolEntry {
-    fn new(provider: Arc<dyn Provider>) -> Self {
+    fn new(provider: Arc<dyn Provider>, id: String) -> Self {
         Self {
             provider,
+            id,
             cooldown_until: AtomicU64::new(0),
         }
     }
@@ -87,6 +90,16 @@ impl PoolEntry {
             .unwrap_or_default()
             .as_millis() as u64;
         until.saturating_sub(now_ms)
+    }
+}
+
+impl super::affinity::PoolMember for PoolEntry {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn healthy(&self) -> bool {
+        !self.is_cooling_down()
     }
 }
 
@@ -156,9 +169,10 @@ impl RoutingProviderBuilder {
     ) -> Result<Self, globset::Error> {
         let matcher = Glob::new(pattern)?.compile_matcher();
         let mut pool = Vec::with_capacity(1 + fallback.len());
-        pool.push(PoolEntry::new(primary));
+        pool.push(PoolEntry::new(primary.clone(), primary.name().to_string()));
         for fb in fallback {
-            pool.push(PoolEntry::new(fb));
+            let id = fb.name().to_string();
+            pool.push(PoolEntry::new(fb, id));
         }
         self.rules.push(Route {
             matcher,
@@ -698,7 +712,7 @@ mod tests {
 
     #[test]
     fn pool_entry_cooldown_lifecycle() {
-        let entry = PoolEntry::new(dummy());
+        let entry = PoolEntry::new(dummy(), "test-a".to_string());
         assert!(!entry.is_cooling_down());
 
         // Set cooldown for 5 seconds.
