@@ -2,7 +2,7 @@
 
 use rusqlite::{Connection, Error};
 
-const MIGRATIONS: &[(i32, &str)] = &[(1, MIGRATION_V1)];
+const MIGRATIONS: &[(i32, &str)] = &[(1, MIGRATION_V1), (2, MIGRATION_V2)];
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE users (
@@ -42,6 +42,10 @@ CREATE TABLE requests (
 
 CREATE INDEX idx_requests_user_started ON requests(user_id, started_at DESC);
 CREATE INDEX idx_requests_model        ON requests(model);
+"#;
+
+const MIGRATION_V2: &str = r#"
+ALTER TABLE requests ADD COLUMN translation_direction TEXT;
 "#;
 
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
@@ -97,6 +101,20 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn v2_adds_translation_direction_column() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+        let cols: Vec<String> = conn
+            .prepare("PRAGMA table_info(requests)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(cols.contains(&"translation_direction".into()));
     }
 
     #[test]
