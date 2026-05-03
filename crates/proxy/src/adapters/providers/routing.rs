@@ -99,6 +99,15 @@ fn split_namespace(model: &str) -> Option<(&str, &str)> {
     Some((&model[..idx], &model[idx + 1..]))
 }
 
+/// Replace the `"model"` field in a JSON body with `new_model`, returning
+/// the re-serialized body bytes.
+fn rewrite_model_in_body(body: &[u8], new_model: &str) -> Result<Vec<u8>, String> {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(body).map_err(|e| format!("invalid json: {e}"))?;
+    value["model"] = serde_json::Value::String(new_model.to_string());
+    serde_json::to_vec(&value).map_err(|e| format!("json serialize: {e}"))
+}
+
 pub struct RoutingProvider {
     rules: Vec<Route>,
     /// Counter for round-robin rotation. Incremented per request.
@@ -467,5 +476,23 @@ mod tests {
     #[test]
     fn split_namespace_empty_after_slash() {
         assert_eq!(split_namespace("zai/"), Some(("zai", "")));
+    }
+
+    #[test]
+    fn rewrite_model_in_body_replaces_model_field() {
+        let body = br#"{"model":"zai/glm-5","messages":[{"role":"user","content":"hi"}]}"#;
+        let result = rewrite_model_in_body(body, "glm-5").unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(v["model"].as_str().unwrap(), "glm-5");
+    }
+
+    #[test]
+    fn rewrite_model_in_body_preserves_other_fields() {
+        let body = br#"{"model":"zai/glm-5","max_tokens":50,"stream":true}"#;
+        let result = rewrite_model_in_body(body, "glm-5").unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(v["model"].as_str().unwrap(), "glm-5");
+        assert_eq!(v["max_tokens"].as_u64().unwrap(), 50);
+        assert_eq!(v["stream"].as_bool().unwrap(), true);
     }
 }
