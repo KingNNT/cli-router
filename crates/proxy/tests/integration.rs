@@ -663,7 +663,7 @@ async fn upstream_error_is_forwarded_and_row_is_marked_errored() {
 }
 
 async fn start_routing_proxy(rules: Vec<(&'static str, String, Vec<String>)>) -> SocketAddr {
-    use proxy::adapters::providers::{AuthHeader, RoutingProvider, ZaiProvider};
+    use proxy::adapters::providers::{AuthHeader, RoutingProvider};
 
     let conn = Connection::open_in_memory().unwrap();
     ensure_current(&conn).unwrap();
@@ -680,6 +680,7 @@ async fn start_routing_proxy(rules: Vec<(&'static str, String, Vec<String>)>) ->
     for (_, primary_url, fallback_urls) in &rules {
         if !leaves.contains_key(primary_url) {
             // Naming the leaf provider by its base URL keeps the helper terse.
+            // All mock servers in these routing tests respond to /v1/messages (Anthropic format).
             let leaf: Arc<dyn Provider> = Arc::new(AnthropicProvider::configure(
                 http.clone(),
                 Some(primary_url.clone()),
@@ -689,10 +690,10 @@ async fn start_routing_proxy(rules: Vec<(&'static str, String, Vec<String>)>) ->
         }
         for u in fallback_urls {
             if !leaves.contains_key(u) {
-                let leaf: Arc<dyn Provider> = Arc::new(ZaiProvider::configure(
+                // Fallbacks also point at Anthropic-format mocks in these tests.
+                let leaf: Arc<dyn Provider> = Arc::new(AnthropicProvider::configure(
                     http.clone(),
                     Some(u.clone()),
-                    None,
                     AuthHeader::Passthrough,
                 ));
                 leaves.insert(u.clone(), leaf);

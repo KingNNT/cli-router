@@ -14,8 +14,12 @@
 //! shortest remaining cooldown as `Retry-After`.
 
 use super::messages_protocol;
+use crate::adapters::translation::stream_wrap;
+use crate::adapters::translation::{anthropic_to_openai, openai_to_anthropic};
 use crate::application::errors::ProxyError;
-use crate::application::ports::{Provider, QuotaPort, UpstreamResponse, UsageParser};
+use crate::application::ports::{
+    ApiFormat, Direction, Provider, QuotaPort, UpstreamResponse, UsageParser,
+};
 use crate::config::RoutingStrategy;
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
@@ -264,9 +268,19 @@ impl Provider for RoutingProvider {
             let rewritten =
                 rewrite_model_in_body(&body, bare_model).map_err(ProxyError::BadRequest)?;
             let rewritten_body = Bytes::from(rewritten);
-            return provider
-                .forward(path, headers, rewritten_body, streaming)
-                .await;
+            let direction = Direction::from_pair(ApiFormat::Anthropic, provider.native_format());
+            let send_body = Self::translate_request(&rewritten_body, direction)?;
+            let raw_resp = match provider.native_format() {
+                ApiFormat::Anthropic => {
+                    provider.forward(path, headers, send_body, streaming).await
+                }
+                ApiFormat::OpenAI => {
+                    provider
+                        .forward_openai(path, headers, send_body, streaming)
+                        .await
+                }
+            }?;
+            return Self::translate_upstream_response(raw_resp, direction);
         }
 
         // If model contains "/" but we couldn't resolve, it's an unknown namespace.
@@ -283,11 +297,11 @@ impl Provider for RoutingProvider {
 
         match route.strategy {
             RoutingStrategy::Failover => {
-                self.forward_failover(route, path, headers, body, streaming)
+                self.forward_failover(route, path, headers, body, streaming, ApiFormat::Anthropic)
                     .await
             }
             RoutingStrategy::RoundRobin => {
-                self.forward_round_robin(route, path, headers, body, streaming)
+                self.forward_round_robin(route, path, headers, body, streaming, ApiFormat::Anthropic)
                     .await
             }
         }
@@ -308,9 +322,19 @@ impl Provider for RoutingProvider {
             let rewritten =
                 rewrite_model_in_body(&body, bare_model).map_err(ProxyError::BadRequest)?;
             let rewritten_body = Bytes::from(rewritten);
-            return provider
-                .forward_openai(path, headers, rewritten_body, streaming)
-                .await;
+            let direction = Direction::from_pair(ApiFormat::OpenAI, provider.native_format());
+            let send_body = Self::translate_request(&rewritten_body, direction)?;
+            let raw_resp = match provider.native_format() {
+                ApiFormat::OpenAI => {
+                    provider
+                        .forward_openai(path, headers, send_body, streaming)
+                        .await
+                }
+                ApiFormat::Anthropic => {
+                    provider.forward(path, headers, send_body, streaming).await
+                }
+            }?;
+            return Self::translate_upstream_response(raw_resp, direction);
         }
 
         if let Some((ns, _)) = split_namespace(&model) {
@@ -338,6 +362,110 @@ impl Provider for RoutingProvider {
 }
 
 impl RoutingProvider {
+    /// Translate a request body from `client_format` to the provider's native format.
+    /// Returns `(translated_body, direction)`. For `Passthrough` the original body is returned.
+    fn translate_request(
+        body: &Bytes,
+        direction: Direction,
+    ) -> Result<Bytes, ProxyError> {
+        match direction {
+            Direction::Passthrough => Ok(body.clone()),
+            Direction::AnthropicToOpenAI => {
+                let translated = anthropic_to_openai::request::translate(body)?;
+                Ok(Bytes::from(translated))
+            }
+            Direction::OpenAIToAnthropic => {
+                let translated = openai_to_anthropic::request::translate(body)?;
+                Ok(Bytes::from(translated))
+            }
+        }
+    }
+
+    /// Translate a buffered response body from the provider's native format back to `client_format`.
+    fn translate_response_buffered(
+        body: &Bytes,
+        direction: Direction,
+    ) -> Result<Bytes, ProxyError> {
+        match direction {
+            Direction::Passthrough => Ok(body.clone()),
+            Direction::AnthropicToOpenAI => {
+                // upstream was OpenAI, translate back to Anthropic for client
+                let translated = anthropic_to_openai::response::translate(body)?;
+                Ok(Bytes::from(translated))
+            }
+            Direction::OpenAIToAnthropic => {
+                // upstream was Anthropic, translate back to OpenAI for client
+                let translated = openai_to_anthropic::response::translate(body)?;
+                Ok(Bytes::from(translated))
+            }
+        }
+    }
+
+    /// Translate an `UpstreamResponse` according to `direction`.
+    /// For streaming, wraps the byte stream with the appropriate FSM wrapper.
+    fn translate_upstream_response(
+        resp: UpstreamResponse,
+        direction: Direction,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        match direction {
+            Direction::Passthrough => Ok(resp),
+            Direction::AnthropicToOpenAI => match resp {
+                UpstreamResponse::Buffered {
+                    status,
+                    headers,
+                    body,
+                    provider_id,
+                } => {
+                    let translated_body = Self::translate_response_buffered(&body, direction)?;
+                    Ok(UpstreamResponse::Buffered {
+                        status,
+                        headers,
+                        body: translated_body,
+                        provider_id,
+                    })
+                }
+                UpstreamResponse::Streaming {
+                    status,
+                    headers,
+                    body,
+                    provider_id,
+                } => Ok(UpstreamResponse::Streaming {
+                    status,
+                    headers,
+                    body: stream_wrap::wrap_openai_to_anthropic(body),
+                    provider_id,
+                }),
+            },
+            Direction::OpenAIToAnthropic => match resp {
+                UpstreamResponse::Buffered {
+                    status,
+                    headers,
+                    body,
+                    provider_id,
+                } => {
+                    let translated_body = Self::translate_response_buffered(&body, direction)?;
+                    Ok(UpstreamResponse::Buffered {
+                        status,
+                        headers,
+                        body: translated_body,
+                        provider_id,
+                    })
+                }
+                UpstreamResponse::Streaming {
+                    status,
+                    headers,
+                    body,
+                    provider_id,
+                } => Ok(UpstreamResponse::Streaming {
+                    status,
+                    headers,
+                    body: stream_wrap::wrap_anthropic_to_openai(body),
+                    provider_id,
+                }),
+            },
+        }
+    }
+
     /// Pre-flight quota check for a leaf provider. Returns `Err(QuotaExceeded)`
     /// when the quota is exhausted, logs a warning on `Warn`, and is a no-op on `Ok`.
     fn check_quota(&self, provider_id: &str) -> Result<(), ProxyError> {
@@ -400,6 +528,7 @@ impl RoutingProvider {
     }
 
     /// Failover: try pool[0] first, then pool[1..] on 5xx/error.
+    /// `client_format` is the API format the client used (Anthropic or OpenAI).
     async fn forward_failover(
         &self,
         route: &Route,
@@ -407,6 +536,7 @@ impl RoutingProvider {
         headers: &HeaderMap,
         body: Bytes,
         streaming: bool,
+        client_format: ApiFormat,
     ) -> Result<UpstreamResponse, ProxyError> {
         let total = route.pool.len();
         let mut last_err: Option<ProxyError> = None;
@@ -421,11 +551,27 @@ impl RoutingProvider {
                 last_err = Some(e);
                 continue;
             }
-            match entry
-                .provider
-                .forward(path, headers, body.clone(), streaming)
-                .await
-            {
+
+            let direction = Direction::from_pair(client_format, entry.provider.native_format());
+            let send_body = Self::translate_request(&body, direction)?;
+
+            // Call the leaf provider using its native format.
+            let raw_resp = match entry.provider.native_format() {
+                ApiFormat::Anthropic => {
+                    entry
+                        .provider
+                        .forward(path, headers, send_body, streaming)
+                        .await
+                }
+                ApiFormat::OpenAI => {
+                    entry
+                        .provider
+                        .forward_openai(path, headers, send_body, streaming)
+                        .await
+                }
+            };
+
+            match raw_resp {
                 Ok(UpstreamResponse::Buffered {
                     status,
                     headers: resp_headers,
@@ -442,16 +588,31 @@ impl RoutingProvider {
                         "upstream 5xx; trying next fallback"
                     );
                     if i + 1 == total {
-                        return Ok(UpstreamResponse::Buffered {
-                            status,
-                            headers: resp_headers,
-                            body: resp_body,
-                            provider_id,
-                        });
+                        // Return the last 5xx — apply translation anyway so the client
+                        // gets the shape it expects.
+                        let translated =
+                            Self::translate_upstream_response(
+                                UpstreamResponse::Buffered {
+                                    status,
+                                    headers: resp_headers,
+                                    body: resp_body,
+                                    provider_id,
+                                },
+                                direction,
+                            )
+                            .unwrap_or_else(|_| UpstreamResponse::Buffered {
+                                status: 502,
+                                headers: HeaderMap::new(),
+                                body: Bytes::from_static(b"{\"error\":{\"type\":\"translation_error\"}}"),
+                                provider_id: attempt_name.to_string(),
+                            });
+                        return Ok(translated);
                     }
                     continue;
                 }
-                Ok(other) => return Ok(other),
+                Ok(other) => {
+                    return Self::translate_upstream_response(other, direction);
+                }
                 Err(e) => {
                     tracing::warn!(
                         provider = attempt_name,
@@ -470,6 +631,7 @@ impl RoutingProvider {
 
     /// Round-robin: rotate across pool, skip cooling-down providers,
     /// set cooldown on 429/5xx.
+    /// `client_format` is the API format the client used (Anthropic or OpenAI).
     async fn forward_round_robin(
         &self,
         route: &Route,
@@ -477,6 +639,7 @@ impl RoutingProvider {
         headers: &HeaderMap,
         body: Bytes,
         streaming: bool,
+        client_format: ApiFormat,
     ) -> Result<UpstreamResponse, ProxyError> {
         let pool_size = route.pool.len();
         let order = self.compute_attempt_order(&route.pool, headers, &body);
@@ -502,11 +665,25 @@ impl RoutingProvider {
                 continue;
             }
 
-            match entry
-                .provider
-                .forward(path, headers, body.clone(), streaming)
-                .await
-            {
+            let direction = Direction::from_pair(client_format, entry.provider.native_format());
+            let send_body = Self::translate_request(&body, direction)?;
+
+            let raw_resp = match entry.provider.native_format() {
+                ApiFormat::Anthropic => {
+                    entry
+                        .provider
+                        .forward(path, headers, send_body, streaming)
+                        .await
+                }
+                ApiFormat::OpenAI => {
+                    entry
+                        .provider
+                        .forward_openai(path, headers, send_body, streaming)
+                        .await
+                }
+            };
+
+            match raw_resp {
                 Ok(UpstreamResponse::Buffered {
                     status,
                     headers: resp_headers,
@@ -539,7 +716,7 @@ impl RoutingProvider {
                     entry.set_cooldown(DEFAULT_COOLDOWN_SECS * 1000);
                     continue;
                 }
-                Ok(other) => return Ok(other),
+                Ok(other) => return Self::translate_upstream_response(other, direction),
                 Err(e) => {
                     tracing::warn!(
                         provider = attempt_name,
@@ -572,7 +749,7 @@ impl RoutingProvider {
         })
     }
 
-    /// Failover using `forward_openai` on each pool entry.
+    /// Failover for OpenAI-format client requests.
     async fn forward_failover_openai(
         &self,
         route: &Route,
@@ -594,11 +771,26 @@ impl RoutingProvider {
                 last_err = Some(e);
                 continue;
             }
-            match entry
-                .provider
-                .forward_openai(path, headers, body.clone(), streaming)
-                .await
-            {
+
+            let direction = Direction::from_pair(ApiFormat::OpenAI, entry.provider.native_format());
+            let send_body = Self::translate_request(&body, direction)?;
+
+            let raw_resp = match entry.provider.native_format() {
+                ApiFormat::OpenAI => {
+                    entry
+                        .provider
+                        .forward_openai(path, headers, send_body, streaming)
+                        .await
+                }
+                ApiFormat::Anthropic => {
+                    entry
+                        .provider
+                        .forward(path, headers, send_body, streaming)
+                        .await
+                }
+            };
+
+            match raw_resp {
                 Ok(UpstreamResponse::Buffered {
                     status,
                     headers: resp_headers,
@@ -615,16 +807,29 @@ impl RoutingProvider {
                         "upstream 5xx; trying next fallback"
                     );
                     if i + 1 == total {
-                        return Ok(UpstreamResponse::Buffered {
-                            status,
-                            headers: resp_headers,
-                            body: resp_body,
-                            provider_id,
-                        });
+                        let translated =
+                            Self::translate_upstream_response(
+                                UpstreamResponse::Buffered {
+                                    status,
+                                    headers: resp_headers,
+                                    body: resp_body,
+                                    provider_id,
+                                },
+                                direction,
+                            )
+                            .unwrap_or_else(|_| UpstreamResponse::Buffered {
+                                status: 502,
+                                headers: HeaderMap::new(),
+                                body: Bytes::from_static(b"{\"error\":{\"type\":\"translation_error\"}}"),
+                                provider_id: attempt_name.to_string(),
+                            });
+                        return Ok(translated);
                     }
                     continue;
                 }
-                Ok(other) => return Ok(other),
+                Ok(other) => {
+                    return Self::translate_upstream_response(other, direction);
+                }
                 Err(e) => {
                     tracing::warn!(
                         provider = attempt_name,
@@ -641,7 +846,7 @@ impl RoutingProvider {
         Err(last_err.unwrap_or_else(|| ProxyError::BadRequest("routing chain exhausted".into())))
     }
 
-    /// Round-robin using `forward_openai` on each pool entry.
+    /// Round-robin for OpenAI-format client requests.
     async fn forward_round_robin_openai(
         &self,
         route: &Route,
@@ -673,11 +878,25 @@ impl RoutingProvider {
                 continue;
             }
 
-            match entry
-                .provider
-                .forward_openai(path, headers, body.clone(), streaming)
-                .await
-            {
+            let direction = Direction::from_pair(ApiFormat::OpenAI, entry.provider.native_format());
+            let send_body = Self::translate_request(&body, direction)?;
+
+            let raw_resp = match entry.provider.native_format() {
+                ApiFormat::OpenAI => {
+                    entry
+                        .provider
+                        .forward_openai(path, headers, send_body, streaming)
+                        .await
+                }
+                ApiFormat::Anthropic => {
+                    entry
+                        .provider
+                        .forward(path, headers, send_body, streaming)
+                        .await
+                }
+            };
+
+            match raw_resp {
                 Ok(UpstreamResponse::Buffered {
                     status,
                     headers: resp_headers,
@@ -710,7 +929,7 @@ impl RoutingProvider {
                     entry.set_cooldown(DEFAULT_COOLDOWN_SECS * 1000);
                     continue;
                 }
-                Ok(other) => return Ok(other),
+                Ok(other) => return Self::translate_upstream_response(other, direction),
                 Err(e) => {
                     tracing::warn!(
                         provider = attempt_name,

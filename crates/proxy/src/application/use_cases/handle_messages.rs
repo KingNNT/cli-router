@@ -4,7 +4,7 @@
 
 use crate::application::errors::ProxyError;
 use crate::application::ports::{
-    BoxedByteStream, Provider, QuotaPort, RequestLogPort, UpstreamResponse, UsageParser,
+    ApiFormat, BoxedByteStream, Provider, QuotaPort, RequestLogPort, UpstreamResponse, UsageParser,
 };
 use crate::domain::{RequestStart, RequestUsage, UsageRecord};
 use bytes::Bytes;
@@ -13,14 +13,6 @@ use shared::application::ports::{Clock, PricingRepository};
 use shared::domain::value_objects::{ModelId, PricePerToken};
 use std::sync::Arc;
 use uuid::Uuid;
-
-/// Which API format the client used — determines which `forward_*` method
-/// the use case calls on the provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApiFormat {
-    Anthropic,
-    OpenAI,
-}
 
 pub struct HandleMessagesInput {
     pub headers: HeaderMap,
@@ -88,6 +80,7 @@ impl HandleMessages {
             provider: self.provider.name().to_string(),
             model: model.clone(),
             started_at,
+            translation_direction: None, // populated after routing resolves the leaf provider
         })?;
 
         let streaming = is_streaming(&input.body);
