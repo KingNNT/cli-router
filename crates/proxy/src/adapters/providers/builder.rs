@@ -93,7 +93,12 @@ pub fn build_routing_provider(
             .rule(pattern, rule.strategy, primary, fallback)
             .map_err(|e| BuildError::BadPattern(pattern.into(), e.to_string()))?;
     }
-    Ok(Arc::new(builder.leaves(leaves.clone()).build()))
+    Ok(Arc::new(
+        builder
+            .leaves(leaves.clone())
+            .affinity(cfg.affinity.clone())
+            .build(),
+    ))
 }
 
 /// Convenience: leaves + routing in one shot.
