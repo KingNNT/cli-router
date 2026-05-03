@@ -1,10 +1,8 @@
 //! Z.ai provider — implements `Provider` against Z.ai's Anthropic-compatible
 //! endpoint at `https://api.z.ai/api/anthropic`.
 //!
-//! Z.ai exposes the same Messages API as Anthropic (path `/v1/messages`,
-//! `x-api-key` header, identical body schema, identical SSE event names),
-//! so all protocol-level logic is delegated to `super::messages_protocol`.
-//! Only `name()` and `base_url` differ from `AnthropicProvider`.
+//! Also supports OpenAI-format requests via `forward_openai()`, forwarding to
+//! Z.ai's OpenAI-compatible endpoint at `https://api.z.ai/api/paas/v4`.
 
 use super::messages_protocol::{self, AuthHeader};
 use crate::application::errors::ProxyError;
@@ -14,8 +12,12 @@ use async_trait::async_trait;
 use axum::http::HeaderMap;
 use bytes::Bytes;
 
+const DEFAULT_BASE_URL: &str = "https://api.z.ai/api/anthropic";
+const DEFAULT_OPENAI_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
+
 pub struct ZaiProvider {
     base_url: String,
+    openai_base_url: Option<String>,
     http: reqwest::Client,
     auth: AuthHeader,
 }
@@ -24,30 +26,50 @@ impl ZaiProvider {
     pub fn new(http: reqwest::Client) -> Self {
         Self::build(
             http,
-            "https://api.z.ai/api/anthropic".into(),
+            DEFAULT_BASE_URL.into(),
+            Some(DEFAULT_OPENAI_BASE_URL.into()),
             AuthHeader::Passthrough,
         )
     }
 
     pub fn with_base_url(http: reqwest::Client, base_url: impl Into<String>) -> Self {
-        Self::build(http, base_url.into(), AuthHeader::Passthrough)
+        Self::build(http, base_url.into(), None, AuthHeader::Passthrough)
     }
 
     pub fn with_auth(http: reqwest::Client, auth: AuthHeader) -> Self {
-        Self::build(http, "https://api.z.ai/api/anthropic".into(), auth)
-    }
-
-    pub fn configure(http: reqwest::Client, base_url: Option<String>, auth: AuthHeader) -> Self {
         Self::build(
             http,
-            base_url.unwrap_or_else(|| "https://api.z.ai/api/anthropic".into()),
+            DEFAULT_BASE_URL.into(),
+            Some(DEFAULT_OPENAI_BASE_URL.into()),
             auth,
         )
     }
 
-    fn build(http: reqwest::Client, base_url: String, auth: AuthHeader) -> Self {
+    pub fn configure(
+        http: reqwest::Client,
+        base_url: Option<String>,
+        openai_base_url: Option<String>,
+        auth: AuthHeader,
+    ) -> Self {
+        Self::build(
+            http,
+            base_url.unwrap_or_else(|| DEFAULT_BASE_URL.into()),
+            Some(
+                openai_base_url.unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.into()),
+            ),
+            auth,
+        )
+    }
+
+    fn build(
+        http: reqwest::Client,
+        base_url: String,
+        openai_base_url: Option<String>,
+        auth: AuthHeader,
+    ) -> Self {
         Self {
             base_url,
+            openai_base_url,
             http,
             auth,
         }
@@ -90,6 +112,36 @@ impl Provider for ZaiProvider {
         )
         .await
     }
+
+    async fn forward_openai(
+        &self,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        let openai_base = self.openai_base_url.as_deref().ok_or_else(|| {
+            ProxyError::BadRequest(
+                "provider 'zai' does not support OpenAI chat completions format".into(),
+            )
+        })?;
+        // OpenAI format uses Authorization: Bearer. Convert ApiKey → Bearer.
+        let openai_auth = match &self.auth {
+            AuthHeader::Passthrough => AuthHeader::Passthrough,
+            AuthHeader::ApiKey(v) => AuthHeader::Bearer(v.clone()),
+            other => other.clone(),
+        };
+        messages_protocol::forward(
+            &self.http,
+            openai_base,
+            &openai_auth,
+            path,
+            headers,
+            body,
+            streaming,
+        )
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -111,9 +163,18 @@ mod tests {
     }
 
     #[test]
+    fn default_openai_base_url_points_to_zai_paas() {
+        assert_eq!(
+            provider().openai_base_url,
+            Some("https://api.z.ai/api/paas/v4".into())
+        );
+    }
+
+    #[test]
     fn with_base_url_overrides_default() {
         let p = ZaiProvider::with_base_url(reqwest::Client::new(), "http://localhost:1234");
         assert_eq!(p.base_url, "http://localhost:1234");
+        assert!(p.openai_base_url.is_none());
     }
 
     #[test]
@@ -128,13 +189,30 @@ mod tests {
     }
 
     #[test]
-    fn configure_sets_both_base_url_and_auth() {
+    fn configure_sets_base_url_openai_base_url_and_auth() {
         let p = ZaiProvider::configure(
             reqwest::Client::new(),
             Some("http://localhost:1234".into()),
+            Some("http://localhost:9999".into()),
             AuthHeader::ApiKey("zai-test".into()),
         );
         assert_eq!(p.base_url, "http://localhost:1234");
+        assert_eq!(p.openai_base_url, Some("http://localhost:9999".into()));
         assert!(matches!(p.auth, AuthHeader::ApiKey(_)));
+    }
+
+    #[test]
+    fn configure_uses_default_openai_base_url_when_none() {
+        let p = ZaiProvider::configure(
+            reqwest::Client::new(),
+            None,
+            None,
+            AuthHeader::Passthrough,
+        );
+        assert_eq!(p.base_url, "https://api.z.ai/api/anthropic");
+        assert_eq!(
+            p.openai_base_url,
+            Some("https://api.z.ai/api/paas/v4".into())
+        );
     }
 }

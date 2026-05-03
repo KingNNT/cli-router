@@ -404,6 +404,7 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                 kind: kind_to_str(p.kind).into(),
                 auth: auth_to_payload(&p.auth),
                 base_url: p.base_url.clone(),
+                openai_base_url: p.openai_base_url.clone(),
             })
             .collect(),
         routing: c
@@ -436,6 +437,7 @@ fn payload_to_config(
                 kind: str_to_kind(&pp.kind)?,
                 auth: payload_to_auth(pp.auth),
                 base_url: pp.base_url,
+                openai_base_url: pp.openai_base_url,
             })
         })
         .collect::<Result<Vec<_>, ProxyError>>()?;
@@ -598,6 +600,7 @@ mod tests {
                     value: "sk-test".into(),
                 },
                 base_url: None,
+                openai_base_url: None,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -628,6 +631,7 @@ mod tests {
                 kind: "bogus".into(),
                 auth: AuthPayload::Passthrough,
                 base_url: None,
+                openai_base_url: None,
             }],
             routing: vec![],
         };

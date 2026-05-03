@@ -410,6 +410,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             kind: ProviderKind::Anthropic,
             auth: AuthConfig::Passthrough,
             base_url: Some(upstream_a.uri()),
+            openai_base_url: None,
         }],
         routing: vec![RoutingRule {
             match_spec: MatchSpec {
@@ -668,6 +669,7 @@ async fn start_routing_proxy(rules: Vec<(&'static str, String, Vec<String>)>) ->
                 let leaf: Arc<dyn Provider> = Arc::new(ZaiProvider::configure(
                     http.clone(),
                     Some(u.clone()),
+                    None,
                     AuthHeader::Passthrough,
                 ));
                 leaves.insert(u.clone(), leaf);

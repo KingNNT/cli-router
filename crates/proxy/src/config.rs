@@ -37,6 +37,8 @@ pub struct ProviderConfig {
     pub auth: AuthConfig,
     #[serde(default)]
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub openai_base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,6 +174,7 @@ impl Config {
                 kind,
                 auth,
                 base_url: None,
+                openai_base_url: None,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {

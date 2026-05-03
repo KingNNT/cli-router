@@ -36,7 +36,12 @@ pub fn build_leaf(p: &ProviderConfig, http: reqwest::Client) -> Arc<dyn Provider
         ProviderKind::Anthropic => {
             Arc::new(AnthropicProvider::configure(http, p.base_url.clone(), auth))
         }
-        ProviderKind::Zai => Arc::new(ZaiProvider::configure(http, p.base_url.clone(), auth)),
+        ProviderKind::Zai => Arc::new(ZaiProvider::configure(
+            http,
+            p.base_url.clone(),
+            p.openai_base_url.clone(),
+            auth,
+        )),
     }
 }
 

@@ -44,6 +44,8 @@ pub struct ProviderPayload {
     pub auth: AuthPayload,
     #[serde(default)]
     pub base_url: Option<String>,
+    #[serde(default)]
+    pub openai_base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
