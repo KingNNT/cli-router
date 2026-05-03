@@ -69,6 +69,7 @@ async fn start_proxy(upstream_url: String) -> (SocketAddr, Arc<Mutex<Connection>
         pricing,
         clock,
         local_user_id,
+        Arc::new(proxy::adapters::quota::InMemoryQuota::new(vec![])),
     ));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -285,6 +286,7 @@ async fn admin_config_put_writes_file_and_replaces_in_memory() {
         pricing,
         clock,
         local_user_id,
+        Arc::new(proxy::adapters::quota::InMemoryQuota::new(vec![])),
     ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -454,6 +456,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
         pricing,
         clock,
         local_user_id,
+        Arc::new(proxy::adapters::quota::InMemoryQuota::new(vec![])),
     ));
     let oauth_sessions = Arc::new(proxy::adapters::oauth::OAuthSessionStore::new());
     let admin = proxy::frameworks::AdminState {
@@ -714,6 +717,7 @@ async fn start_routing_proxy(rules: Vec<(&'static str, String, Vec<String>)>) ->
         pricing,
         clock,
         local_user_id,
+        Arc::new(proxy::adapters::quota::InMemoryQuota::new(vec![])),
     ));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

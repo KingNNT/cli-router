@@ -4,7 +4,7 @@
 
 use crate::application::errors::ProxyError;
 use crate::application::ports::{
-    BoxedByteStream, Provider, RequestLogPort, UpstreamResponse, UsageParser,
+    BoxedByteStream, Provider, QuotaPort, RequestLogPort, UpstreamResponse, UsageParser,
 };
 use crate::domain::{RequestStart, RequestUsage, UsageRecord};
 use bytes::Bytes;
@@ -49,6 +49,7 @@ pub struct HandleMessages {
     pricing: Arc<dyn PricingRepository>,
     clock: Arc<dyn Clock>,
     local_user_id: i64,
+    quota: Arc<dyn QuotaPort>,
 }
 
 impl HandleMessages {
@@ -58,6 +59,7 @@ impl HandleMessages {
         pricing: Arc<dyn PricingRepository>,
         clock: Arc<dyn Clock>,
         local_user_id: i64,
+        quota: Arc<dyn QuotaPort>,
     ) -> Self {
         Self {
             provider,
@@ -65,6 +67,7 @@ impl HandleMessages {
             pricing,
             clock,
             local_user_id,
+            quota,
         }
     }
 
@@ -86,6 +89,21 @@ impl HandleMessages {
             model: model.clone(),
             started_at,
         })?;
+
+        let provider_name = self.provider.name();
+        match self.quota.check(provider_name) {
+            crate::domain::quota::QuotaCheck::Ok => {}
+            crate::domain::quota::QuotaCheck::Warn { metric, used_pct } => {
+                tracing::warn!(provider=%provider_name, metric, used_pct, "quota approaching limit");
+            }
+            crate::domain::quota::QuotaCheck::Reject { metric, retry_after_ms } => {
+                return Err(ProxyError::QuotaExceeded {
+                    provider: provider_name.to_string(),
+                    metric,
+                    retry_after_ms,
+                });
+            }
+        }
 
         let streaming = is_streaming(&input.body);
         let upstream = match input.api_format {
@@ -166,6 +184,7 @@ impl HandleMessages {
             {
                 tracing::error!(request_id = %request_id, error = %e, "failed to record completed row");
             }
+            self.quota.record(self.provider.name(), &req_usage);
             Ok(HandleMessagesOutput::Buffered {
                 status,
                 headers,
@@ -205,8 +224,10 @@ impl HandleMessages {
         let pricing = self.pricing.clone();
         let request_log = self.request_log.clone();
         let clock = self.clock.clone();
+        let quota = self.quota.clone();
         let req_id = request_id.clone();
         let model_clone = model.clone();
+        let provider_name_owned = self.provider.name().to_string();
         let on_finish = Box::new(move |usage: UsageRecord, normal: bool| {
             let cost = compute_cost(&pricing, &model_clone, &usage);
             let req_usage = to_request_usage(&usage, cost);
@@ -222,6 +243,7 @@ impl HandleMessages {
                     "failed to record streaming completion"
                 );
             }
+            quota.record(&provider_name_owned, &req_usage);
         });
         HandleMessagesOutput::Streaming {
             status,
@@ -430,13 +452,25 @@ mod tests {
         Arc::new(FakePricingRepository::default())
     }
 
+    struct NoopQuota;
+    impl crate::application::ports::QuotaPort for NoopQuota {
+        fn check(&self, _: &str) -> crate::domain::quota::QuotaCheck {
+            crate::domain::quota::QuotaCheck::Ok
+        }
+        fn record(&self, _: &str, _: &crate::domain::RequestUsage) {}
+    }
+
+    fn noop_quota() -> Arc<dyn crate::application::ports::QuotaPort> {
+        Arc::new(NoopQuota)
+    }
+
     #[tokio::test]
     async fn invalid_model_returns_bad_request_without_inserting_row() {
         let provider: Arc<dyn Provider> =
             Arc::new(FakeProvider::new(Err("missing 'model'".into())));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
-        let uc = HandleMessages::new(provider, log_dyn, fake_pricing(), fake_clock(), 1);
+        let uc = HandleMessages::new(provider, log_dyn, fake_pricing(), fake_clock(), 1, noop_quota());
 
         let result = uc
             .execute(HandleMessagesInput {
@@ -463,7 +497,7 @@ mod tests {
         })));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
-        let uc = HandleMessages::new(Arc::new(prov), log_dyn, fake_pricing(), fake_clock(), 1);
+        let uc = HandleMessages::new(Arc::new(prov), log_dyn, fake_pricing(), fake_clock(), 1, noop_quota());
 
         let output = uc
             .execute(HandleMessagesInput {
@@ -495,7 +529,7 @@ mod tests {
         })));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
-        let uc = HandleMessages::new(Arc::new(prov), log_dyn, fake_pricing(), fake_clock(), 1);
+        let uc = HandleMessages::new(Arc::new(prov), log_dyn, fake_pricing(), fake_clock(), 1, noop_quota());
 
         let output = uc
             .execute(HandleMessagesInput {
@@ -528,7 +562,7 @@ mod tests {
         })));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
-        let uc = HandleMessages::new(Arc::new(prov), log_dyn, fake_pricing(), fake_clock(), 1);
+        let uc = HandleMessages::new(Arc::new(prov), log_dyn, fake_pricing(), fake_clock(), 1, noop_quota());
 
         let output = uc
             .execute(HandleMessagesInput {
@@ -623,7 +657,7 @@ mod tests {
         prov.forward_response = Mutex::new(Some(Err(ProxyError::BadRequest("simulated".into()))));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
-        let uc = HandleMessages::new(Arc::new(prov), log_dyn, fake_pricing(), fake_clock(), 1);
+        let uc = HandleMessages::new(Arc::new(prov), log_dyn, fake_pricing(), fake_clock(), 1, noop_quota());
 
         let result = uc
             .execute(HandleMessagesInput {
