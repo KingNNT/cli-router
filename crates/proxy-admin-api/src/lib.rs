@@ -81,6 +81,8 @@ pub struct RoutingRulePayload {
     pub fallback: Vec<String>,
     #[serde(default)]
     pub strategy: RoutingStrategyPayload,
+    #[serde(default)]
+    pub priority: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

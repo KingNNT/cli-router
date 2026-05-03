@@ -418,6 +418,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             provider: "anthropic".into(),
             fallback: vec![],
             strategy: RoutingStrategy::Failover,
+            priority: None,
         }],
     };
 

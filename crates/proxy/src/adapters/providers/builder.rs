@@ -57,8 +57,18 @@ pub fn build_routing_provider(
     cfg: &Config,
     leaves: &HashMap<String, Arc<dyn Provider>>,
 ) -> Result<Arc<dyn Provider>, BuildError> {
+    // Collect rules with their original index as default priority.
+    let mut indexed: Vec<(u32, &crate::config::RoutingRule)> = cfg
+        .routing
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.priority.unwrap_or(i as u32), r))
+        .collect();
+    // Sort by priority (lower = higher priority = checked first).
+    indexed.sort_by_key(|(pri, _)| *pri);
+
     let mut builder = RoutingProvider::builder();
-    for rule in &cfg.routing {
+    for (_pri, rule) in indexed {
         let pattern = rule.match_spec.model.as_deref().unwrap_or("*");
         let primary = leaves
             .get(&rule.provider)

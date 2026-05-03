@@ -93,6 +93,11 @@ pub struct RoutingRule {
     pub fallback: Vec<String>,
     #[serde(default)]
     pub strategy: RoutingStrategy,
+    /// Lower number = higher priority = checked first. Defaults to the
+    /// rule's position in the TOML array (0, 1, 2, …). Rules with the same
+    /// priority keep their file order.
+    #[serde(default)]
+    pub priority: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,6 +180,7 @@ impl Config {
                 provider: name.into(),
                 fallback: vec![],
                 strategy: Default::default(),
+                priority: None,
             }],
         }
     }

@@ -416,6 +416,7 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                 provider: r.provider.clone(),
                 fallback: r.fallback.clone(),
                 strategy: strategy_to_payload(r.strategy),
+                priority: r.priority,
             })
             .collect(),
     }
@@ -448,6 +449,7 @@ fn payload_to_config(
             provider: rr.provider,
             fallback: rr.fallback,
             strategy: payload_to_strategy(rr.strategy),
+            priority: rr.priority,
         })
         .collect();
     Ok(Config {
@@ -604,6 +606,7 @@ mod tests {
                 provider: "anthropic".into(),
                 fallback: vec![],
                 strategy: Default::default(),
+                priority: None,
             }],
         };
         let payload = config_to_payload(&cfg);
