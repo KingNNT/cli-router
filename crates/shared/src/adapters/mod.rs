@@ -3,5 +3,6 @@
 pub mod clock;
 pub mod errors;
 pub mod gateways;
+pub mod presenters;
 
 pub use errors::AdapterError;
