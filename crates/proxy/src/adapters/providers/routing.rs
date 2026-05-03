@@ -203,12 +203,32 @@ impl Provider for RoutingProvider {
         streaming: bool,
     ) -> Result<UpstreamResponse, ProxyError> {
         let model = messages_protocol::parse_model(&body).map_err(ProxyError::BadRequest)?;
+
+        // Namespace routing: if model contains "/", extract namespace and route
+        // directly to the named provider.
+        if let Some((provider, bare_model)) = self.resolve_provider(&model) {
+            let rewritten = rewrite_model_in_body(&body, bare_model)
+                .map_err(ProxyError::BadRequest)?;
+            let rewritten_body = Bytes::from(rewritten);
+            return provider.forward(path, headers, rewritten_body, streaming).await;
+        }
+
+        // If model contains "/" but we couldn't resolve, it's an unknown namespace.
+        if let Some((ns, _)) = split_namespace(&model) {
+            return Err(ProxyError::BadRequest(format!(
+                "unknown provider namespace '{ns}'"
+            )));
+        }
+
+        // No namespace — use existing glob-based routing.
         let route = self.select(&model).ok_or_else(|| {
             ProxyError::BadRequest(format!("no routing rule matches model '{model}'"))
         })?;
 
         match route.strategy {
-            RoutingStrategy::Failover => self.forward_failover(route, path, headers, body, streaming).await,
+            RoutingStrategy::Failover => {
+                self.forward_failover(route, path, headers, body, streaming).await
+            }
             RoutingStrategy::RoundRobin => {
                 self.forward_round_robin(route, path, headers, body, streaming).await
             }
@@ -554,5 +574,22 @@ mod tests {
             .build();
 
         assert!(router.resolve_provider("nonexistent/glm-5").is_none());
+    }
+
+    #[tokio::test]
+    async fn forward_with_unknown_namespace_returns_400() {
+        let router = RoutingProvider::builder()
+            .rule("*", RoutingStrategy::Failover, dummy(), vec![])
+            .unwrap()
+            .build();
+
+        let body = Bytes::from_static(br#"{"model":"nonexistent/glm-5","messages":[]}"#);
+        let result = router.forward("/v1/messages", &HeaderMap::new(), body, false).await;
+        match result {
+            Err(ProxyError::BadRequest(msg)) => {
+                assert!(msg.contains("nonexistent"), "error should mention the namespace, got: {msg}");
+            }
+            _other => panic!("expected BadRequest, got success response"),
+        }
     }
 }
