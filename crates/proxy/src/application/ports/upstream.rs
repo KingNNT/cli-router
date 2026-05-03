@@ -18,6 +18,10 @@ pub enum UpstreamResponse {
         /// or `"anthropic"`). Populated by `RoutingProvider`; leaf providers
         /// populate it with their own `name()`.
         provider_id: String,
+        /// e.g. `"anthropic→openai"` or `"openai→anthropic"`; `None` for passthrough.
+        /// Populated by `RoutingProvider` after a successful translation; leaf
+        /// providers always set this to `None`.
+        translation_direction: Option<String>,
     },
     Streaming {
         status: u16,
@@ -25,5 +29,7 @@ pub enum UpstreamResponse {
         body: BoxedByteStream,
         /// See `Buffered::provider_id`.
         provider_id: String,
+        /// See `Buffered::translation_direction`.
+        translation_direction: Option<String>,
     },
 }

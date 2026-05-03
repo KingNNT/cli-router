@@ -133,6 +133,23 @@ fn draw_status_panel(f: &mut Frame, area: Rect, status: Option<&Result<StatusRes
                     v.push(Line::from(format!("  {k:<16} {n}")));
                 }
             }
+            v.push(Line::from(""));
+            let translation_line = if s.translations_completed + s.translations_failed > 0 {
+                let by_dir: Vec<String> = s
+                    .translation_directions
+                    .iter()
+                    .map(|(k, count)| format!("{} {count}", xform_short_label(k)))
+                    .collect();
+                format!(
+                    "Translation: {} completed | {} failed | {}",
+                    s.translations_completed,
+                    s.translations_failed,
+                    by_dir.join(", ")
+                )
+            } else {
+                "Translation: none yet".to_string()
+            };
+            v.push(Line::from(translation_line));
             v
         }
     };
@@ -360,6 +377,7 @@ fn draw_requests_table(
         Cell::from("started"),
         Cell::from("provider"),
         Cell::from("model"),
+        Cell::from("xform"),
         Cell::from("status"),
         Cell::from("in"),
         Cell::from("out"),
@@ -377,10 +395,17 @@ fn draw_requests_table(
             } else {
                 Style::default()
             };
+            let xform = match item.translation_direction.as_deref() {
+                None => "\u{2014}".to_string(), // —
+                Some("anthropic\u{2192}openai") => "A\u{2192}O".to_string(),
+                Some("openai\u{2192}anthropic") => "O\u{2192}A".to_string(),
+                Some(other) => other.chars().next().unwrap_or('?').to_string(),
+            };
             Row::new(vec![
                 Cell::from(format_ms(item.started_at_ms)),
                 Cell::from(item.provider.clone()),
-                Cell::from(trunc(&item.model, 28)),
+                Cell::from(trunc(&item.model, 24)),
+                Cell::from(xform),
                 Cell::from(item.status.clone()),
                 Cell::from(opt_num(item.input_tokens)),
                 Cell::from(opt_num(item.output_tokens)),
@@ -397,7 +422,8 @@ fn draw_requests_table(
     let widths = [
         Constraint::Length(19),
         Constraint::Length(10),
-        Constraint::Length(28),
+        Constraint::Length(24),
+        Constraint::Length(4),
         Constraint::Length(10),
         Constraint::Length(8),
         Constraint::Length(8),
@@ -674,5 +700,13 @@ fn trunc(s: &str, max: usize) -> String {
     } else {
         let kept: String = s.chars().take(max - 1).collect();
         format!("{kept}…")
+    }
+}
+
+fn xform_short_label(dir: &str) -> &str {
+    match dir {
+        "anthropic\u{2192}openai" => "A\u{2192}O",
+        "openai\u{2192}anthropic" => "O\u{2192}A",
+        _ => "?",
     }
 }

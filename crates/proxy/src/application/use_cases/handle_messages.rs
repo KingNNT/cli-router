@@ -4,7 +4,7 @@
 
 use crate::application::errors::ProxyError;
 use crate::application::ports::{
-    BoxedByteStream, Provider, QuotaPort, RequestLogPort, UpstreamResponse, UsageParser,
+    ApiFormat, BoxedByteStream, Provider, QuotaPort, RequestLogPort, UpstreamResponse, UsageParser,
 };
 use crate::domain::{RequestStart, RequestUsage, UsageRecord};
 use bytes::Bytes;
@@ -13,14 +13,6 @@ use shared::application::ports::{Clock, PricingRepository};
 use shared::domain::value_objects::{ModelId, PricePerToken};
 use std::sync::Arc;
 use uuid::Uuid;
-
-/// Which API format the client used — determines which `forward_*` method
-/// the use case calls on the provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ApiFormat {
-    Anthropic,
-    OpenAI,
-}
 
 pub struct HandleMessagesInput {
     pub headers: HeaderMap,
@@ -129,6 +121,7 @@ impl HandleMessages {
                 headers,
                 body,
                 provider_id,
+                translation_direction,
             } => self.handle_buffered(
                 request_id,
                 model,
@@ -137,12 +130,14 @@ impl HandleMessages {
                 body,
                 input.api_format,
                 provider_id,
+                translation_direction,
             ),
             UpstreamResponse::Streaming {
                 status,
                 headers,
                 body,
                 provider_id,
+                translation_direction,
             } => Ok(self.handle_streaming(
                 request_id,
                 model,
@@ -151,6 +146,7 @@ impl HandleMessages {
                 body,
                 input.api_format,
                 provider_id,
+                translation_direction,
             )),
         }
     }
@@ -165,6 +161,7 @@ impl HandleMessages {
         body: Bytes,
         api_format: ApiFormat,
         provider_id: String,
+        translation_direction: Option<String>,
     ) -> Result<HandleMessagesOutput, ProxyError> {
         if (200..300).contains(&status) {
             let usage = match api_format {
@@ -175,7 +172,8 @@ impl HandleMessages {
                     .unwrap_or_default(),
             };
             let cost = compute_cost(&self.pricing, &model, &usage);
-            let req_usage = to_request_usage(&usage, cost);
+            let mut req_usage = to_request_usage(&usage, cost);
+            req_usage.translation_direction = translation_direction;
             if let Err(e) = self
                 .request_log
                 .complete(&request_id, self.clock.now_ms(), &req_usage)
@@ -216,6 +214,7 @@ impl HandleMessages {
         body: BoxedByteStream,
         api_format: ApiFormat,
         provider_id: String,
+        translation_direction: Option<String>,
     ) -> HandleMessagesOutput {
         let parser = match api_format {
             ApiFormat::Anthropic => self.provider.usage_parser(),
@@ -229,7 +228,8 @@ impl HandleMessages {
         let model_clone = model.clone();
         let on_finish = Box::new(move |usage: UsageRecord, normal: bool| {
             let cost = compute_cost(&pricing, &model_clone, &usage);
-            let req_usage = to_request_usage(&usage, cost);
+            let mut req_usage = to_request_usage(&usage, cost);
+            req_usage.translation_direction = translation_direction;
             let result = if normal {
                 request_log.complete(&req_id, clock.now_ms(), &req_usage)
             } else {
@@ -290,6 +290,7 @@ fn to_request_usage(usage: &UsageRecord, cost_usd: Option<f64>) -> RequestUsage 
         cache_read_tokens: usage.cache_read_tokens,
         cache_creation_tokens: usage.cache_creation_tokens,
         cost_usd,
+        translation_direction: None, // caller sets this from UpstreamResponse
     }
 }
 
@@ -504,6 +505,7 @@ mod tests {
             headers: HeaderMap::new(),
             body: Bytes::from_static(br#"{"usage":{"input_tokens":10,"output_tokens":20}}"#),
             provider_id: "fake".into(),
+            translation_direction: None,
         })));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
@@ -544,6 +546,7 @@ mod tests {
             headers: HeaderMap::new(),
             body: Bytes::from_static(br#"{"error":"unauthorized"}"#),
             provider_id: "fake".into(),
+            translation_direction: None,
         })));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();
@@ -585,6 +588,7 @@ mod tests {
             headers: HeaderMap::new(),
             body,
             provider_id: "fake".into(),
+            translation_direction: None,
         })));
         let log = Arc::new(FakeRequestLog::default());
         let log_dyn: Arc<dyn RequestLogPort> = log.clone();

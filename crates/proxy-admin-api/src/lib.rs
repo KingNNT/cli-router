@@ -21,6 +21,12 @@ pub struct StatusResponse {
     pub requests_by_status: BTreeMap<String, u64>,
     /// Current affinity (sticky-auth) configuration.
     pub affinity: AffinityStatus,
+    /// Count of requests that involved cross-format translation and completed.
+    pub translations_completed: u64,
+    /// Count of requests that involved cross-format translation and errored.
+    pub translations_failed: u64,
+    /// Per-direction translation counts (e.g. `"anthropic→openai"` → 3).
+    pub translation_directions: BTreeMap<String, u64>,
 }
 
 /// Affinity (sticky-auth) status reported by `GET /admin/status`.
@@ -122,6 +128,10 @@ pub struct RecentRequestItem {
     pub cache_creation_tokens: Option<i64>,
     pub cost_usd: Option<f64>,
     pub error_message: Option<String>,
+    /// Cross-format translation direction, e.g. `"anthropic→openai"`.
+    /// `None` when the request was a passthrough (no translation).
+    #[serde(default)]
+    pub translation_direction: Option<String>,
 }
 
 /// `POST /admin/providers/:name/test` request body.

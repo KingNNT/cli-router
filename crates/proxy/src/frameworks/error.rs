@@ -73,6 +73,16 @@ impl IntoResponse for ProxyError {
                 )
                     .into_response()
             }
+            ProxyError::TranslationInvalidRequest { field, reason } => (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": {
+                        "type": "bad_request",
+                        "message": format!("translation failed at {field}: {reason}")
+                    }
+                })),
+            )
+                .into_response(),
             other => {
                 tracing::error!(error = %other, "internal proxy error");
                 (

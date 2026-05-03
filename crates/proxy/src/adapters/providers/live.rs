@@ -51,6 +51,8 @@ impl LiveProvider {
     }
 }
 
+// `native_format` intentionally not overridden — translation triggers per-entry
+// inside messages_protocol after routing has picked a leaf provider.
 #[async_trait]
 impl Provider for LiveProvider {
     fn name(&self) -> &'static str {

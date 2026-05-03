@@ -16,6 +16,8 @@ pub struct RequestUsage {
     pub cache_read_tokens: Option<u64>,
     pub cache_creation_tokens: Option<u64>,
     pub cost_usd: Option<f64>,
+    /// e.g. "anthropic→openai" or "openai→anthropic"; None when passthrough.
+    pub translation_direction: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,4 +52,5 @@ pub struct RequestRow {
     pub cache_creation_tokens: Option<i64>,
     pub cost_usd: Option<f64>,
     pub error_message: Option<String>,
+    pub translation_direction: Option<String>,
 }

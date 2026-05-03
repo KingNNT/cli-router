@@ -16,6 +16,14 @@ pub struct QuotaSeedRow {
     pub output_tokens: Option<u64>,
 }
 
+/// Aggregated translation counts returned by [`RequestLogReadPort::count_translations`].
+#[derive(Debug, Clone, Default)]
+pub struct TranslationCounts {
+    pub completed: u64,
+    pub failed: u64,
+    pub by_direction: BTreeMap<String, u64>,
+}
+
 pub trait RequestLogReadPort: Send + Sync {
     fn total_count(&self) -> Result<u64, ProxyError>;
     fn count_by_provider(&self) -> Result<BTreeMap<String, u64>, ProxyError>;
@@ -23,4 +31,5 @@ pub trait RequestLogReadPort: Send + Sync {
     fn recent(&self, limit: u32) -> Result<Vec<RequestRow>, ProxyError>;
     fn summarize(&self, from_ms: i64, to_ms: i64) -> Result<UsageSummary, ProxyError>;
     fn quota_seed(&self, cutoff_ms: i64) -> Result<Vec<QuotaSeedRow>, ProxyError>;
+    fn count_translations(&self) -> Result<TranslationCounts, ProxyError>;
 }

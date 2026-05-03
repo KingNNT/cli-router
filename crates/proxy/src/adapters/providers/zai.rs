@@ -6,7 +6,7 @@
 
 use super::messages_protocol::{self, AuthHeader};
 use crate::application::errors::ProxyError;
-use crate::application::ports::{Provider, UpstreamResponse, UsageParser};
+use crate::application::ports::{ApiFormat, Provider, UpstreamResponse, UsageParser};
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
 use axum::http::HeaderMap;
@@ -78,6 +78,10 @@ impl ZaiProvider {
 impl Provider for ZaiProvider {
     fn name(&self) -> &'static str {
         "zai"
+    }
+
+    fn native_format(&self) -> ApiFormat {
+        ApiFormat::OpenAI
     }
 
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {

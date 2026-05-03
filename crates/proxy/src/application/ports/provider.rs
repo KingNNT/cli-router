@@ -7,9 +7,50 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::HeaderMap;
 
+/// The wire format a client or provider speaks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiFormat {
+    Anthropic,
+    OpenAI,
+}
+
+/// Translation direction derived from a (client format, upstream format) pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    Passthrough,
+    AnthropicToOpenAI,
+    OpenAIToAnthropic,
+}
+
+impl Direction {
+    pub fn from_pair(client: ApiFormat, upstream: ApiFormat) -> Self {
+        match (client, upstream) {
+            (ApiFormat::Anthropic, ApiFormat::Anthropic)
+            | (ApiFormat::OpenAI, ApiFormat::OpenAI) => Self::Passthrough,
+            (ApiFormat::Anthropic, ApiFormat::OpenAI) => Self::AnthropicToOpenAI,
+            (ApiFormat::OpenAI, ApiFormat::Anthropic) => Self::OpenAIToAnthropic,
+        }
+    }
+
+    pub fn as_label(&self) -> Option<&'static str> {
+        match self {
+            Self::Passthrough => None,
+            Self::AnthropicToOpenAI => Some("anthropic→openai"),
+            Self::OpenAIToAnthropic => Some("openai→anthropic"),
+        }
+    }
+}
+
 #[async_trait]
 pub trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
+
+    /// Native API format this provider speaks. Used by the translation layer
+    /// to decide whether to translate between Anthropic and OpenAI shapes.
+    /// Defaults to Anthropic for compatibility with pre-translation tests.
+    fn native_format(&self) -> ApiFormat {
+        ApiFormat::Anthropic
+    }
     fn parse_model(&self, body: &[u8]) -> Result<String, String>;
     fn usage_parser(&self) -> Box<dyn UsageParser>;
     fn parse_usage_json(&self, body: &[u8]) -> Result<UsageRecord, String>;
@@ -51,5 +92,47 @@ pub trait Provider: Send + Sync {
             "provider '{}' does not support OpenAI chat completions format",
             self.name()
         )))
+    }
+}
+
+#[cfg(test)]
+mod direction_tests {
+    use super::*;
+
+    #[test]
+    fn direction_passthrough_when_formats_match() {
+        assert_eq!(
+            Direction::from_pair(ApiFormat::Anthropic, ApiFormat::Anthropic),
+            Direction::Passthrough
+        );
+        assert_eq!(
+            Direction::from_pair(ApiFormat::OpenAI, ApiFormat::OpenAI),
+            Direction::Passthrough
+        );
+    }
+
+    #[test]
+    fn direction_picks_translator_when_formats_differ() {
+        assert_eq!(
+            Direction::from_pair(ApiFormat::Anthropic, ApiFormat::OpenAI),
+            Direction::AnthropicToOpenAI
+        );
+        assert_eq!(
+            Direction::from_pair(ApiFormat::OpenAI, ApiFormat::Anthropic),
+            Direction::OpenAIToAnthropic
+        );
+    }
+
+    #[test]
+    fn direction_as_label() {
+        assert_eq!(Direction::Passthrough.as_label(), None);
+        assert_eq!(
+            Direction::AnthropicToOpenAI.as_label(),
+            Some("anthropic→openai")
+        );
+        assert_eq!(
+            Direction::OpenAIToAnthropic.as_label(),
+            Some("openai→anthropic")
+        );
     }
 }
