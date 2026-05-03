@@ -27,6 +27,9 @@ pub struct Config {
     pub providers: Vec<ProviderConfig>,
     #[serde(default)]
     pub routing: Vec<RoutingRule>,
+    /// Conversation-affinity hashing. Defaults to enabled with sensible header list.
+    #[serde(default)]
+    pub affinity: AffinityConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +113,36 @@ pub struct MatchSpec {
     pub model: Option<String>,
 }
 
+/// Affinity hashing config — controls how requests are pinned to upstream keys.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AffinityConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_affinity_headers")]
+    pub headers: Vec<String>,
+}
+
+impl Default for AffinityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            headers: default_affinity_headers(),
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_affinity_headers() -> Vec<String> {
+    vec![
+        "x-session-id".to_string(),
+        "anthropic-session-id".to_string(),
+    ]
+}
+
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("io: {0}")]
@@ -185,6 +218,7 @@ impl Config {
                 strategy: Default::default(),
                 priority: None,
             }],
+            affinity: AffinityConfig::default(),
         }
     }
 
@@ -424,6 +458,7 @@ mod tests {
             pricing_db: PathBuf::new(),
             providers: vec![],
             routing: vec![],
+            affinity: AffinityConfig::default(),
         };
         assert!(cfg.validate().is_err());
     }
@@ -471,5 +506,43 @@ mod tests {
         "#;
         let cfg: Config = toml::from_str(toml_str).unwrap();
         assert!(format!("{}", cfg.validate().unwrap_err()).contains("ghost"));
+    }
+
+    #[test]
+    fn affinity_defaults_when_section_missing() {
+        let toml = r#"
+            [[providers]]
+            name = "p"
+            kind = "anthropic"
+            auth = { type = "passthrough" }
+
+            [[routing]]
+            match = { model = "*" }
+            provider = "p"
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert!(cfg.affinity.enabled);
+        assert_eq!(cfg.affinity.headers.len(), 2);
+    }
+
+    #[test]
+    fn affinity_custom_headers_parses() {
+        let toml = r#"
+            [[providers]]
+            name = "p"
+            kind = "anthropic"
+            auth = { type = "passthrough" }
+
+            [[routing]]
+            match = { model = "*" }
+            provider = "p"
+
+            [affinity]
+            enabled = false
+            headers = ["x-trace-id"]
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert!(!cfg.affinity.enabled);
+        assert_eq!(cfg.affinity.headers, vec!["x-trace-id".to_string()]);
     }
 }

@@ -39,14 +39,17 @@ struct Route {
 
 struct PoolEntry {
     provider: Arc<dyn Provider>,
+    /// Stable identifier — provider name from config. Used for affinity scoring.
+    id: String,
     /// Epoch millis when cooldown expires. 0 = healthy.
     cooldown_until: AtomicU64,
 }
 
 impl PoolEntry {
-    fn new(provider: Arc<dyn Provider>) -> Self {
+    fn new(provider: Arc<dyn Provider>, id: String) -> Self {
         Self {
             provider,
+            id,
             cooldown_until: AtomicU64::new(0),
         }
     }
@@ -90,6 +93,16 @@ impl PoolEntry {
     }
 }
 
+impl super::affinity::PoolMember for PoolEntry {
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn healthy(&self) -> bool {
+        !self.is_cooling_down()
+    }
+}
+
 // ── RoutingProvider ────────────────────────────────────────────────────────────
 
 /// Split `model` on the first `/`. Returns `Some((namespace, bare_model))`
@@ -114,6 +127,8 @@ pub struct RoutingProvider {
     rr_counter: AtomicUsize,
     /// Name → provider map for namespace routing (e.g. "zai" → ZaiProvider).
     leaves: std::collections::HashMap<String, Arc<dyn Provider>>,
+    /// Conversation-affinity config. Controls sticky rendezvous hashing.
+    affinity: crate::config::AffinityConfig,
 }
 
 impl RoutingProvider {
@@ -138,12 +153,18 @@ impl RoutingProvider {
 pub struct RoutingProviderBuilder {
     rules: Vec<Route>,
     leaves: std::collections::HashMap<String, Arc<dyn Provider>>,
+    affinity: crate::config::AffinityConfig,
 }
 
 impl RoutingProviderBuilder {
     /// Set the name→provider map for namespace routing.
     pub fn leaves(mut self, leaves: std::collections::HashMap<String, Arc<dyn Provider>>) -> Self {
         self.leaves = leaves;
+        self
+    }
+
+    pub fn affinity(mut self, affinity: crate::config::AffinityConfig) -> Self {
+        self.affinity = affinity;
         self
     }
 
@@ -156,9 +177,10 @@ impl RoutingProviderBuilder {
     ) -> Result<Self, globset::Error> {
         let matcher = Glob::new(pattern)?.compile_matcher();
         let mut pool = Vec::with_capacity(1 + fallback.len());
-        pool.push(PoolEntry::new(primary));
+        pool.push(PoolEntry::new(primary.clone(), primary.name().to_string()));
         for fb in fallback {
-            pool.push(PoolEntry::new(fb));
+            let id = fb.name().to_string();
+            pool.push(PoolEntry::new(fb, id));
         }
         self.rules.push(Route {
             matcher,
@@ -173,6 +195,7 @@ impl RoutingProviderBuilder {
             rules: self.rules,
             rr_counter: AtomicUsize::new(0),
             leaves: self.leaves,
+            affinity: self.affinity,
         }
     }
 }
@@ -291,6 +314,42 @@ impl Provider for RoutingProvider {
 }
 
 impl RoutingProvider {
+    /// Return pool indices in the order they should be attempted.
+    ///
+    /// Sticky path: if affinity is enabled and a hash can be derived from the
+    /// request, sort indices by rendezvous score (highest first).
+    /// Fallback: standard round-robin starting from the next counter slot.
+    fn compute_attempt_order(
+        &self,
+        pool: &[PoolEntry],
+        headers: &HeaderMap,
+        body: &[u8],
+    ) -> Vec<usize> {
+        let pool_size = pool.len();
+        if pool_size == 0 {
+            return vec![];
+        }
+
+        if self.affinity.enabled
+            && let Some(hash) =
+                super::affinity::affinity_hash(headers, body, &self.affinity.headers)
+        {
+            let mut scored: Vec<(usize, u64)> = pool
+                .iter()
+                .enumerate()
+                .map(|(i, e)| (i, super::affinity::score_for(&e.id, hash)))
+                .collect();
+            scored.sort_by_key(|b| std::cmp::Reverse(b.1));
+            return scored.into_iter().map(|(i, _)| i).collect();
+        }
+
+        // Fallback: round-robin from the next counter slot.
+        let start = self.rr_counter.fetch_add(1, Ordering::Relaxed) % pool_size;
+        (0..pool_size)
+            .map(|offset| (start + offset) % pool_size)
+            .collect()
+    }
+
     /// Failover: try pool[0] first, then pool[1..] on 5xx/error.
     async fn forward_failover(
         &self,
@@ -361,13 +420,9 @@ impl RoutingProvider {
         streaming: bool,
     ) -> Result<UpstreamResponse, ProxyError> {
         let pool_size = route.pool.len();
+        let order = self.compute_attempt_order(&route.pool, headers, &body);
 
-        // Advance counter to pick the starting index.
-        let start = self.rr_counter.fetch_add(1, Ordering::Relaxed) % pool_size;
-
-        // Try every provider in the pool, starting from `start`.
-        for offset in 0..pool_size {
-            let idx = (start + offset) % pool_size;
+        for &idx in &order {
             let entry = &route.pool[idx];
             let attempt_name = entry.provider.name();
 
@@ -519,10 +574,9 @@ impl RoutingProvider {
         streaming: bool,
     ) -> Result<UpstreamResponse, ProxyError> {
         let pool_size = route.pool.len();
-        let start = self.rr_counter.fetch_add(1, Ordering::Relaxed) % pool_size;
+        let order = self.compute_attempt_order(&route.pool, headers, &body);
 
-        for offset in 0..pool_size {
-            let idx = (start + offset) % pool_size;
+        for &idx in &order {
             let entry = &route.pool[idx];
             let attempt_name = entry.provider.name();
 
@@ -698,7 +752,7 @@ mod tests {
 
     #[test]
     fn pool_entry_cooldown_lifecycle() {
-        let entry = PoolEntry::new(dummy());
+        let entry = PoolEntry::new(dummy(), "test-a".to_string());
         assert!(!entry.is_cooling_down());
 
         // Set cooldown for 5 seconds.
@@ -750,7 +804,7 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&result).unwrap();
         assert_eq!(v["model"].as_str().unwrap(), "glm-5");
         assert_eq!(v["max_tokens"].as_u64().unwrap(), 50);
-        assert_eq!(v["stream"].as_bool().unwrap(), true);
+        assert!(v["stream"].as_bool().unwrap());
     }
 
     #[test]

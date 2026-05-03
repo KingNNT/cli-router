@@ -109,13 +109,14 @@ fn dummy_admin_state_with_path(
         pricing_db: PathBuf::new(),
         providers: vec![],
         routing: vec![],
+        affinity: Default::default(),
     }));
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
     let http = reqwest::Client::new();
     let stub_provider: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(http.clone()));
     let live = Arc::new(LiveProvider::new(stub_provider));
     proxy::frameworks::AdminState {
-        get_status: Arc::new(GetStatus::new(read.clone(), 0)),
+        get_status: Arc::new(GetStatus::new(read.clone(), 0, cfg.clone())),
         get_config: Arc::new(GetConfig::new(cfg.clone())),
         get_recent: Arc::new(GetRecentRequests::new(read.clone())),
         update_config: Arc::new(UpdateConfig::new(
@@ -424,6 +425,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             strategy: RoutingStrategy::Failover,
             priority: None,
         }],
+        affinity: Default::default(),
     };
 
     let nanos = SystemTime::now()
@@ -453,7 +455,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
     ));
     let oauth_sessions = Arc::new(proxy::adapters::oauth::OAuthSessionStore::new());
     let admin = proxy::frameworks::AdminState {
-        get_status: Arc::new(GetStatus::new(read.clone(), 0)),
+        get_status: Arc::new(GetStatus::new(read.clone(), 0, cfg_lock.clone())),
         get_config: Arc::new(GetConfig::new(cfg_lock.clone())),
         get_recent: Arc::new(GetRecentRequests::new(read.clone())),
         update_config: Arc::new(UpdateConfig::new(

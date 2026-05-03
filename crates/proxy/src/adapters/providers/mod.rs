@@ -1,5 +1,6 @@
 //! Provider adapters.
 
+pub mod affinity;
 pub mod anthropic;
 pub mod builder;
 pub mod live;

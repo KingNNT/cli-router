@@ -100,7 +100,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let usage_summary = Arc::new(GetUsageSummary::new(request_read.clone()));
 
     let admin = AdminState {
-        get_status: Arc::new(GetStatus::new(request_read.clone(), now_epoch_ms())),
+        get_status: Arc::new(GetStatus::new(
+            request_read.clone(),
+            now_epoch_ms(),
+            cfg_lock.clone(),
+        )),
         get_config: Arc::new(GetConfig::new(cfg_lock.clone())),
         get_recent: Arc::new(GetRecentRequests::new(request_read)),
         update_config: Arc::new(UpdateConfig::new(

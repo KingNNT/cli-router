@@ -211,5 +211,4 @@ mod tests {
         let err = LiteLlmPricingSource::parse("not json", today()).unwrap_err();
         assert!(matches!(err, AdapterError::DataMapping(_)));
     }
-
 }
