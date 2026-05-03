@@ -8,7 +8,7 @@
 
 use super::builder::{BuildError, build_from_config};
 use crate::application::errors::ProxyError;
-use crate::application::ports::{Provider, UpstreamResponse, UsageParser};
+use crate::application::ports::{Provider, QuotaPort, UpstreamResponse, UsageParser};
 use crate::config::Config;
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
@@ -18,12 +18,14 @@ use std::sync::{Arc, RwLock};
 
 pub struct LiveProvider {
     inner: RwLock<Arc<dyn Provider>>,
+    quota: Arc<dyn QuotaPort>,
 }
 
 impl LiveProvider {
-    pub fn new(initial: Arc<dyn Provider>) -> Self {
+    pub fn new(initial: Arc<dyn Provider>, quota: Arc<dyn QuotaPort>) -> Self {
         Self {
             inner: RwLock::new(initial),
+            quota,
         }
     }
 
@@ -33,9 +35,10 @@ impl LiveProvider {
         *g = new;
     }
 
-    /// Build a fresh provider tree from `cfg` and atomically swap it in.
+    /// Build a fresh provider tree from `cfg` and atomically swap it in,
+    /// reusing the same quota handle so in-memory counters survive hot-reload.
     pub fn reload(&self, cfg: &Config, http: reqwest::Client) -> Result<(), BuildError> {
-        let new = build_from_config(cfg, http)?;
+        let new = build_from_config(cfg, http, self.quota.clone())?;
         self.swap(new);
         Ok(())
     }
@@ -103,18 +106,23 @@ impl Provider for LiveProvider {
 mod tests {
     use super::*;
     use crate::adapters::providers::AnthropicProvider;
+    use crate::adapters::quota::NoopQuota;
+
+    fn noop_quota() -> Arc<dyn QuotaPort> {
+        Arc::new(NoopQuota)
+    }
 
     #[test]
     fn current_returns_initial_after_construction() {
         let initial: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(reqwest::Client::new()));
-        let live = LiveProvider::new(initial.clone());
+        let live = LiveProvider::new(initial.clone(), noop_quota());
         assert_eq!(live.current().name(), "anthropic");
     }
 
     #[test]
     fn swap_replaces_inner() {
         let initial: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(reqwest::Client::new()));
-        let live = LiveProvider::new(initial);
+        let live = LiveProvider::new(initial, noop_quota());
         let new: Arc<dyn Provider> = Arc::new(crate::adapters::providers::ZaiProvider::new(
             reqwest::Client::new(),
         ));

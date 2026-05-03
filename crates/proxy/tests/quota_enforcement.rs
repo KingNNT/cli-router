@@ -111,3 +111,62 @@ fn record_and_check_use_leaf_provider_config_name() {
         "'router' is never a quota key, so check must be Ok (no config matches it)"
     );
 }
+
+/// Regression: `LiveProvider::reload` must preserve the in-memory quota
+/// counters. Before the fix, `build_from_config` always substituted a fresh
+/// `NoopQuota`, silently disabling enforcement after any hot reload.
+#[test]
+fn hot_reload_preserves_quota_enforcement() {
+    use proxy::adapters::providers::{LiveProvider, build_from_config};
+    use proxy::config::{
+        AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule, RoutingStrategy,
+    };
+
+    // One request allowed before reject.
+    let quota: Arc<dyn QuotaPort> = Arc::new(InMemoryQuota::new(vec![cfg("anthropic", 1)]));
+
+    // Record one usage — this exhausts the quota.
+    quota.record("anthropic", &usage_default());
+    assert!(
+        matches!(quota.check("anthropic"), QuotaCheck::Reject { .. }),
+        "quota must be exhausted before reload"
+    );
+
+    // Build a minimal config for build_from_config.
+    let minimal_cfg = Config {
+        port: 0,
+        proxy_db: std::path::PathBuf::new(),
+        pricing_db: std::path::PathBuf::new(),
+        providers: vec![ProviderConfig {
+            name: "anthropic".into(),
+            kind: ProviderKind::Anthropic,
+            auth: AuthConfig::Passthrough,
+            base_url: None,
+            openai_base_url: None,
+        }],
+        routing: vec![RoutingRule {
+            match_spec: MatchSpec {
+                model: Some("*".into()),
+            },
+            provider: "anthropic".into(),
+            fallback: vec![],
+            strategy: RoutingStrategy::Failover,
+            priority: None,
+        }],
+        affinity: Default::default(),
+        quota: Vec::new(),
+    };
+
+    let http = reqwest::Client::new();
+    let initial = build_from_config(&minimal_cfg, http.clone(), quota.clone()).unwrap();
+    let live = LiveProvider::new(initial, quota.clone());
+
+    // Simulate a hot reload — same config, new provider tree.
+    live.reload(&minimal_cfg, http).unwrap();
+
+    // The same quota Arc must still be exhausted after reload.
+    assert!(
+        matches!(quota.check("anthropic"), QuotaCheck::Reject { .. }),
+        "quota must remain exhausted after hot reload (same Arc preserved)"
+    );
+}

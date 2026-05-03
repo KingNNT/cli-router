@@ -116,7 +116,10 @@ fn dummy_admin_state_with_path(
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
     let http = reqwest::Client::new();
     let stub_provider: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(http.clone()));
-    let live = Arc::new(LiveProvider::new(stub_provider));
+    let live = Arc::new(LiveProvider::new(
+        stub_provider,
+        Arc::new(proxy::adapters::quota::NoopQuota),
+    ));
     proxy::frameworks::AdminState {
         get_status: Arc::new(GetStatus::new(read.clone(), 0, cfg.clone())),
         get_config: Arc::new(GetConfig::new(cfg.clone())),
@@ -443,8 +446,11 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
     let _ = std::fs::remove_file(&path);
 
     let http = reqwest::Client::new();
+    let quota: Arc<dyn proxy::application::ports::QuotaPort> =
+        Arc::new(proxy::adapters::quota::NoopQuota);
     let live = Arc::new(LiveProvider::new(
-        build_from_config(&cfg, http.clone()).unwrap(),
+        build_from_config(&cfg, http.clone(), quota.clone()).unwrap(),
+        quota,
     ));
     let cfg_lock = Arc::new(RwLock::new(cfg));
 

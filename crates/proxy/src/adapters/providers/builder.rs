@@ -103,13 +103,15 @@ pub fn build_routing_provider(
     ))
 }
 
-/// Convenience: leaves + routing in one shot. Uses a no-op quota (routing
-/// tests and hot-reload paths that don't have a quota handle). Callers that
-/// need quota enforcement should call `build_routing_provider` directly.
+/// Build leaves + routing in one shot, wiring in the given quota handle.
+/// The caller is responsible for supplying the live quota so that enforcement
+/// survives hot-reload. Pass `Arc::new(NoopQuota)` in tests or static builds
+/// that do not need enforcement.
 pub fn build_from_config(
     cfg: &Config,
     http: reqwest::Client,
+    quota: Arc<dyn QuotaPort>,
 ) -> Result<Arc<dyn Provider>, BuildError> {
     let leaves = build_leaves(&cfg.providers, http);
-    build_routing_provider(cfg, &leaves, Arc::new(crate::adapters::quota::NoopQuota))
+    build_routing_provider(cfg, &leaves, quota)
 }
