@@ -76,10 +76,33 @@ pub struct InMemoryQuota {
     entries: Mutex<Vec<Entry>>,
 }
 
+/// Point-in-time snapshot of one configured quota.
+#[derive(Debug, Clone)]
+pub struct QuotaSnapshot {
+    pub config: QuotaConfig,
+    pub totals: crate::domain::quota::Totals,
+    pub next_boundary_ms: u64,
+}
+
 impl InMemoryQuota {
     pub fn new(configs: Vec<QuotaConfig>) -> Self {
         let entries = configs.into_iter().map(Entry::new).collect();
         Self { entries: Mutex::new(entries) }
+    }
+
+    /// Returns a point-in-time snapshot of all configured quotas and their
+    /// current counters. Used by the admin endpoint to surface live status.
+    pub fn snapshot(&self) -> Vec<QuotaSnapshot> {
+        let now_ms = now_epoch_ms();
+        let entries = self.entries.lock().expect("quota mutex poisoned");
+        entries
+            .iter()
+            .map(|e| QuotaSnapshot {
+                config: e.config.clone(),
+                totals: e.counter.totals(now_ms),
+                next_boundary_ms: e.counter.next_boundary_ms(now_ms),
+            })
+            .collect()
     }
 
     /// Replay historical rows from the request log into the counters. Call

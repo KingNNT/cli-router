@@ -429,6 +429,74 @@ impl CompleteAnthropicOAuth {
     }
 }
 
+// ---- GetQuotaStatus ----
+
+pub struct GetQuotaStatus {
+    quota_view: Arc<crate::adapters::quota::InMemoryQuota>,
+}
+
+impl GetQuotaStatus {
+    pub fn new(quota_view: Arc<crate::adapters::quota::InMemoryQuota>) -> Self {
+        Self { quota_view }
+    }
+
+    pub fn execute(&self) -> proxy_admin_api::QuotaStatusListDto {
+        let snapshots = self.quota_view.snapshot();
+        proxy_admin_api::QuotaStatusListDto {
+            quotas: snapshots.into_iter().map(snapshot_to_dto).collect(),
+        }
+    }
+}
+
+fn snapshot_to_dto(
+    s: crate::adapters::quota::QuotaSnapshot,
+) -> proxy_admin_api::QuotaStatusDto {
+    let window_str = match s.config.window {
+        crate::domain::quota::QuotaWindow::Rolling { duration_ms } => {
+            let secs = duration_ms / 1000;
+            if secs > 0 && secs % (24 * 3600) == 0 {
+                format!("rolling:{}d", secs / 86400)
+            } else if secs > 0 && secs % 3600 == 0 {
+                format!("rolling:{}h", secs / 3600)
+            } else if secs > 0 && secs % 60 == 0 {
+                format!("rolling:{}m", secs / 60)
+            } else {
+                format!("rolling:{secs}s")
+            }
+        }
+        crate::domain::quota::QuotaWindow::Calendar { unit } => match unit {
+            crate::domain::quota::CalendarUnit::Minute => "calendar:minute".into(),
+            crate::domain::quota::CalendarUnit::Hour => "calendar:hour".into(),
+            crate::domain::quota::CalendarUnit::Day => "calendar:day".into(),
+        },
+    };
+
+    let warn_pct = s.config.warn_pct;
+    let mk = |used: u64, max: Option<u64>| {
+        let pct = if let Some(m) = max {
+            if m > 0 { ((used as u128 * 100) / m as u128).min(100) as u8 } else { 0 }
+        } else {
+            0
+        };
+        let state = match max {
+            None => proxy_admin_api::QuotaMetricState::Unconfigured,
+            Some(m) if used >= m => proxy_admin_api::QuotaMetricState::Rejecting,
+            Some(_) if pct >= warn_pct => proxy_admin_api::QuotaMetricState::Warn,
+            _ => proxy_admin_api::QuotaMetricState::Ok,
+        };
+        proxy_admin_api::QuotaMetricDto { used, max, pct, state }
+    };
+
+    proxy_admin_api::QuotaStatusDto {
+        provider: s.config.provider.clone(),
+        window: window_str,
+        window_resets_in_ms: s.next_boundary_ms,
+        requests: mk(s.totals.requests, s.config.max_requests),
+        input_tokens: mk(s.totals.input_tokens, s.config.max_input_tokens),
+        output_tokens: mk(s.totals.output_tokens, s.config.max_output_tokens),
+    }
+}
+
 // ---- helpers (DTO ↔ domain mapping) ----
 
 fn now_epoch_ms() -> i64 {

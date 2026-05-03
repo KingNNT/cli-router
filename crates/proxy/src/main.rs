@@ -8,8 +8,8 @@ use proxy::adapters::quota::InMemoryQuota;
 use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
 use proxy::application::ports::{Provider, RequestLogPort, RequestLogReadPort};
 use proxy::application::use_cases::{
-    CompleteAnthropicOAuth, GetConfig, GetRecentRequests, GetStatus, GetUsageSummary,
-    HandleMessages, StartAnthropicOAuth, TestProvider, UpdateConfig,
+    CompleteAnthropicOAuth, GetConfig, GetQuotaStatus, GetRecentRequests, GetStatus,
+    GetUsageSummary, HandleMessages, StartAnthropicOAuth, TestProvider, UpdateConfig,
 };
 use proxy::config::Config;
 use proxy::frameworks::AdminState;
@@ -123,7 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         pricing,
         clock,
         local_user_id,
-        quota,
+        quota.clone(),
     ));
 
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
@@ -137,6 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let usage_summary = Arc::new(GetUsageSummary::new(request_read.clone()));
+    let quota_status = Arc::new(GetQuotaStatus::new(quota.clone()));
 
     let admin = AdminState {
         get_status: Arc::new(GetStatus::new(
@@ -162,6 +163,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             live,
         )),
         usage_summary,
+        quota_status,
     };
 
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;
