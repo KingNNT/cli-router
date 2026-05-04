@@ -2,8 +2,8 @@
 //! layout: tab bar, body for the active view, status line, optional modal.
 
 use crate::app::{
-    ALL_VIEWS, AppState, AuthInputKind, EditAuthModal, EditState, Modal, TestProviderModal,
-    TestState, View,
+    ALL_VIEWS, AppState, AuthInputKind, DeleteConfirmModal, EditAuthModal, EditState, FormField,
+    FormMode, FormState, Modal, ProviderFormModal, TestProviderModal, TestState, View,
 };
 use chrono::{Local, TimeZone};
 use proxy_admin_api::{
@@ -40,8 +40,8 @@ pub fn draw(f: &mut Frame, state: &AppState) {
         Modal::None => {}
         Modal::TestProvider(m) => draw_test_modal(f, m),
         Modal::EditAuth(m) => draw_edit_modal(f, m),
-        // Rendered in Task 3 — stubs keep the build green.
-        Modal::ProviderForm(_) | Modal::DeleteConfirm(_) => {}
+        Modal::ProviderForm(m) => draw_form_modal(f, m),
+        Modal::DeleteConfirm(m) => draw_delete_confirm_modal(f, m),
     }
 }
 
@@ -711,4 +711,189 @@ fn xform_short_label(dir: &str) -> &str {
         "openai\u{2192}anthropic" => "O\u{2192}A",
         _ => "?",
     }
+}
+
+fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
+    let area = centered_rect(70, 60, f.area());
+    f.render_widget(Clear, area);
+    let title = match &m.mode {
+        FormMode::Add => " Add provider ".to_string(),
+        FormMode::Edit { original_name, .. } => format!(" Edit provider: {original_name} "),
+    };
+    let block = Block::default().borders(Borders::ALL).title(title);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if let Some(err) = &m.error {
+        lines.push(Line::from(Span::styled(
+            format!("⚠ {err}"),
+            Style::default().fg(Color::Red),
+        )));
+        lines.push(Line::from(""));
+    }
+
+    let row = |field: FormField, label: &str, value: String| {
+        let marker = if m.focused == field { "▶ " } else { "  " };
+        let style = if m.focused == field {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        Line::from(vec![
+            Span::styled(format!("{marker}{label:<18}"), style),
+            Span::raw(value),
+        ])
+    };
+
+    lines.push(row(FormField::Name, "Name:", show_or_placeholder(&m.name)));
+    lines.push(row(
+        FormField::Kind,
+        "Kind:",
+        format!("< {} >    [←/→ to cycle]", m.kind.label()),
+    ));
+    lines.push(row(
+        FormField::BaseUrl,
+        "Base URL:",
+        show_or_placeholder(&m.base_url),
+    ));
+    lines.push(row(
+        FormField::OpenaiBaseUrl,
+        "OpenAI Base URL:",
+        show_or_placeholder(&m.openai_base_url),
+    ));
+    lines.push(row(
+        FormField::AuthKind,
+        "Auth Kind:",
+        format!("< {} >    [←/→ to cycle]", m.auth_kind.label()),
+    ));
+    if matches!(m.auth_kind, AuthInputKind::ApiKey | AuthInputKind::Bearer) {
+        let masked = "*".repeat(m.auth_value.chars().count().min(40));
+        let display = if m.auth_value.is_empty() {
+            "<empty>".into()
+        } else {
+            masked
+        };
+        lines.push(row(FormField::AuthValue, "Auth Value:", display));
+    }
+    lines.push(Line::from(""));
+    lines.push(row(FormField::Save, "[ Save ]", "(Enter to submit)".into()));
+    lines.push(Line::from(""));
+
+    match &m.state {
+        FormState::Editing => {
+            lines.push(Line::from(Span::styled(
+                "Tab/Shift+Tab: move  ←/→: cycle  Enter on Save: submit  Esc: cancel",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+        FormState::Saving => {
+            lines.push(Line::from(Span::styled(
+                "saving…",
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+        FormState::OAuthAwaitingCode {
+            authorization_url,
+            code_input,
+            ..
+        } => {
+            lines.push(Line::from(Span::styled(
+                "1. Open this URL in a browser:",
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(Span::styled(
+                authorization_url.clone(),
+                Style::default().fg(Color::Cyan),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "2. After authorising, Anthropic shows a `code#state` value.",
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(
+                "   Copy the `code` part (everything before the `#`) and paste here:",
+            ));
+            lines.push(Line::from(format!(
+                "   code: {}",
+                if code_input.is_empty() {
+                    "<paste here>".into()
+                } else {
+                    code_input.clone()
+                }
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from("Enter: exchange  Esc: cancel"));
+        }
+        FormState::OAuthExchanging => {
+            lines.push(Line::from(Span::styled(
+                "exchanging code for token…",
+                Style::default().fg(Color::Yellow),
+            )));
+        }
+        FormState::Failed(e) => {
+            lines.push(Line::from(Span::styled(
+                format!("error: {e}"),
+                Style::default().fg(Color::Red),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from("Enter on Save: retry  Esc: close"));
+        }
+    }
+
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn show_or_placeholder(s: &str) -> String {
+    if s.is_empty() {
+        "<empty>".into()
+    } else {
+        s.into()
+    }
+}
+
+fn draw_delete_confirm_modal(f: &mut Frame, m: &DeleteConfirmModal) {
+    let area = centered_rect(60, 40, f.area());
+    f.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Delete provider: {} ", m.provider_name));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+    if m.blocking_rules.is_empty() {
+        lines.push(Line::from(format!(
+            "Delete provider '{}'?",
+            m.provider_name
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "[y] yes   [n / Esc] no",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "Cannot delete '{}' — referenced by {} routing rule(s):",
+                m.provider_name,
+                m.blocking_rules.len()
+            ),
+            Style::default().fg(Color::Red),
+        )));
+        for r in &m.blocking_rules {
+            lines.push(Line::from(format!("  • {r}")));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from("Resolve routing rules first."));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "[Esc] close",
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+    }
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
