@@ -7,16 +7,16 @@
 
 use crate::application::errors::ProxyError;
 use crate::application::use_cases::{
-    CompleteAnthropicOAuth, GetConfig, GetQuotaStatus, GetRecentRequests, GetStatus,
-    GetUsageSummary, StartAnthropicOAuth, TestProvider, UpdateConfig,
+    CompleteAnthropicOAuth, GetAccountUsage, GetConfig, GetQuotaStatus, GetRecentRequests,
+    GetStatus, GetUsageSummary, StartAnthropicOAuth, TestProvider, UpdateConfig,
 };
 use axum::extract::{FromRef, Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use proxy_admin_api::{
-    CompleteOAuthRequest, CompleteOAuthResponse, ConfigPayload, QuotaStatusListDto,
-    RecentRequestsResponse, StartOAuthRequest, StartOAuthResponse, StatusResponse,
-    TestProviderRequest, TestProviderResponse, UsageSummaryResponse,
+    AccountUsageResponse, CompleteOAuthRequest, CompleteOAuthResponse, ConfigPayload,
+    QuotaStatusListDto, RecentRequestsResponse, StartOAuthRequest, StartOAuthResponse,
+    StatusResponse, TestProviderRequest, TestProviderResponse, UsageSummaryResponse,
 };
 use serde::Deserialize;
 use std::sync::Arc;
@@ -32,11 +32,18 @@ pub struct AdminState {
     pub complete_oauth: Arc<CompleteAnthropicOAuth>,
     pub usage_summary: Arc<GetUsageSummary>,
     pub quota_status: Arc<GetQuotaStatus>,
+    pub account_usage: Arc<GetAccountUsage>,
 }
 
 impl FromRef<AdminState> for Arc<GetUsageSummary> {
     fn from_ref(s: &AdminState) -> Self {
         s.usage_summary.clone()
+    }
+}
+
+impl FromRef<AdminState> for Arc<GetAccountUsage> {
+    fn from_ref(s: &AdminState) -> Self {
+        s.account_usage.clone()
     }
 }
 
@@ -49,6 +56,7 @@ pub fn build_admin_router(state: AdminState) -> Router {
         )
         .route("/admin/requests/recent", get(recent_handler))
         .route("/admin/usage/summary", get(usage_summary_handler))
+        .route("/admin/account/usage", get(account_usage_handler))
         .route("/admin/quota/status", get(quota_status_handler))
         .route("/admin/providers/:name/test", post(test_provider_handler))
         .route("/admin/oauth/anthropic/start", post(oauth_start_handler))
@@ -126,4 +134,10 @@ async fn oauth_complete_handler(
 
 async fn quota_status_handler(State(s): State<AdminState>) -> Json<QuotaStatusListDto> {
     Json(s.quota_status.execute())
+}
+
+async fn account_usage_handler(
+    State(uc): State<Arc<GetAccountUsage>>,
+) -> Json<AccountUsageResponse> {
+    Json(uc.execute())
 }

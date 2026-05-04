@@ -116,6 +116,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let quota_port: Arc<dyn QuotaPort> = quota.clone();
     let leaves = build_leaves(&cfg.providers, http.clone());
     let initial_router = build_routing_provider(&cfg, &leaves, quota_port.clone())?;
+
+    let account_usage_map =
+        proxy::adapters::providers::builder::build_account_usage(&cfg.providers);
+
     let live = Arc::new(LiveProvider::new(initial_router, quota_port.clone()));
     let provider: Arc<dyn Provider> = live.clone();
 
@@ -143,6 +147,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let usage_summary = Arc::new(GetUsageSummary::new(request_read.clone()));
     let quota_status = Arc::new(GetQuotaStatus::new(quota_port.clone()));
 
+    let account_usage = Arc::new(
+        proxy::application::use_cases::admin::GetAccountUsage::new(account_usage_map),
+    );
+
     let admin = AdminState {
         get_status: Arc::new(GetStatus::new(
             request_read.clone(),
@@ -168,6 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )),
         usage_summary,
         quota_status,
+        account_usage,
     };
 
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;
