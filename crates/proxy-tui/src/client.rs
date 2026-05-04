@@ -40,7 +40,6 @@ impl AdminClient {
         get_json(&format!("{}/admin/config", self.base_url))
     }
 
-    #[allow(dead_code)]
     pub fn put_config(&self, payload: &ConfigPayload) -> Result<ConfigPayload, ClientError> {
         let url = format!("{}/admin/config", self.base_url);
         let resp = ureq::put(&url)

@@ -3,8 +3,6 @@
 //! No I/O, no ratatui, no async — just functions on `ConfigPayload` /
 //! `ProviderPayload` shapes. Easy to unit-test.
 
-#![allow(dead_code)]
-
 use proxy_admin_api::{AuthPayload, ConfigPayload, ProviderPayload};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

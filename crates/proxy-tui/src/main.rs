@@ -11,7 +11,7 @@ mod validate;
 mod views;
 
 use crate::app::{
-    AppState, AuthInputKind, FormField, FormState, Modal, ProviderFormModal, RangePreset,
+    AppState, AuthInputKind, FormField, FormMode, FormState, Modal, ProviderFormModal, RangePreset,
     TestProviderModal, TestState, View,
 };
 use crate::client::AdminClient;
@@ -257,13 +257,13 @@ fn open_add_modal(state: &mut AppState) {
 
 fn handle_form_key(
     k: KeyEvent,
-    _client: &AdminClient,
-    _state: &mut AppState,
+    client: &AdminClient,
+    state: &mut AppState,
     mut m: ProviderFormModal,
 ) -> Modal {
-    // Navigation + editing only — Save behavior arrives in a later task.
     match (&m.state, k.code) {
         (_, KeyCode::Esc) => Modal::None,
+
         (FormState::Editing, KeyCode::Tab) => {
             m.focused = m.focused.next(m.auth_kind);
             Modal::ProviderForm(m)
@@ -280,6 +280,14 @@ fn handle_form_key(
             cycle_field_value(&mut m, true);
             Modal::ProviderForm(m)
         }
+        (FormState::Editing, KeyCode::Enter) if m.focused == FormField::Save => {
+            // Non-OAuth save now; OAuth paths added in Tasks 7/8.
+            if m.auth_kind == AuthInputKind::OAuthAnthropic {
+                m.error = Some("OAuth save not yet implemented".into());
+                return Modal::ProviderForm(m);
+            }
+            submit_non_oauth_save(client, state, m)
+        }
         (FormState::Editing, KeyCode::Backspace) => {
             edit_focused_text(&mut m, |s| {
                 s.pop();
@@ -290,8 +298,89 @@ fn handle_form_key(
             edit_focused_text(&mut m, |s| s.push(c));
             Modal::ProviderForm(m)
         }
-        // Save handling, OAuth substates: added in Tasks 6/7/8.
+        (FormState::Failed(_), KeyCode::Enter) if m.focused == FormField::Save => {
+            // Retry: drop back to Editing and re-submit.
+            m.state = FormState::Editing;
+            m.error = None;
+            handle_form_key(k, client, state, m)
+        }
         _ => Modal::ProviderForm(m),
+    }
+}
+
+fn submit_non_oauth_save(
+    client: &AdminClient,
+    state: &mut AppState,
+    mut m: ProviderFormModal,
+) -> Modal {
+    use crate::validate::{FormInputs, validate_provider_form};
+    use proxy_admin_api::AuthPayload;
+
+    let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+        Some(c) => c,
+        None => {
+            m.error = Some("config not loaded".into());
+            return Modal::ProviderForm(m);
+        }
+    };
+
+    let auth_value = m.auth_value.clone();
+    let auth = match m.auth_kind {
+        AuthInputKind::Passthrough => AuthPayload::Passthrough,
+        AuthInputKind::ApiKey => AuthPayload::ApiKey { value: auth_value },
+        AuthInputKind::Bearer => AuthPayload::Bearer { value: auth_value },
+        AuthInputKind::OAuthAnthropic => unreachable!("OAuth handled separately"),
+    };
+
+    let (editing_index, original_name) = match &m.mode {
+        FormMode::Add => (None, None),
+        FormMode::Edit {
+            original_index,
+            original_name,
+        } => (Some(*original_index), Some(original_name.as_str())),
+    };
+
+    let input = FormInputs {
+        name: &m.name,
+        kind: m.kind.label(),
+        base_url: Some(&m.base_url),
+        openai_base_url: Some(&m.openai_base_url),
+        auth: &auth,
+        editing_index,
+        original_name,
+    };
+
+    let provider = match validate_provider_form(&input, &cfg) {
+        Ok(p) => p,
+        Err(e) => {
+            m.error = Some(format!("{e}"));
+            return Modal::ProviderForm(m);
+        }
+    };
+
+    let display_name = provider.name.clone();
+    match &m.mode {
+        FormMode::Add => cfg.providers.push(provider),
+        FormMode::Edit { original_index, .. } => {
+            cfg.providers[*original_index] = provider;
+        }
+    }
+
+    m.state = FormState::Saving;
+    match client.put_config(&cfg) {
+        Ok(updated) => {
+            state.set_config(Ok(updated));
+            let action = match m.mode {
+                FormMode::Add => "added",
+                FormMode::Edit { .. } => "updated",
+            };
+            state.flash(format!("{action} {display_name}"));
+            Modal::None
+        }
+        Err(e) => {
+            m.state = FormState::Failed(e.to_string());
+            Modal::ProviderForm(m)
+        }
     }
 }
 
