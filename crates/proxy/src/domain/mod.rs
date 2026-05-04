@@ -2,6 +2,7 @@
 //! Imports: std, serde, chrono only.
 
 pub mod quota;
+pub mod account_usage;
 pub mod request_log;
 pub mod usage_record;
 pub mod usage_summary;
