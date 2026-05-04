@@ -7,6 +7,7 @@ mod app;
 mod client;
 mod terminal;
 mod ui;
+mod validate;
 mod views;
 
 use crate::app::{

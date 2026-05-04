@@ -51,7 +51,7 @@ pub struct ConfigPayload {
     pub routing: Vec<RoutingRulePayload>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderPayload {
     pub name: String,
     pub kind: String,
@@ -63,7 +63,7 @@ pub struct ProviderPayload {
     pub openai_base_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthPayload {
     #[default]
