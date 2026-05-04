@@ -7,7 +7,7 @@
 use proxy_admin_api::{
     CompleteOAuthRequest, CompleteOAuthResponse, ConfigPayload, QuotaStatusListDto,
     RecentRequestsResponse, StartOAuthRequest, StartOAuthResponse, StatusResponse,
-    TestProviderRequest, TestProviderResponse, UsageSummaryResponse,
+    TestProviderRequest, TestProviderResponse, UsageSummaryResponse, AccountUsageResponse,
 };
 use thiserror::Error;
 
@@ -103,6 +103,10 @@ impl AdminClient {
 
     pub fn get_quota_status(&self) -> Result<QuotaStatusListDto, ClientError> {
         get_json(&format!("{}/admin/quota/status", self.base_url))
+    }
+
+    pub fn get_account_usage(&self) -> Result<AccountUsageResponse, ClientError> {
+        get_json(&format!("{}/admin/account/usage", self.base_url))
     }
 
     pub fn test_provider(

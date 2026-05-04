@@ -15,6 +15,7 @@ pub enum View {
     Routing,
     Requests,
     Usage,
+    Account,
 }
 
 impl View {
@@ -25,6 +26,7 @@ impl View {
             View::Routing => "Routing",
             View::Requests => "Requests",
             View::Usage => "Usage",
+            View::Account => "Account",
         }
     }
 }
@@ -35,6 +37,7 @@ pub const ALL_VIEWS: &[View] = &[
     View::Routing,
     View::Requests,
     View::Usage,
+    View::Account,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +79,14 @@ pub struct UsagePaneState {
     pub table_offset: usize,
     pub last_error: Option<String>,
     pub loading: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AccountPaneState {
+    pub usage: Option<proxy_admin_api::AccountUsageResponse>,
+    pub last_error: Option<String>,
+    pub loading: bool,
+    pub scroll_offset: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -352,6 +363,7 @@ pub struct AppState {
     pub providers_selected: usize,
     pub requests_selected: usize,
     pub usage: UsagePaneState,
+    pub account: AccountPaneState,
     pub flash: Option<String>,
     pub should_quit: bool,
 }
@@ -368,6 +380,7 @@ impl AppState {
             providers_selected: 0,
             requests_selected: 0,
             usage: UsagePaneState::default(),
+            account: AccountPaneState::default(),
             flash: None,
             should_quit: false,
         }
