@@ -362,6 +362,10 @@ fn submit_non_oauth_save(
     match &m.mode {
         FormMode::Add => cfg.providers.push(provider),
         FormMode::Edit { original_index, .. } => {
+            if *original_index >= cfg.providers.len() {
+                m.error = Some("provider list changed; press Esc and reopen".into());
+                return Modal::ProviderForm(m);
+            }
             cfg.providers[*original_index] = provider;
         }
     }
