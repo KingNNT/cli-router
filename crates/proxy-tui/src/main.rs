@@ -89,6 +89,8 @@ fn refresh_view(client: &AdminClient, state: &mut AppState) {
         // Usage refreshes on demand from `handle_key`'s Usage-tab branch
         // (`fetch_usage`); no auto-refresh tick should hit this arm.
         View::Usage => {}
+        // Account refreshes on demand via fetch_account.
+        View::Account => {}
     }
 }
 
@@ -103,16 +105,20 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
     }
     state.flash = None;
 
-    // Always-available keys (quit + view switching + help). View switches
-    // happen first so the user can leave Usage with `5`→other-tab number
-    // keys.
+    // Always-available keys (quit + help + tab switching).
     match k.code {
-        KeyCode::Char('q') | KeyCode::Esc => {
+        KeyCode::Char('q') => {
             state.should_quit = true;
             return;
         }
         KeyCode::Char('?') => {
             state.modal = Modal::Help;
+            return;
+        }
+        KeyCode::Esc => {
+            // Go back to dashboard (Status / tab 1). This is the escape
+            // route from the Usage tab where 1–4 are range presets.
+            state.set_view(View::Status);
             return;
         }
         KeyCode::Char('5') => {
@@ -122,11 +128,18 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
             }
             return;
         }
+        KeyCode::Char('6') => {
+            state.set_view(View::Account);
+            if state.account.usage.is_none() && state.account.last_error.is_none() {
+                fetch_account(client, state);
+            }
+            return;
+        }
         _ => {}
     }
 
-    // Usage-tab-specific keys take precedence over the global handler so
-    // that `1`/`2`/`3`/`4` switch range presets instead of leaving the tab.
+    // Usage-tab-specific keys. 1–4 switch range presets; Esc goes to
+    // dashboard (handled above); 5 switches to this tab (handled above).
     if state.view == View::Usage {
         match k.code {
             KeyCode::Char('1') => {
@@ -161,6 +174,26 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         return;
     }
 
+    // Account-tab-specific keys.
+    if state.view == View::Account {
+        match k.code {
+            KeyCode::Char('r') => fetch_account(client, state),
+            KeyCode::Up => {
+                state.account.scroll_offset = state.account.scroll_offset.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                if let Some(u) = &state.account.usage
+                    && state.account.scroll_offset + 1 < u.providers.len()
+                {
+                    state.account.scroll_offset += 1;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // On all other tabs, 1–4 switch tabs.
     match k.code {
         KeyCode::Char('1') => state.set_view(View::Status),
         KeyCode::Char('2') => state.set_view(View::Providers),
@@ -213,7 +246,11 @@ fn pos_in_rect(x: u16, y: u16, r: Rect) -> bool {
 
 /// Hit-test the tab bar. Tabs widget renders inside a bordered block, so
 /// titles live on row `tabs_area.y + 1` starting one cell in from the left
-/// border. Each title is `" {N} {Label} "` joined by the default `│` divider.
+/// border. Each title is `" {N} {Label}"` joined by the default `│` divider.
+///
+/// The ratatui `Tabs` widget wraps every title with default left and right
+/// padding of one space each, so the clickable region per tab is
+/// `padding_left + title + padding_right` (title width + 2).
 fn tab_hit(x: u16, y: u16, tabs_area: Rect) -> Option<View> {
     if y != tabs_area.y + 1 {
         return None;
@@ -221,10 +258,11 @@ fn tab_hit(x: u16, y: u16, tabs_area: Rect) -> Option<View> {
     let mut col = tabs_area.x + 1;
     for (i, v) in ALL_VIEWS.iter().enumerate() {
         if i > 0 {
-            col += 1; // single-cell divider
+            col += 1; // single-cell divider (│)
         }
         let label = format!(" {} {} ", i + 1, v.label());
-        let w = label.chars().count() as u16;
+        // +2 for the ratatui Tabs default left/right padding (one space each).
+        let w = label.chars().count() as u16 + 2;
         if x >= col && x < col + w {
             return Some(*v);
         }
@@ -447,7 +485,7 @@ fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mu
                         fetch_usage(client, state);
                     }
                 }
-                View::Status | View::Routing => {}
+                View::Status | View::Routing | View::Account => {}
             }
         }
         _ => {}
@@ -480,6 +518,21 @@ fn fetch_usage(client: &AdminClient, state: &mut AppState) {
         }
     }
     state.usage.loading = false;
+}
+
+fn fetch_account(client: &AdminClient, state: &mut AppState) {
+    state.account.loading = true;
+    match client.get_account_usage() {
+        Ok(resp) => {
+            state.account.usage = Some(resp);
+            state.account.last_error = None;
+            state.account.scroll_offset = 0;
+        }
+        Err(e) => {
+            state.account.last_error = Some(format!("{e}"));
+        }
+    }
+    state.account.loading = false;
 }
 
 // ---- Modal handling ----
@@ -1038,13 +1091,31 @@ mod mouse_hittest_tests {
             Some(View::Status)
         );
 
-        // Walk to find Providers location.
-        let label = " 1 Status ";
-        let providers_x = tabs_area.x + 1 + label.chars().count() as u16 + 1 + 5;
-        assert_eq!(
-            tab_hit(providers_x, tabs_area.y + 1, tabs_area),
-            Some(View::Providers)
-        );
+        // Walk to find each tab position, accounting for:
+        //   left_pad(1) + title + right_pad(1) + divider(1)
+        let labels = [
+            " 1 Status ",
+            " 2 Providers ",
+            " 3 Routing ",
+            " 4 Requests ",
+            " 5 Usage ",
+        ];
+        let mut col = tabs_area.x + 1;
+        let mut expected_views = ALL_VIEWS.iter();
+        for (i, label) in labels.iter().enumerate() {
+            if i > 0 {
+                col += 1; // divider
+            }
+            let tab_width = label.chars().count() as u16 + 2; // +2 padding
+            let mid_x = col + tab_width / 2;
+            assert_eq!(
+                tab_hit(mid_x, tabs_area.y + 1, tabs_area),
+                Some(*expected_views.next().unwrap()),
+                "clicking midpoint of tab {i} (col={mid_x}) should be {:?}",
+                ALL_VIEWS[i],
+            );
+            col += tab_width;
+        }
     }
 
     #[test]

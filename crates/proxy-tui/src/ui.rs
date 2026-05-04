@@ -33,6 +33,7 @@ pub fn draw(f: &mut Frame, state: &AppState) {
         View::Routing => draw_routing(f, chunks[1], state.config.as_ref()),
         View::Requests => draw_requests(f, chunks[1], state),
         View::Usage => crate::views::usage::draw(f, chunks[1], &state.usage),
+        View::Account => crate::views::account::draw(f, chunks[1], &state.account),
     }
     draw_status_line(f, chunks[2], state);
 
@@ -839,10 +840,12 @@ fn draw_help_modal(f: &mut Frame) {
 
     let lines = vec![
         Line::from(Span::styled("Global", bold)),
-        Line::from("  1 / 2 / 3 / 4 / 5     switch tab"),
+        Line::from("  1 / 2 / 3 / 4         switch tab"),
+        Line::from("  5                     usage tab"),
+        Line::from("  Esc                   back to status (dashboard)"),
         Line::from("  r                     refresh current view"),
         Line::from("  ?                     toggle this help"),
-        Line::from("  q / Esc / Ctrl+C      quit"),
+        Line::from("  q / Ctrl+C            quit"),
         Line::from(""),
         Line::from(Span::styled("Providers tab", bold)),
         Line::from("  ↑ / ↓ / j / k         move selection"),
@@ -858,6 +861,7 @@ fn draw_help_modal(f: &mut Frame) {
         Line::from(Span::styled("Usage tab", bold)),
         Line::from("  1 / 2 / 3 / 4         range presets (Today / 7d / 30d / All)"),
         Line::from("  ↑ / ↓                 scroll model table"),
+        Line::from("  Esc                   back to status (dashboard)"),
         Line::from(""),
         Line::from(Span::styled("Mouse", bold)),
         Line::from("  click tab             switch view"),
@@ -866,7 +870,7 @@ fn draw_help_modal(f: &mut Frame) {
         Line::from("  scroll wheel          move selection / scroll table"),
         Line::from("  click OAuth modal     re-open authorization URL"),
         Line::from(""),
-        Line::from(Span::styled("[?] / [Esc] close", bold)),
+        Line::from(Span::styled("[?] / [Esc] close help", bold)),
     ];
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
