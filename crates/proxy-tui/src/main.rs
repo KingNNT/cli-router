@@ -497,38 +497,48 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
         }
     };
 
-    // Validate with placeholder Passthrough auth so we can PUT first.
-    let placeholder_auth = AuthPayload::Passthrough;
-    let input = FormInputs {
-        name: &m.name,
-        kind: m.kind.label(),
-        base_url: Some(&m.base_url),
-        openai_base_url: Some(&m.openai_base_url),
-        auth: &placeholder_auth,
-        editing_index: None,
-        original_name: None,
-    };
-    let provider = match validate_provider_form(&input, &cfg) {
-        Ok(p) => p,
-        Err(e) => {
-            m.error = Some(format!("{e}"));
-            return Modal::ProviderForm(m);
-        }
-    };
+    // Retry path: a previous Add+OAuth attempt already PUT this provider but
+    // oauth_start failed. The provider is already in the daemon — skip the
+    // re-add (which would trip duplicate-name validation) and re-run the
+    // OAuth dance.
+    let already_added =
+        !m.name.trim().is_empty() && cfg.providers.iter().any(|p| p.name == m.name.trim());
 
-    let new_provider_name = provider.name.clone();
-    cfg.providers.push(provider);
+    if !already_added {
+        let placeholder_auth = AuthPayload::Passthrough;
+        let input = FormInputs {
+            name: &m.name,
+            kind: m.kind.label(),
+            base_url: Some(&m.base_url),
+            openai_base_url: Some(&m.openai_base_url),
+            auth: &placeholder_auth,
+            editing_index: None,
+            original_name: None,
+        };
+        let provider = match validate_provider_form(&input, &cfg) {
+            Ok(p) => p,
+            Err(e) => {
+                m.error = Some(format!("{e}"));
+                return Modal::ProviderForm(m);
+            }
+        };
 
-    m.state = FormState::Saving;
-    match client.put_config(&cfg) {
-        Ok(updated) => state.set_config(Ok(updated)),
-        Err(e) => {
-            m.state = FormState::Failed(format!("PUT failed (provider not added): {e}"));
-            return Modal::ProviderForm(m);
+        cfg.providers.push(provider);
+
+        m.state = FormState::Saving;
+        match client.put_config(&cfg) {
+            Ok(updated) => state.set_config(Ok(updated)),
+            Err(e) => {
+                m.state = FormState::Failed(format!("PUT failed (provider not added): {e}"));
+                return Modal::ProviderForm(m);
+            }
         }
     }
 
+    let new_provider_name = m.name.trim().to_string();
+
     // Provider exists in daemon config. Run OAuth dance.
+    m.state = FormState::Saving;
     match client.oauth_start(&new_provider_name) {
         Ok(resp) => {
             m.state = FormState::OAuthAwaitingCode {
@@ -539,8 +549,7 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
         }
         Err(e) => {
             m.state = FormState::Failed(format!(
-                "provider added but oauth_start failed: {e}\n\
-                 Esc, then Edit '{new_provider_name}' to retry."
+                "oauth_start failed: {e}. Press Enter to retry, or Esc to abort."
             ));
         }
     }
