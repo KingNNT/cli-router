@@ -272,6 +272,60 @@ pub enum QuotaMetricState {
     Unconfigured,
 }
 
+// ---------------------------------------------------------------------------
+// Account usage DTOs
+// ---------------------------------------------------------------------------
+
+/// `GET /admin/account/usage`
+///
+/// Merged account-level usage from all configured providers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AccountUsageResponse {
+    pub providers: Vec<ProviderAccountUsageDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProviderAccountUsageDto {
+    pub provider: String,
+    pub status: ProviderUsageStatus,
+    pub plan: Option<String>,
+    pub windows: Vec<UsageWindowDto>,
+    pub model_usage: Option<ModelUsageDto>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderUsageStatus {
+    Available,
+    NotSupported,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsageWindowDto {
+    pub label: String,
+    pub used_pct: f64,
+    pub used: Option<u64>,
+    pub limit: Option<u64>,
+    pub resets_at_ms: Option<i64>,
+    pub sub_items: Vec<UsageSubItemDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UsageSubItemDto {
+    pub label: String,
+    pub used: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelUsageDto {
+    pub total_tokens: u64,
+    pub total_calls: u64,
+    pub period_start_ms: i64,
+    pub period_end_ms: i64,
+}
+
+
 #[cfg(test)]
 mod usage_summary_tests {
     use super::*;
@@ -305,5 +359,54 @@ mod usage_summary_tests {
         let json = serde_json::to_string(&original).unwrap();
         let decoded: UsageSummaryResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, original);
+    }
+}
+
+#[cfg(test)]
+mod account_usage_tests {
+    use super::*;
+
+    #[test]
+    fn account_usage_response_round_trips_through_json() {
+        let original = AccountUsageResponse {
+            providers: vec![
+                ProviderAccountUsageDto {
+                    provider: "zai".into(),
+                    status: ProviderUsageStatus::Available,
+                    plan: Some("pro".into()),
+                    windows: vec![UsageWindowDto {
+                        label: "5h Token".into(),
+                        used_pct: 40.5,
+                        used: Some(16_200_000),
+                        limit: Some(40_000_000),
+                        resets_at_ms: Some(1_746_300_000_000),
+                        sub_items: vec![],
+                    }],
+                    model_usage: Some(ModelUsageDto {
+                        total_tokens: 12_500_000,
+                        total_calls: 1_234,
+                        period_start_ms: 1_746_220_800_000,
+                        period_end_ms: 1_746_292_800_000,
+                    }),
+                },
+                ProviderAccountUsageDto {
+                    provider: "anthropic".into(),
+                    status: ProviderUsageStatus::NotSupported,
+                    plan: None,
+                    windows: vec![],
+                    model_usage: None,
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: AccountUsageResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn provider_usage_status_serializes_as_snake_case() {
+        let s = serde_json::to_string(&ProviderUsageStatus::NotSupported).unwrap();
+        assert_eq!(s, "\"not_supported\"");
     }
 }
