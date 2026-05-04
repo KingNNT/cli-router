@@ -33,4 +33,9 @@ pub enum ProxyError {
     },
     #[error("translation: invalid request: {field}: {reason}")]
     TranslationInvalidRequest { field: &'static str, reason: String },
+    #[error("upstream usage query failed for {provider}: {message}")]
+    UpstreamUsage {
+        provider: String,
+        message: String,
+    },
 }

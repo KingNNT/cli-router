@@ -83,6 +83,19 @@ impl IntoResponse for ProxyError {
                 })),
             )
                 .into_response(),
+            ProxyError::UpstreamUsage { provider, message } => {
+                tracing::warn!(provider = %provider, %message, "upstream usage query failed");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(serde_json::json!({
+                        "error": {
+                            "type": "upstream_usage_error",
+                            "message": format!("upstream usage query failed for {provider}: {message}"),
+                        }
+                    })),
+                )
+                    .into_response()
+            }
             other => {
                 tracing::error!(error = %other, "internal proxy error");
                 (
