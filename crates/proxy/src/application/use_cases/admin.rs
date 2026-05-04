@@ -702,9 +702,98 @@ fn payload_to_auth(a: AuthPayload) -> AuthConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// GetAccountUsage
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap;
+use crate::application::ports::AccountUsagePort;
+use crate::domain::account_usage::{AccountUsageStatus, ProviderAccountUsage};
+use proxy_admin_api::{
+    AccountUsageResponse, ModelUsageDto, ProviderAccountUsageDto, ProviderUsageStatus,
+    UsageSubItemDto, UsageWindowDto,
+};
+
+pub struct GetAccountUsage {
+    adapters: HashMap<String, Arc<dyn AccountUsagePort>>,
+}
+
+impl GetAccountUsage {
+    pub fn new(adapters: HashMap<String, Arc<dyn AccountUsagePort>>) -> Self {
+        Self { adapters }
+    }
+
+    pub fn execute(&self) -> AccountUsageResponse {
+        let mut providers: Vec<ProviderAccountUsageDto> = self
+            .adapters
+            .iter()
+            .map(|(name, adapter)| match adapter.fetch_usage() {
+                None => ProviderAccountUsageDto {
+                    provider: name.clone(),
+                    status: ProviderUsageStatus::NotSupported,
+                    plan: None,
+                    windows: vec![],
+                    model_usage: None,
+                },
+                Some(Ok(usage)) => account_usage_to_dto(usage),
+                Some(Err(_)) => ProviderAccountUsageDto {
+                    provider: name.clone(),
+                    status: ProviderUsageStatus::Error,
+                    plan: None,
+                    windows: vec![],
+                    model_usage: None,
+                },
+            })
+            .collect();
+
+        // Sort by provider name for deterministic ordering.
+        providers.sort_by(|a, b| a.provider.cmp(&b.provider));
+
+        AccountUsageResponse { providers }
+    }
+}
+
+fn account_usage_to_dto(u: ProviderAccountUsage) -> ProviderAccountUsageDto {
+    ProviderAccountUsageDto {
+        provider: u.provider,
+        status: match u.status {
+            AccountUsageStatus::Available => ProviderUsageStatus::Available,
+            AccountUsageStatus::NotSupported => ProviderUsageStatus::NotSupported,
+            AccountUsageStatus::Error(_) => ProviderUsageStatus::Error,
+        },
+        plan: u.plan,
+        windows: u
+            .windows
+            .into_iter()
+            .map(|w| UsageWindowDto {
+                label: w.label,
+                used_pct: w.used_pct,
+                used: w.used,
+                limit: w.limit,
+                resets_at_ms: w.resets_at_ms,
+                sub_items: w
+                    .sub_items
+                    .into_iter()
+                    .map(|s| UsageSubItemDto {
+                        label: s.label,
+                        used: s.used,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        model_usage: u.model_usage.map(|m| ModelUsageDto {
+            total_tokens: m.total_tokens,
+            total_calls: m.total_calls,
+            period_start_ms: m.period_start_ms,
+            period_end_ms: m.period_end_ms,
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::account_usage::{AccountUsageStatus, UsageWindow};
     use crate::domain::{DailyTotal, ModelTotal, RequestRow, UsageSummary};
     use std::collections::BTreeMap;
 
@@ -919,5 +1008,106 @@ mod tests {
             "quota rules must survive a config PUT round-trip"
         );
         assert_eq!(roundtripped.quota[0].provider, "zai");
+    }
+
+    // --- GetAccountUsage tests ---
+
+    struct StubAccountUsage {
+        result: Option<Result<ProviderAccountUsage, String>>,
+    }
+
+    impl AccountUsagePort for StubAccountUsage {
+        fn fetch_usage(&self) -> Option<Result<ProviderAccountUsage, ProxyError>> {
+            self.result.as_ref().map(|r| match r {
+                Ok(usage) => Ok(usage.clone()),
+                Err(msg) => Err(ProxyError::UpstreamUsage {
+                    provider: "stub".to_string(),
+                    message: msg.clone(),
+                }),
+            })
+        }
+    }
+
+    #[test]
+    fn get_account_usage_returns_not_supported_for_none() {
+        let mut map = HashMap::new();
+        map.insert(
+            "anthropic".to_string(),
+            Arc::new(StubAccountUsage { result: None }) as Arc<dyn AccountUsagePort>,
+        );
+        let uc = GetAccountUsage::new(map);
+        let resp = uc.execute();
+        assert_eq!(resp.providers.len(), 1);
+        assert_eq!(resp.providers[0].status, ProviderUsageStatus::NotSupported);
+    }
+
+    #[test]
+    fn get_account_usage_returns_available_on_success() {
+        let usage = ProviderAccountUsage {
+            provider: "zai".to_string(),
+            status: AccountUsageStatus::Available,
+            plan: Some("pro".to_string()),
+            windows: vec![UsageWindow {
+                label: "5h Token".to_string(),
+                used_pct: 40.0,
+                used: Some(16_000_000),
+                limit: Some(40_000_000),
+                resets_at_ms: Some(1_746_300_000_000),
+                sub_items: vec![],
+            }],
+            model_usage: None,
+        };
+        let mut map = HashMap::new();
+        map.insert(
+            "zai".to_string(),
+            Arc::new(StubAccountUsage {
+                result: Some(Ok(usage)),
+            }) as Arc<dyn AccountUsagePort>,
+        );
+        let uc = GetAccountUsage::new(map);
+        let resp = uc.execute();
+        assert_eq!(resp.providers.len(), 1);
+        assert_eq!(resp.providers[0].status, ProviderUsageStatus::Available);
+        assert_eq!(resp.providers[0].plan.as_deref(), Some("pro"));
+        assert_eq!(resp.providers[0].windows.len(), 1);
+    }
+
+    #[test]
+    fn get_account_usage_returns_error_on_failure() {
+        let mut map = HashMap::new();
+        map.insert(
+            "bad".to_string(),
+            Arc::new(StubAccountUsage {
+                result: Some(Err("timeout".to_string())),
+            }) as Arc<dyn AccountUsagePort>,
+        );
+        let uc = GetAccountUsage::new(map);
+        let resp = uc.execute();
+        assert_eq!(resp.providers.len(), 1);
+        assert_eq!(resp.providers[0].status, ProviderUsageStatus::Error);
+    }
+
+    #[test]
+    fn get_account_usage_sorts_providers_by_name() {
+        let mut map = HashMap::new();
+        map.insert(
+            "zai".to_string(),
+            Arc::new(StubAccountUsage { result: None }) as Arc<dyn AccountUsagePort>,
+        );
+        map.insert(
+            "anthropic".to_string(),
+            Arc::new(StubAccountUsage { result: None }) as Arc<dyn AccountUsagePort>,
+        );
+        let uc = GetAccountUsage::new(map);
+        let resp = uc.execute();
+        assert_eq!(resp.providers[0].provider, "anthropic");
+        assert_eq!(resp.providers[1].provider, "zai");
+    }
+
+    #[test]
+    fn get_account_usage_empty_map_returns_empty() {
+        let uc = GetAccountUsage::new(HashMap::new());
+        let resp = uc.execute();
+        assert!(resp.providers.is_empty());
     }
 }

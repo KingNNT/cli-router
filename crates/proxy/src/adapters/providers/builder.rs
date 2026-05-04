@@ -3,7 +3,8 @@
 //! (`LiveProvider::reload`) call the same code.
 
 use super::{AnthropicProvider, AuthHeader, RoutingProvider, ZaiProvider};
-use crate::application::ports::{Provider, QuotaPort};
+use super::account_usage::{AnthropicAccountUsage, ZaiAccountUsage};
+use crate::application::ports::{AccountUsagePort, Provider, QuotaPort};
 use crate::config::{AuthConfig, Config, ProviderConfig, ProviderKind};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -114,4 +115,62 @@ pub fn build_from_config(
 ) -> Result<Arc<dyn Provider>, BuildError> {
     let leaves = build_leaves(&cfg.providers, http);
     build_routing_provider(cfg, &leaves, quota)
+}
+
+/// Build the per-name account usage adapter map.
+///
+/// Z.ai providers get a `ZaiAccountUsage` adapter (hits Z.ai's monitoring API).
+/// All other kinds get `AnthropicAccountUsage` (returns `None` — no public API).
+pub fn build_account_usage(
+    providers: &[ProviderConfig],
+) -> HashMap<String, Arc<dyn AccountUsagePort>> {
+    providers
+        .iter()
+        .map(|p| {
+            let adapter: Arc<dyn AccountUsagePort> = match p.kind {
+                ProviderKind::Zai => {
+                    // Derive the monitoring base URL from the provider config.
+                    // The Z.ai monitoring API lives at the scheme+host level,
+                    // e.g. "https://api.z.ai" regardless of the openai_base_url path.
+                    let base_url = derive_monitor_base_url(p);
+                    let token = resolve_auth_token(&p.auth);
+                    Arc::new(ZaiAccountUsage::new(
+                        p.name.clone(),
+                        token,
+                        base_url,
+                    ))
+                }
+                ProviderKind::Anthropic => Arc::new(AnthropicAccountUsage),
+            };
+            (p.name.clone(), adapter)
+        })
+        .collect()
+}
+
+/// Extract the bearer token value from an auth config for use in
+/// the Z.ai monitoring API (`Authorization: <token>` header).
+fn resolve_auth_token(auth: &AuthConfig) -> String {
+    match auth {
+        AuthConfig::ApiKey { value } => value.clone(),
+        AuthConfig::Bearer { value } => value.clone(),
+        AuthConfig::AnthropicOAuth { access_token, .. } => access_token.clone(),
+        AuthConfig::Passthrough => String::new(),
+    }
+}
+
+/// Derive the monitoring base URL from a provider config.
+/// The Z.ai monitoring API lives at scheme+host (e.g. "https://api.z.ai"),
+/// not at the full openai_base_url path.
+fn derive_monitor_base_url(p: &ProviderConfig) -> String {
+    // Try to extract scheme+host from openai_base_url first, then base_url.
+    p.openai_base_url
+        .as_deref()
+        .or(p.base_url.as_deref())
+        .and_then(|u| {
+            let idx = u.find("://")?;
+            let rest = &u[idx + 3..];
+            let end = rest.find('/').unwrap_or(rest.len());
+            Some(format!("{}://{}", &u[..idx + 3], &rest[..end]))
+        })
+        .unwrap_or_else(|| "https://api.z.ai".to_string())
 }
