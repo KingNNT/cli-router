@@ -90,8 +90,7 @@ pub fn validate_provider_form(
     }
 
     // Rename blocked by routing references.
-    if let (Some(orig), idx) = (input.original_name, input.editing_index)
-        && idx.is_some()
+    if let (Some(orig), Some(_)) = (input.original_name, input.editing_index)
         && orig != name
     {
         let refs = rules_referencing(orig, cfg);
