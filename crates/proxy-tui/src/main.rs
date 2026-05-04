@@ -11,8 +11,8 @@ mod validate;
 mod views;
 
 use crate::app::{
-    AppState, AuthInputKind, FormField, FormMode, FormState, Modal, ProviderFormModal, RangePreset,
-    TestProviderModal, TestState, View,
+    AppState, AuthInputKind, DeleteConfirmModal, FormField, FormMode, FormState, Modal,
+    ProviderFormModal, RangePreset, TestProviderModal, TestState, View,
 };
 use crate::client::AdminClient;
 use chrono::{Datelike, Local, TimeZone};
@@ -157,6 +157,7 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         KeyCode::Char('a') if state.view == View::Providers => open_add_modal(state),
         KeyCode::Char('t') if state.view == View::Providers => open_test_modal(state),
         KeyCode::Char('e') if state.view == View::Providers => open_edit_modal(state),
+        KeyCode::Char('d') if state.view == View::Providers => open_delete_modal(state),
         _ => {}
     }
 }
@@ -197,7 +198,7 @@ fn handle_modal_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         Modal::TestProvider(m) => handle_test_key(k, client, m),
         Modal::None => Modal::None,
         Modal::ProviderForm(m) => handle_form_key(k, client, state, m),
-        Modal::DeleteConfirm(m) => Modal::DeleteConfirm(m), // T9 will replace
+        Modal::DeleteConfirm(m) => handle_delete_key(k, client, state, m),
     };
     state.modal = next;
 }
@@ -253,6 +254,63 @@ fn open_edit_modal(state: &mut AppState) {
 
 fn open_add_modal(state: &mut AppState) {
     state.modal = Modal::ProviderForm(ProviderFormModal::new_for_add());
+}
+
+fn open_delete_modal(state: &mut AppState) {
+    let cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+        Some(c) => c,
+        None => return,
+    };
+    let provider_index = state.providers_selected;
+    let prov = match cfg.providers.get(provider_index) {
+        Some(p) => p,
+        None => return,
+    };
+    let blocking_rules = crate::validate::rules_referencing(&prov.name, &cfg);
+    let provider_name = prov.name.clone();
+    state.modal = Modal::DeleteConfirm(DeleteConfirmModal {
+        provider_index,
+        provider_name,
+        blocking_rules,
+    });
+}
+
+fn handle_delete_key(
+    k: crossterm::event::KeyEvent,
+    client: &AdminClient,
+    state: &mut AppState,
+    m: DeleteConfirmModal,
+) -> Modal {
+    match k.code {
+        KeyCode::Esc | KeyCode::Char('n') => Modal::None,
+        KeyCode::Char('y') if m.blocking_rules.is_empty() => {
+            let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+                Some(c) => c,
+                None => {
+                    state.flash("delete failed: config not loaded");
+                    return Modal::None;
+                }
+            };
+            if m.provider_index >= cfg.providers.len() {
+                state.flash("delete failed: provider index out of range");
+                return Modal::None;
+            }
+            cfg.providers.remove(m.provider_index);
+            match client.put_config(&cfg) {
+                Ok(updated) => {
+                    state.set_config(Ok(updated));
+                    state.flash(format!("deleted {}", m.provider_name));
+                    Modal::None
+                }
+                Err(e) => {
+                    state.flash(format!("delete failed: {e}"));
+                    Modal::None
+                }
+            }
+        }
+        // Blocked-rules state: only Esc closes.
+        _ => Modal::DeleteConfirm(m),
+    }
 }
 
 fn handle_form_key(

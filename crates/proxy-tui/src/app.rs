@@ -78,7 +78,6 @@ pub struct UsagePaneState {
     pub loading: bool,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum Modal {
     None,
@@ -313,7 +312,6 @@ impl ProviderFormModal {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct DeleteConfirmModal {
     pub provider_index: usize,
