@@ -281,12 +281,63 @@ fn handle_form_key(
             Modal::ProviderForm(m)
         }
         (FormState::Editing, KeyCode::Enter) if m.focused == FormField::Save => {
-            // Non-OAuth save now; OAuth paths added in Tasks 7/8.
             if m.auth_kind == AuthInputKind::OAuthAnthropic {
-                m.error = Some("OAuth save not yet implemented".into());
-                return Modal::ProviderForm(m);
+                return match m.mode {
+                    FormMode::Add => submit_oauth_add(client, state, m), // Task 8
+                    FormMode::Edit { .. } => submit_oauth_edit(client, state, m),
+                };
             }
             submit_non_oauth_save(client, state, m)
+        }
+        (FormState::OAuthAwaitingCode { .. }, KeyCode::Backspace) => {
+            if let FormState::OAuthAwaitingCode { code_input, .. } = &mut m.state {
+                code_input.pop();
+            }
+            Modal::ProviderForm(m)
+        }
+        (FormState::OAuthAwaitingCode { .. }, KeyCode::Char(c)) => {
+            if let FormState::OAuthAwaitingCode { code_input, .. } = &mut m.state {
+                code_input.push(c);
+            }
+            Modal::ProviderForm(m)
+        }
+        (FormState::OAuthAwaitingCode { .. }, KeyCode::Enter) => {
+            let (state_id, code, provider_name) = match (&m.state, &m.mode) {
+                (
+                    FormState::OAuthAwaitingCode {
+                        state_id,
+                        code_input,
+                        ..
+                    },
+                    _,
+                ) => (state_id.clone(), code_input.clone(), m.name.clone()),
+                _ => unreachable!(),
+            };
+            if code.trim().is_empty() {
+                return Modal::ProviderForm(m);
+            }
+            m.state = FormState::OAuthExchanging;
+            match client.oauth_complete(&state_id, code.trim(), &provider_name) {
+                Ok(resp) if resp.success => {
+                    if let Some(updated) = resp.config {
+                        state.set_config(Ok(updated));
+                    } else {
+                        state.set_config(client.get_config().map_err(|e| e.to_string()));
+                    }
+                    state.flash(format!("OAuth complete — {provider_name} updated"));
+                    Modal::None
+                }
+                Ok(resp) => {
+                    m.state = FormState::Failed(
+                        resp.error.unwrap_or_else(|| "unknown OAuth failure".into()),
+                    );
+                    Modal::ProviderForm(m)
+                }
+                Err(e) => {
+                    m.state = FormState::Failed(e.to_string());
+                    Modal::ProviderForm(m)
+                }
+            }
         }
         (FormState::Editing, KeyCode::Backspace) => {
             edit_focused_text(&mut m, |s| {
@@ -431,4 +482,104 @@ fn edit_focused_text(m: &mut ProviderFormModal, f: impl FnOnce(&mut String)) {
     if let Some(s) = target {
         f(s);
     }
+}
+
+fn submit_oauth_add(
+    _client: &AdminClient,
+    _state: &mut AppState,
+    mut m: ProviderFormModal,
+) -> Modal {
+    m.error = Some("Add + OAuth not yet implemented".into());
+    Modal::ProviderForm(m)
+}
+
+fn submit_oauth_edit(
+    client: &AdminClient,
+    state: &mut AppState,
+    mut m: ProviderFormModal,
+) -> Modal {
+    use crate::validate::{FormInputs, validate_provider_form};
+    use proxy_admin_api::AuthPayload;
+
+    let (original_index, original_name) = match &m.mode {
+        FormMode::Edit {
+            original_index,
+            original_name,
+        } => (*original_index, original_name.clone()),
+        FormMode::Add => unreachable!("submit_oauth_edit only called on Edit"),
+    };
+
+    let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+        Some(c) => c,
+        None => {
+            m.error = Some("config not loaded".into());
+            return Modal::ProviderForm(m);
+        }
+    };
+
+    // Preserve original auth — we run OAuth dance after PUT lands.
+    let original_auth = cfg
+        .providers
+        .get(original_index)
+        .map(|p| p.auth.clone())
+        .unwrap_or(AuthPayload::Passthrough);
+
+    let input = FormInputs {
+        name: &m.name,
+        kind: m.kind.label(),
+        base_url: Some(&m.base_url),
+        openai_base_url: Some(&m.openai_base_url),
+        auth: &original_auth,
+        editing_index: Some(original_index),
+        original_name: Some(&original_name),
+    };
+    let provider = match validate_provider_form(&input, &cfg) {
+        Ok(p) => p,
+        Err(e) => {
+            m.error = Some(format!("{e}"));
+            return Modal::ProviderForm(m);
+        }
+    };
+
+    // Detect whether non-auth fields changed; if so, PUT first.
+    let dirty = if original_index < cfg.providers.len() {
+        let prev = &cfg.providers[original_index];
+        prev.name != provider.name
+            || prev.kind != provider.kind
+            || prev.base_url != provider.base_url
+            || prev.openai_base_url != provider.openai_base_url
+    } else {
+        m.error = Some("provider list changed; press Esc and reopen".into());
+        return Modal::ProviderForm(m);
+    };
+
+    let new_provider_name = provider.name.clone();
+    cfg.providers[original_index] = provider;
+
+    if dirty {
+        m.state = FormState::Saving;
+        match client.put_config(&cfg) {
+            Ok(updated) => state.set_config(Ok(updated)),
+            Err(e) => {
+                m.state = FormState::Failed(e.to_string());
+                return Modal::ProviderForm(m);
+            }
+        }
+    }
+
+    // Now kick off the OAuth dance. Daemon will look up by `new_provider_name`.
+    m.state = FormState::Saving;
+    match client.oauth_start(&new_provider_name) {
+        Ok(resp) => {
+            m.state = FormState::OAuthAwaitingCode {
+                authorization_url: resp.authorization_url,
+                state_id: resp.state_id,
+                code_input: String::new(),
+            };
+        }
+        Err(e) => {
+            m.state = FormState::Failed(e.to_string());
+        }
+    }
+    Modal::ProviderForm(m)
 }
