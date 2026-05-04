@@ -485,12 +485,65 @@ fn edit_focused_text(m: &mut ProviderFormModal, f: impl FnOnce(&mut String)) {
     }
 }
 
-fn submit_oauth_add(
-    _client: &AdminClient,
-    _state: &mut AppState,
-    mut m: ProviderFormModal,
-) -> Modal {
-    m.error = Some("Add + OAuth not yet implemented".into());
+fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderFormModal) -> Modal {
+    use crate::validate::{FormInputs, validate_provider_form};
+    use proxy_admin_api::AuthPayload;
+
+    let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+        Some(c) => c,
+        None => {
+            m.error = Some("config not loaded".into());
+            return Modal::ProviderForm(m);
+        }
+    };
+
+    // Validate with placeholder Passthrough auth so we can PUT first.
+    let placeholder_auth = AuthPayload::Passthrough;
+    let input = FormInputs {
+        name: &m.name,
+        kind: m.kind.label(),
+        base_url: Some(&m.base_url),
+        openai_base_url: Some(&m.openai_base_url),
+        auth: &placeholder_auth,
+        editing_index: None,
+        original_name: None,
+    };
+    let provider = match validate_provider_form(&input, &cfg) {
+        Ok(p) => p,
+        Err(e) => {
+            m.error = Some(format!("{e}"));
+            return Modal::ProviderForm(m);
+        }
+    };
+
+    let new_provider_name = provider.name.clone();
+    cfg.providers.push(provider);
+
+    m.state = FormState::Saving;
+    match client.put_config(&cfg) {
+        Ok(updated) => state.set_config(Ok(updated)),
+        Err(e) => {
+            m.state = FormState::Failed(format!("PUT failed (provider not added): {e}"));
+            return Modal::ProviderForm(m);
+        }
+    }
+
+    // Provider exists in daemon config. Run OAuth dance.
+    match client.oauth_start(&new_provider_name) {
+        Ok(resp) => {
+            m.state = FormState::OAuthAwaitingCode {
+                authorization_url: resp.authorization_url,
+                state_id: resp.state_id,
+                code_input: String::new(),
+            };
+        }
+        Err(e) => {
+            m.state = FormState::Failed(format!(
+                "provider added but oauth_start failed: {e}\n\
+                 Esc, then Edit '{new_provider_name}' to retry."
+            ));
+        }
+    }
     Modal::ProviderForm(m)
 }
 
