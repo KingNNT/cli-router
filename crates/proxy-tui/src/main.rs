@@ -314,6 +314,7 @@ fn handle_form_key(
                 _ => unreachable!(),
             };
             if code.trim().is_empty() {
+                m.error = Some("paste the authorization code first".into());
                 return Modal::ProviderForm(m);
             }
             m.state = FormState::OAuthExchanging;
@@ -559,6 +560,9 @@ fn submit_oauth_edit(
     if dirty {
         m.state = FormState::Saving;
         match client.put_config(&cfg) {
+            // PUT succeeded — non-auth fields are now live in the daemon.
+            // If oauth_start fails below, the modal goes to Failed but
+            // those field changes remain persisted (intentional).
             Ok(updated) => state.set_config(Ok(updated)),
             Err(e) => {
                 m.state = FormState::Failed(e.to_string());
