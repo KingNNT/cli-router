@@ -439,7 +439,7 @@ fn draw_requests_table(
 fn draw_status_line(f: &mut Frame, area: Rect, state: &AppState) {
     let mut hints = vec!["1-4: switch  r: refresh  q: quit"];
     if matches!(state.view, View::Providers) {
-        hints.push("e: edit  t: test");
+        hints.push("[a] add  [e] edit  [d] delete  [t] test  [j/k] move  [r] refresh  [q] quit");
     }
     if matches!(state.view, View::Providers | View::Requests) {
         hints.push("↑↓: select");
