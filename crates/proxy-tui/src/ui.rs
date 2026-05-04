@@ -40,6 +40,8 @@ pub fn draw(f: &mut Frame, state: &AppState) {
         Modal::None => {}
         Modal::TestProvider(m) => draw_test_modal(f, m),
         Modal::EditAuth(m) => draw_edit_modal(f, m),
+        // Rendered in Task 3 — stubs keep the build green.
+        Modal::ProviderForm(_) | Modal::DeleteConfirm(_) => {}
     }
 }
 

@@ -197,6 +197,9 @@ fn handle_modal_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         Modal::TestProvider(m) => handle_test_key(k, client, m),
         Modal::EditAuth(m) => handle_edit_key(k, client, state, m),
         Modal::None => Modal::None,
+        // Wired in Tasks 4–9 — stubs keep the build green.
+        Modal::ProviderForm(m) => Modal::ProviderForm(m),
+        Modal::DeleteConfirm(m) => Modal::DeleteConfirm(m),
     };
     state.modal = next;
 }

@@ -78,11 +78,14 @@ pub struct UsagePaneState {
     pub loading: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum Modal {
     None,
     TestProvider(TestProviderModal),
-    EditAuth(EditAuthModal),
+    EditAuth(EditAuthModal),           // removed in Task 5
+    ProviderForm(ProviderFormModal),   // new
+    DeleteConfirm(DeleteConfirmModal), // new
 }
 
 #[derive(Debug, Clone)]
@@ -172,6 +175,180 @@ pub enum EditState {
     OAuthExchanging,
     Done,
     Failed(String),
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderKind {
+    Anthropic,
+    Zai,
+}
+
+#[allow(dead_code)]
+impl ProviderKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            ProviderKind::Anthropic => "anthropic",
+            ProviderKind::Zai => "zai",
+        }
+    }
+    pub fn cycle_next(self) -> Self {
+        match self {
+            ProviderKind::Anthropic => ProviderKind::Zai,
+            ProviderKind::Zai => ProviderKind::Anthropic,
+        }
+    }
+    pub fn cycle_prev(self) -> Self {
+        self.cycle_next() // only two variants, so prev == next
+    }
+    pub fn from_str_or_default(s: &str) -> Self {
+        match s {
+            "zai" => ProviderKind::Zai,
+            _ => ProviderKind::Anthropic,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormField {
+    Name,
+    Kind,
+    BaseUrl,
+    OpenaiBaseUrl,
+    AuthKind,
+    AuthValue,
+    Save,
+}
+
+#[allow(dead_code)]
+impl FormField {
+    pub fn next(self, auth_kind: AuthInputKind) -> Self {
+        let order = field_order(auth_kind);
+        let idx = order.iter().position(|f| *f == self).unwrap_or(0);
+        order[(idx + 1) % order.len()]
+    }
+    pub fn prev(self, auth_kind: AuthInputKind) -> Self {
+        let order = field_order(auth_kind);
+        let idx = order.iter().position(|f| *f == self).unwrap_or(0);
+        order[(idx + order.len() - 1) % order.len()]
+    }
+}
+
+/// Field traversal order. AuthValue is omitted when the auth kind doesn't
+/// need a typed value.
+#[allow(dead_code)]
+fn field_order(auth_kind: AuthInputKind) -> &'static [FormField] {
+    match auth_kind {
+        AuthInputKind::Passthrough | AuthInputKind::OAuthAnthropic => &[
+            FormField::Name,
+            FormField::Kind,
+            FormField::BaseUrl,
+            FormField::OpenaiBaseUrl,
+            FormField::AuthKind,
+            FormField::Save,
+        ],
+        AuthInputKind::ApiKey | AuthInputKind::Bearer => &[
+            FormField::Name,
+            FormField::Kind,
+            FormField::BaseUrl,
+            FormField::OpenaiBaseUrl,
+            FormField::AuthKind,
+            FormField::AuthValue,
+            FormField::Save,
+        ],
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub enum FormMode {
+    Add,
+    Edit {
+        original_index: usize,
+        original_name: String,
+    },
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub enum FormState {
+    Editing,
+    Saving,
+    OAuthAwaitingCode {
+        authorization_url: String,
+        state_id: String,
+        code_input: String,
+    },
+    OAuthExchanging,
+    Failed(String),
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ProviderFormModal {
+    pub mode: FormMode,
+    pub focused: FormField,
+    pub name: String,
+    pub kind: ProviderKind,
+    pub base_url: String,
+    pub openai_base_url: String,
+    pub auth_kind: AuthInputKind,
+    pub auth_value: String,
+    pub state: FormState,
+    /// Inline validation error rendered red at top of modal. Cleared on
+    /// any field edit.
+    pub error: Option<String>,
+}
+
+#[allow(dead_code)]
+impl ProviderFormModal {
+    pub fn new_for_add() -> Self {
+        Self {
+            mode: FormMode::Add,
+            focused: FormField::Name,
+            name: String::new(),
+            kind: ProviderKind::Anthropic,
+            base_url: String::new(),
+            openai_base_url: String::new(),
+            auth_kind: AuthInputKind::Passthrough,
+            auth_value: String::new(),
+            state: FormState::Editing,
+            error: None,
+        }
+    }
+
+    pub fn from_provider(index: usize, p: &ProviderPayload) -> Self {
+        let auth_kind = AuthInputKind::from_payload(&p.auth);
+        let auth_value = match &p.auth {
+            AuthPayload::ApiKey { value } | AuthPayload::Bearer { value } => value.clone(),
+            _ => String::new(),
+        };
+        Self {
+            mode: FormMode::Edit {
+                original_index: index,
+                original_name: p.name.clone(),
+            },
+            focused: FormField::Name,
+            name: p.name.clone(),
+            kind: ProviderKind::from_str_or_default(&p.kind),
+            base_url: p.base_url.clone().unwrap_or_default(),
+            openai_base_url: p.openai_base_url.clone().unwrap_or_default(),
+            auth_kind,
+            auth_value,
+            state: FormState::Editing,
+            error: None,
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct DeleteConfirmModal {
+    pub provider_index: usize,
+    pub provider_name: String,
+    /// Non-empty means delete is blocked. UI must not offer `[y]` in that case.
+    pub blocking_rules: Vec<String>,
 }
 
 pub struct AppState {
@@ -277,6 +454,41 @@ impl AppState {
 impl Default for AppState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod form_field_tests {
+    use super::*;
+
+    #[test]
+    fn next_wraps_past_save_back_to_name() {
+        let f = FormField::Save;
+        assert_eq!(f.next(AuthInputKind::ApiKey), FormField::Name);
+    }
+
+    #[test]
+    fn prev_wraps_from_name_to_save() {
+        let f = FormField::Name;
+        assert_eq!(f.prev(AuthInputKind::ApiKey), FormField::Save);
+    }
+
+    #[test]
+    fn passthrough_skips_auth_value_field() {
+        let f = FormField::AuthKind;
+        assert_eq!(f.next(AuthInputKind::Passthrough), FormField::Save);
+    }
+
+    #[test]
+    fn api_key_includes_auth_value_field() {
+        let f = FormField::AuthKind;
+        assert_eq!(f.next(AuthInputKind::ApiKey), FormField::AuthValue);
+    }
+
+    #[test]
+    fn provider_kind_cycle() {
+        assert_eq!(ProviderKind::Anthropic.cycle_next(), ProviderKind::Zai);
+        assert_eq!(ProviderKind::Zai.cycle_next(), ProviderKind::Anthropic);
     }
 }
 
