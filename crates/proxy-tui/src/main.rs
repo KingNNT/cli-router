@@ -11,8 +11,8 @@ mod validate;
 mod views;
 
 use crate::app::{
-    AppState, AuthInputKind, EditAuthModal, EditState, Modal, RangePreset, TestProviderModal,
-    TestState, View,
+    AppState, AuthInputKind, EditAuthModal, EditState, FormField, FormState, Modal,
+    ProviderFormModal, RangePreset, TestProviderModal, TestState, View,
 };
 use crate::client::AdminClient;
 use chrono::{Datelike, Local, TimeZone};
@@ -155,6 +155,7 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         }
         KeyCode::Down | KeyCode::Char('j') => state.move_selection_down(),
         KeyCode::Up | KeyCode::Char('k') => state.move_selection_up(),
+        KeyCode::Char('a') if state.view == View::Providers => open_add_modal(state),
         KeyCode::Char('t') if state.view == View::Providers => open_test_modal(state),
         KeyCode::Char('e') if state.view == View::Providers => open_edit_modal(state),
         _ => {}
@@ -197,9 +198,8 @@ fn handle_modal_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         Modal::TestProvider(m) => handle_test_key(k, client, m),
         Modal::EditAuth(m) => handle_edit_key(k, client, state, m),
         Modal::None => Modal::None,
-        // Wired in Tasks 4–9 — stubs keep the build green.
-        Modal::ProviderForm(m) => Modal::ProviderForm(m),
-        Modal::DeleteConfirm(m) => Modal::DeleteConfirm(m),
+        Modal::ProviderForm(m) => handle_form_key(k, client, state, m),
+        Modal::DeleteConfirm(m) => Modal::DeleteConfirm(m), // T9 will replace
     };
     state.modal = next;
 }
@@ -377,4 +377,93 @@ fn save_provider_auth(
     let updated = client.put_config(&cfg).map_err(|e| e.to_string())?;
     state.set_config(Ok(updated));
     Ok(())
+}
+
+fn open_add_modal(state: &mut AppState) {
+    state.modal = Modal::ProviderForm(ProviderFormModal::new_for_add());
+}
+
+fn handle_form_key(
+    k: KeyEvent,
+    _client: &AdminClient,
+    _state: &mut AppState,
+    mut m: ProviderFormModal,
+) -> Modal {
+    // Navigation + editing only — Save behavior arrives in a later task.
+    match (&m.state, k.code) {
+        (_, KeyCode::Esc) => Modal::None,
+        (FormState::Editing, KeyCode::Tab) => {
+            m.focused = m.focused.next(m.auth_kind);
+            Modal::ProviderForm(m)
+        }
+        (FormState::Editing, KeyCode::BackTab) => {
+            m.focused = m.focused.prev(m.auth_kind);
+            Modal::ProviderForm(m)
+        }
+        (FormState::Editing, KeyCode::Left) => {
+            cycle_field_value(&mut m, false);
+            Modal::ProviderForm(m)
+        }
+        (FormState::Editing, KeyCode::Right) => {
+            cycle_field_value(&mut m, true);
+            Modal::ProviderForm(m)
+        }
+        (FormState::Editing, KeyCode::Backspace) => {
+            edit_focused_text(&mut m, |s| {
+                s.pop();
+            });
+            Modal::ProviderForm(m)
+        }
+        (FormState::Editing, KeyCode::Char(c)) => {
+            edit_focused_text(&mut m, |s| s.push(c));
+            Modal::ProviderForm(m)
+        }
+        // Save handling, OAuth substates: added in Tasks 6/7/8.
+        _ => Modal::ProviderForm(m),
+    }
+}
+
+fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
+    m.error = None;
+    match m.focused {
+        FormField::Kind => {
+            m.kind = if forward {
+                m.kind.cycle_next()
+            } else {
+                m.kind.cycle_prev()
+            };
+        }
+        FormField::AuthKind => {
+            // AuthInputKind only has cycle(); use it for both directions
+            // (4 variants → cycling 3 times == reverse). Fine for a TUI.
+            m.auth_kind = if forward {
+                m.auth_kind.cycle()
+            } else {
+                m.auth_kind.cycle().cycle().cycle()
+            };
+            // If switching to a kind without AuthValue, move focus off it.
+            if matches!(
+                m.auth_kind,
+                AuthInputKind::Passthrough | AuthInputKind::OAuthAnthropic
+            ) && m.focused == FormField::AuthValue
+            {
+                m.focused = FormField::AuthKind;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn edit_focused_text(m: &mut ProviderFormModal, f: impl FnOnce(&mut String)) {
+    m.error = None;
+    let target: Option<&mut String> = match m.focused {
+        FormField::Name => Some(&mut m.name),
+        FormField::BaseUrl => Some(&mut m.base_url),
+        FormField::OpenaiBaseUrl => Some(&mut m.openai_base_url),
+        FormField::AuthValue => Some(&mut m.auth_value),
+        _ => None,
+    };
+    if let Some(s) = target {
+        f(s);
+    }
 }

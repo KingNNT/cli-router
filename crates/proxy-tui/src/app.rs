@@ -177,14 +177,12 @@ pub enum EditState {
     Failed(String),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderKind {
     Anthropic,
     Zai,
 }
 
-#[allow(dead_code)]
 impl ProviderKind {
     pub fn label(self) -> &'static str {
         match self {
@@ -201,6 +199,7 @@ impl ProviderKind {
     pub fn cycle_prev(self) -> Self {
         self.cycle_next() // only two variants, so prev == next
     }
+    #[allow(dead_code)]
     pub fn from_str_or_default(s: &str) -> Self {
         match s {
             "zai" => ProviderKind::Zai,
@@ -209,7 +208,6 @@ impl ProviderKind {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormField {
     Name,
@@ -221,7 +219,6 @@ pub enum FormField {
     Save,
 }
 
-#[allow(dead_code)]
 impl FormField {
     pub fn next(self, auth_kind: AuthInputKind) -> Self {
         let order = field_order(auth_kind);
@@ -284,7 +281,6 @@ pub enum FormState {
     Failed(String),
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ProviderFormModal {
     pub mode: FormMode,
@@ -301,7 +297,6 @@ pub struct ProviderFormModal {
     pub error: Option<String>,
 }
 
-#[allow(dead_code)]
 impl ProviderFormModal {
     pub fn new_for_add() -> Self {
         Self {
@@ -318,6 +313,7 @@ impl ProviderFormModal {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_provider(index: usize, p: &ProviderPayload) -> Self {
         let auth_kind = AuthInputKind::from_payload(&p.auth);
         let auth_value = match &p.auth {
