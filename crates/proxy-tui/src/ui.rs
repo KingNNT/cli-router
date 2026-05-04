@@ -2,8 +2,8 @@
 //! layout: tab bar, body for the active view, status line, optional modal.
 
 use crate::app::{
-    ALL_VIEWS, AppState, AuthInputKind, DeleteConfirmModal, EditAuthModal, EditState, FormField,
-    FormMode, FormState, Modal, ProviderFormModal, TestProviderModal, TestState, View,
+    ALL_VIEWS, AppState, AuthInputKind, DeleteConfirmModal, FormField, FormMode, FormState, Modal,
+    ProviderFormModal, TestProviderModal, TestState, View,
 };
 use chrono::{Local, TimeZone};
 use proxy_admin_api::{
@@ -39,7 +39,6 @@ pub fn draw(f: &mut Frame, state: &AppState) {
     match &state.modal {
         Modal::None => {}
         Modal::TestProvider(m) => draw_test_modal(f, m),
-        Modal::EditAuth(m) => draw_edit_modal(f, m),
         Modal::ProviderForm(m) => draw_form_modal(f, m),
         Modal::DeleteConfirm(m) => draw_delete_confirm_modal(f, m),
     }
@@ -504,111 +503,6 @@ fn draw_test_modal(f: &mut Frame, m: &TestProviderModal) {
         TestState::Failed(e) => {
             lines.push(Line::from(Span::styled(
                 format!("transport error: {e}"),
-                Style::default().fg(Color::Red),
-            )));
-            lines.push(Line::from(""));
-            lines.push(Line::from("Esc: close"));
-        }
-    }
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
-}
-
-fn draw_edit_modal(f: &mut Frame, m: &EditAuthModal) {
-    let area = centered_rect(60, 40, f.area());
-    f.render_widget(Clear, area);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" Edit auth: {} ", m.provider_name));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    let value_display = match m.kind {
-        AuthInputKind::Passthrough => "(no value needed)".into(),
-        AuthInputKind::OAuthAnthropic => "(value will be set by OAuth flow)".into(),
-        _ if m.value_input.is_empty() => "<empty>".into(),
-        _ => m.value_input.clone(),
-    };
-
-    let mut lines = vec![
-        Line::from(format!("Type:  {}    [Tab to cycle]", m.kind.label())),
-        Line::from(format!("Value: {}", value_display)),
-        Line::from(""),
-    ];
-    match &m.state {
-        EditState::Editing => match m.kind {
-            AuthInputKind::OAuthAnthropic => {
-                lines.push(Line::from(
-                    "Enter: start OAuth flow  Tab: switch type  Esc: cancel",
-                ));
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    "Reuses Claude Code's public OAuth client. Anthropic may rate-limit",
-                    Style::default().fg(Color::DarkGray),
-                )));
-                lines.push(Line::from(Span::styled(
-                    "or rotate the client_id without notice.",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-            _ => {
-                lines.push(Line::from("Enter: save  Tab: switch type  Esc: cancel"));
-                lines.push(Line::from(Span::styled(
-                    "Changes apply immediately — no daemon restart required.",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        },
-        EditState::Saving => lines.push(Line::from(Span::styled(
-            "saving…",
-            Style::default().fg(Color::Yellow),
-        ))),
-        EditState::OAuthAwaitingCode {
-            authorization_url,
-            code_input,
-            ..
-        } => {
-            lines.push(Line::from(Span::styled(
-                "1. Open this URL in a browser:",
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(Span::styled(
-                authorization_url.clone(),
-                Style::default().fg(Color::Cyan),
-            )));
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "2. After authorising, Anthropic shows a `code#state` value.",
-                Style::default().add_modifier(Modifier::BOLD),
-            )));
-            lines.push(Line::from(
-                "   Copy the `code` part (everything before the `#`) and paste here:",
-            ));
-            lines.push(Line::from(format!(
-                "   code: {}",
-                if code_input.is_empty() {
-                    "<paste here>".into()
-                } else {
-                    code_input.clone()
-                }
-            )));
-            lines.push(Line::from(""));
-            lines.push(Line::from("Enter: exchange  Esc: cancel"));
-        }
-        EditState::OAuthExchanging => lines.push(Line::from(Span::styled(
-            "exchanging code for token…",
-            Style::default().fg(Color::Yellow),
-        ))),
-        EditState::Done => {
-            lines.push(Line::from(Span::styled(
-                "saved and applied — your next request uses the new config.",
-                Style::default().fg(Color::Green),
-            )));
-            lines.push(Line::from(""));
-            lines.push(Line::from("Esc: close"));
-        }
-        EditState::Failed(e) => {
-            lines.push(Line::from(Span::styled(
-                format!("error: {e}"),
                 Style::default().fg(Color::Red),
             )));
             lines.push(Line::from(""));

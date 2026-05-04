@@ -11,13 +11,12 @@ mod validate;
 mod views;
 
 use crate::app::{
-    AppState, AuthInputKind, EditAuthModal, EditState, FormField, FormState, Modal,
-    ProviderFormModal, RangePreset, TestProviderModal, TestState, View,
+    AppState, AuthInputKind, FormField, FormState, Modal, ProviderFormModal, RangePreset,
+    TestProviderModal, TestState, View,
 };
 use crate::client::AdminClient;
 use chrono::{Datelike, Local, TimeZone};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
-use proxy_admin_api::ConfigPayload;
 use std::time::Duration;
 
 /// Restore terminal even on panic.
@@ -196,7 +195,6 @@ fn handle_modal_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
     let modal = std::mem::replace(&mut state.modal, Modal::None);
     let next = match modal {
         Modal::TestProvider(m) => handle_test_key(k, client, m),
-        Modal::EditAuth(m) => handle_edit_key(k, client, state, m),
         Modal::None => Modal::None,
         Modal::ProviderForm(m) => handle_form_key(k, client, state, m),
         Modal::DeleteConfirm(m) => Modal::DeleteConfirm(m), // T9 will replace
@@ -249,134 +247,8 @@ fn open_edit_modal(state: &mut AppState) {
     let Some(prov) = state.selected_provider() else {
         return;
     };
-    let kind = AuthInputKind::from_payload(&prov.auth);
-    let value_input = match &prov.auth {
-        proxy_admin_api::AuthPayload::Passthrough => String::new(),
-        proxy_admin_api::AuthPayload::ApiKey { value }
-        | proxy_admin_api::AuthPayload::Bearer { value } => value.clone(),
-        proxy_admin_api::AuthPayload::AnthropicOAuth { .. } => String::new(),
-    };
-    state.modal = Modal::EditAuth(EditAuthModal {
-        provider_index: state.providers_selected,
-        provider_name: prov.name.clone(),
-        kind,
-        value_input,
-        state: EditState::Editing,
-    });
-}
-
-fn handle_edit_key(
-    k: KeyEvent,
-    client: &AdminClient,
-    state: &mut AppState,
-    mut m: EditAuthModal,
-) -> Modal {
-    match (&m.state, k.code) {
-        (_, KeyCode::Esc) => Modal::None,
-        (EditState::Editing, KeyCode::Tab) => {
-            m.kind = m.kind.cycle();
-            Modal::EditAuth(m)
-        }
-        (EditState::Editing, KeyCode::Enter) => {
-            if m.kind == crate::app::AuthInputKind::OAuthAnthropic {
-                match client.oauth_start(&m.provider_name) {
-                    Ok(resp) => {
-                        m.state = EditState::OAuthAwaitingCode {
-                            authorization_url: resp.authorization_url,
-                            state_id: resp.state_id,
-                            code_input: String::new(),
-                        };
-                    }
-                    Err(e) => m.state = EditState::Failed(e.to_string()),
-                }
-                return Modal::EditAuth(m);
-            }
-            m.state = EditState::Saving;
-            match save_provider_auth(client, state, &m) {
-                Ok(()) => {
-                    m.state = EditState::Done;
-                    state.flash("config saved — applied immediately");
-                    Modal::EditAuth(m)
-                }
-                Err(e) => {
-                    m.state = EditState::Failed(e);
-                    Modal::EditAuth(m)
-                }
-            }
-        }
-        (EditState::Editing, KeyCode::Backspace) => {
-            m.value_input.pop();
-            Modal::EditAuth(m)
-        }
-        (EditState::Editing, KeyCode::Char(c)) => {
-            m.value_input.push(c);
-            Modal::EditAuth(m)
-        }
-        (EditState::OAuthAwaitingCode { .. }, KeyCode::Enter) => {
-            let (state_id, code) = match &m.state {
-                EditState::OAuthAwaitingCode {
-                    state_id,
-                    code_input,
-                    ..
-                } => (state_id.clone(), code_input.clone()),
-                _ => unreachable!(),
-            };
-            if code.trim().is_empty() {
-                return Modal::EditAuth(m);
-            }
-            m.state = EditState::OAuthExchanging;
-            match client.oauth_complete(&state_id, code.trim(), &m.provider_name) {
-                Ok(resp) if resp.success => {
-                    if let Some(cfg) = resp.config {
-                        state.set_config(Ok(cfg));
-                    }
-                    m.state = EditState::Done;
-                    state.flash("OAuth complete — applied immediately");
-                }
-                Ok(resp) => {
-                    m.state = EditState::Failed(
-                        resp.error.unwrap_or_else(|| "unknown OAuth failure".into()),
-                    );
-                }
-                Err(e) => m.state = EditState::Failed(e.to_string()),
-            }
-            Modal::EditAuth(m)
-        }
-        (EditState::OAuthAwaitingCode { .. }, KeyCode::Backspace) => {
-            if let EditState::OAuthAwaitingCode { code_input, .. } = &mut m.state {
-                code_input.pop();
-            }
-            Modal::EditAuth(m)
-        }
-        (EditState::OAuthAwaitingCode { .. }, KeyCode::Char(c)) => {
-            if let EditState::OAuthAwaitingCode { code_input, .. } = &mut m.state {
-                code_input.push(c);
-            }
-            Modal::EditAuth(m)
-        }
-        _ => Modal::EditAuth(m),
-    }
-}
-
-fn save_provider_auth(
-    client: &AdminClient,
-    state: &mut AppState,
-    m: &EditAuthModal,
-) -> Result<(), String> {
-    let mut cfg: ConfigPayload = state
-        .config
-        .as_ref()
-        .and_then(|r| r.as_ref().ok())
-        .cloned()
-        .ok_or_else(|| "config not loaded".to_string())?;
-    let prov = cfg
-        .providers
-        .get_mut(m.provider_index)
-        .ok_or_else(|| "provider index out of range".to_string())?;
-    prov.auth = m.kind.into_payload(m.value_input.clone());
-    let updated = client.put_config(&cfg).map_err(|e| e.to_string())?;
-    state.set_config(Ok(updated));
-    Ok(())
+    let modal = ProviderFormModal::from_provider(state.providers_selected, prov);
+    state.modal = Modal::ProviderForm(modal);
 }
 
 fn open_add_modal(state: &mut AppState) {

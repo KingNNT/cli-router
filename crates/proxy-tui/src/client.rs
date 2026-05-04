@@ -40,6 +40,7 @@ impl AdminClient {
         get_json(&format!("{}/admin/config", self.base_url))
     }
 
+    #[allow(dead_code)]
     pub fn put_config(&self, payload: &ConfigPayload) -> Result<ConfigPayload, ClientError> {
         let url = format!("{}/admin/config", self.base_url);
         let resp = ureq::put(&url)
@@ -68,6 +69,7 @@ impl AdminClient {
         ))
     }
 
+    #[allow(dead_code)]
     pub fn oauth_start(&self, provider_name: &str) -> Result<StartOAuthResponse, ClientError> {
         let url = format!("{}/admin/oauth/anthropic/start", self.base_url);
         let body = StartOAuthRequest {
@@ -81,6 +83,7 @@ impl AdminClient {
             .map_err(|e| ClientError::Decode(e.to_string()))
     }
 
+    #[allow(dead_code)]
     pub fn oauth_complete(
         &self,
         state_id: &str,

@@ -83,9 +83,8 @@ pub struct UsagePaneState {
 pub enum Modal {
     None,
     TestProvider(TestProviderModal),
-    EditAuth(EditAuthModal),           // removed in Task 5
-    ProviderForm(ProviderFormModal),   // new
-    DeleteConfirm(DeleteConfirmModal), // new
+    ProviderForm(ProviderFormModal),
+    DeleteConfirm(DeleteConfirmModal),
 }
 
 #[derive(Debug, Clone)]
@@ -101,15 +100,6 @@ pub enum TestState {
     InFlight,
     Done(TestProviderResponse),
     Failed(String),
-}
-
-#[derive(Debug, Clone)]
-pub struct EditAuthModal {
-    pub provider_index: usize,
-    pub provider_name: String,
-    pub kind: AuthInputKind,
-    pub value_input: String,
-    pub state: EditState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,6 +142,7 @@ impl AuthInputKind {
         }
     }
 
+    #[allow(dead_code)]
     pub fn into_payload(self, value: String) -> AuthPayload {
         match self {
             AuthInputKind::Passthrough => AuthPayload::Passthrough,
@@ -159,22 +150,6 @@ impl AuthInputKind {
             AuthInputKind::Bearer | AuthInputKind::OAuthAnthropic => AuthPayload::Bearer { value },
         }
     }
-}
-
-#[derive(Debug, Clone)]
-pub enum EditState {
-    Editing,
-    Saving,
-    /// OAuth flow: daemon has issued an authorization URL, waiting for the
-    /// user to paste the `code` value from the redirect page.
-    OAuthAwaitingCode {
-        authorization_url: String,
-        state_id: String,
-        code_input: String,
-    },
-    OAuthExchanging,
-    Done,
-    Failed(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
