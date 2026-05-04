@@ -140,15 +140,6 @@ impl AuthInputKind {
             AuthPayload::AnthropicOAuth { .. } => AuthInputKind::OAuthAnthropic,
         }
     }
-
-    #[allow(dead_code)]
-    pub fn into_payload(self, value: String) -> AuthPayload {
-        match self {
-            AuthInputKind::Passthrough => AuthPayload::Passthrough,
-            AuthInputKind::ApiKey => AuthPayload::ApiKey { value },
-            AuthInputKind::Bearer | AuthInputKind::OAuthAnthropic => AuthPayload::Bearer { value },
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -173,7 +164,6 @@ impl ProviderKind {
     pub fn cycle_prev(self) -> Self {
         self.cycle_next() // only two variants, so prev == next
     }
-    #[allow(dead_code)]
     pub fn from_str_or_default(s: &str) -> Self {
         match s {
             "zai" => ProviderKind::Zai,
@@ -208,7 +198,6 @@ impl FormField {
 
 /// Field traversal order. AuthValue is omitted when the auth kind doesn't
 /// need a typed value.
-#[allow(dead_code)]
 fn field_order(auth_kind: AuthInputKind) -> &'static [FormField] {
     match auth_kind {
         AuthInputKind::Passthrough | AuthInputKind::OAuthAnthropic => &[
@@ -231,7 +220,6 @@ fn field_order(auth_kind: AuthInputKind) -> &'static [FormField] {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum FormMode {
     Add,
@@ -241,7 +229,6 @@ pub enum FormMode {
     },
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum FormState {
     Editing,
@@ -287,7 +274,6 @@ impl ProviderFormModal {
         }
     }
 
-    #[allow(dead_code)]
     pub fn from_provider(index: usize, p: &ProviderPayload) -> Self {
         let auth_kind = AuthInputKind::from_payload(&p.auth);
         let auth_value = match &p.auth {
