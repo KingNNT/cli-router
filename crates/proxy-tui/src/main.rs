@@ -85,7 +85,7 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         state.should_quit = true;
         return;
     }
-    if let Modal::TestProvider(_) | Modal::EditAuth(_) = &state.modal {
+    if !matches!(&state.modal, Modal::None) {
         handle_modal_key(k, client, state);
         return;
     }
