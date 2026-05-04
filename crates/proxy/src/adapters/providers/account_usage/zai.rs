@@ -36,7 +36,7 @@ impl ZaiAccountUsage {
     }
 
     #[allow(clippy::result_large_err)]
-    fn fetch_quota_limit(&self) -> Result<QuotaLimitResponse, ureq::Error> {
+    fn fetch_quota_limit(&self) -> Result<QuotaLimitData, ureq::Error> {
         let url = format!("{}/api/monitor/usage/quota/limit", self.base_url);
         let resp = self
             .agent
@@ -44,15 +44,12 @@ impl ZaiAccountUsage {
             .set("Authorization", &self.auth_token)
             .set("Accept-Language", "en-US,en")
             .call()?;
-        Ok(resp.into_json()?)
+        let envelope: ZaiEnvelope<QuotaLimitData> = resp.into_json()?;
+        Ok(envelope.data)
     }
 
     #[allow(clippy::result_large_err)]
-    fn fetch_model_usage(
-        &self,
-        start_ms: i64,
-        end_ms: i64,
-    ) -> Result<ModelUsageResponse, ureq::Error> {
+    fn fetch_model_usage(&self, start_ms: i64, end_ms: i64) -> Result<ModelUsageData, ureq::Error> {
         let url = format!(
             "{}/api/monitor/usage/model-usage?startTime={start_ms}&endTime={end_ms}",
             self.base_url
@@ -63,15 +60,12 @@ impl ZaiAccountUsage {
             .set("Authorization", &self.auth_token)
             .set("Accept-Language", "en-US,en")
             .call()?;
-        Ok(resp.into_json()?)
+        let envelope: ModelUsageEnvelope = resp.into_json()?;
+        Ok(envelope.data)
     }
 
     #[allow(clippy::result_large_err)]
-    fn fetch_tool_usage(
-        &self,
-        start_ms: i64,
-        end_ms: i64,
-    ) -> Result<ToolUsageResponse, ureq::Error> {
+    fn fetch_tool_usage(&self, start_ms: i64, end_ms: i64) -> Result<ToolUsageData, ureq::Error> {
         let url = format!(
             "{}/api/monitor/usage/tool-usage?startTime={start_ms}&endTime={end_ms}",
             self.base_url
@@ -82,7 +76,8 @@ impl ZaiAccountUsage {
             .set("Authorization", &self.auth_token)
             .set("Accept-Language", "en-US,en")
             .call()?;
-        Ok(resp.into_json()?)
+        let envelope: ToolUsageEnvelope = resp.into_json()?;
+        Ok(envelope.data)
     }
 }
 
@@ -98,31 +93,58 @@ impl AccountUsagePort for ZaiAccountUsage {
             Ok(data) => {
                 plan = data.level;
                 if let Some(limits) = data.limits {
-                    let mut token_idx = 0;
+                    // Z.ai returns limits in arbitrary order.
+                    // TOKENS_LIMIT with unit=3 (hours) = 5h window.
+                    // TOKENS_LIMIT with unit=6 (days) = weekly window.
+                    // TIME_LIMIT = MCP monthly window.
+                    let mut five_hour: Option<UsageWindow> = None;
+                    let mut weekly: Option<UsageWindow> = None;
+                    let mut mcp: Option<UsageWindow> = None;
+
                     for limit in &limits {
                         match limit.limit_type.as_str() {
                             "TOKENS_LIMIT" => {
-                                let label = if token_idx == 0 { "5h Token" } else { "Weekly" };
-                                token_idx += 1;
-                                // Compute `used` from percentage + total if not provided directly.
+                                // Determine window label from unit+number.
+                                // unit=3=hours, unit=6=days (observed values).
+                                let (label, is_five_hour) = match (limit.unit, limit.number) {
+                                    (Some(3), Some(n)) if n <= 12 => {
+                                        (format!("{n}h Token"), n == 5)
+                                    }
+                                    (Some(6), Some(n)) => (format!("{n}d Token"), false),
+                                    _ => {
+                                        // Fallback: use index-based naming.
+                                        let label = if five_hour.is_none() {
+                                            "5h Token"
+                                        } else {
+                                            "Weekly"
+                                        };
+                                        (label.to_string(), label == "5h Token")
+                                    }
+                                };
+
                                 let used = limit.used.or_else(|| {
                                     limit.total.map(|t| {
                                         ((limit.percentage.unwrap_or(0.0) / 100.0) * t as f64)
                                             as u64
                                     })
                                 });
-                                windows.push(UsageWindow {
-                                    label: label.to_string(),
+
+                                let window = UsageWindow {
+                                    label,
                                     used_pct: limit.percentage.unwrap_or(0.0),
                                     used,
                                     limit: limit.total,
                                     resets_at_ms: limit.next_reset_time,
                                     sub_items: vec![],
-                                });
+                                };
+
+                                if is_five_hour {
+                                    five_hour = Some(window);
+                                } else {
+                                    weekly = Some(window);
+                                }
                             }
                             "TIME_LIMIT" => {
-                                // For TIME_LIMIT: `usage` is the total limit,
-                                // `current_value` is the used amount.
                                 let mut sub_items = Vec::new();
                                 if let Some(details) = &limit.usage_details {
                                     for d in details {
@@ -132,7 +154,7 @@ impl AccountUsagePort for ZaiAccountUsage {
                                         });
                                     }
                                 }
-                                windows.push(UsageWindow {
+                                mcp = Some(UsageWindow {
                                     label: "MCP (1 Month)".to_string(),
                                     used_pct: limit.percentage.unwrap_or(0.0),
                                     used: limit.current_value,
@@ -143,6 +165,17 @@ impl AccountUsagePort for ZaiAccountUsage {
                             }
                             _ => {}
                         }
+                    }
+
+                    // Emit windows in consistent order: 5h, weekly, MCP.
+                    if let Some(w) = five_hour {
+                        windows.push(w);
+                    }
+                    if let Some(w) = weekly {
+                        windows.push(w);
+                    }
+                    if let Some(w) = mcp {
+                        windows.push(w);
                     }
                 }
             }
@@ -225,8 +258,14 @@ fn now_epoch_millis() -> i64 {
 // Z.ai response JSON shapes (deserialized with serde)
 // ---------------------------------------------------------------------------
 
+/// Z.ai wraps all responses in `{"code": 200, "msg": "...", "data": {...}, "success": true}`.
 #[derive(Debug, Deserialize)]
-struct QuotaLimitResponse {
+struct ZaiEnvelope<T> {
+    data: T,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuotaLimitData {
     level: Option<String>,
     limits: Option<Vec<QuotaLimitItem>>,
 }
@@ -236,12 +275,21 @@ struct QuotaLimitResponse {
 struct QuotaLimitItem {
     #[serde(rename = "type")]
     limit_type: String,
+    /// Token limit window duration unit: 3 = hours, 6 = days.
+    #[serde(default)]
+    unit: Option<u64>,
+    /// Window duration count (e.g. `unit=3, number=5` means 5 hours).
+    #[serde(default)]
+    number: Option<u64>,
     percentage: Option<f64>,
+    /// Total token budget (only present for TOKENS_LIMIT in some plans).
+    #[serde(default)]
     total: Option<u64>,
     #[serde(default)]
     current_value: Option<u64>,
     #[serde(default)]
     used: Option<u64>,
+    /// For TIME_LIMIT: the maximum allowed count.
     #[serde(default)]
     usage: Option<u64>,
     #[serde(default)]
@@ -257,7 +305,12 @@ struct UsageDetail {
 }
 
 #[derive(Debug, Deserialize)]
-struct ModelUsageResponse {
+struct ModelUsageEnvelope {
+    data: ModelUsageData,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelUsageData {
     #[serde(rename = "totalUsage")]
     total_usage: Option<ModelTotalUsage>,
 }
@@ -272,7 +325,12 @@ struct ModelTotalUsage {
 }
 
 #[derive(Debug, Deserialize)]
-struct ToolUsageResponse {
+struct ToolUsageEnvelope {
+    data: ToolUsageData,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolUsageData {
     #[serde(rename = "totalUsage")]
     total_usage: Option<ToolTotalUsage>,
 }
@@ -306,47 +364,75 @@ mod tests {
 
     #[test]
     fn deserialize_quota_limit_response() {
+        // Real Z.ai response format: envelope with data.
         let json = r#"{
-            "level": "pro",
-            "limits": [
-                {
-                    "type": "TOKENS_LIMIT",
-                    "percentage": 40.5,
-                    "total": 40000000,
-                    "nextResetTime": 1746300000000
-                },
-                {
-                    "type": "TIME_LIMIT",
-                    "percentage": 12.3,
-                    "currentValue": 123,
-                    "usage": 1000,
-                    "usageDetails": [
-                        {"modelCode": "search-prime", "usage": 5678}
-                    ]
-                }
-            ]
+            "code": 200,
+            "msg": "Operation successful",
+            "data": {
+                "level": "pro",
+                "limits": [
+                    {
+                        "type": "TIME_LIMIT",
+                        "unit": 5,
+                        "number": 1,
+                        "usage": 1000,
+                        "currentValue": 123,
+                        "percentage": 12.3,
+                        "nextResetTime": 1746300000000,
+                        "usageDetails": [
+                            {"modelCode": "search-prime", "usage": 5678}
+                        ]
+                    },
+                    {
+                        "type": "TOKENS_LIMIT",
+                        "unit": 3,
+                        "number": 5,
+                        "percentage": 40.5,
+                        "nextResetTime": 1746600000000
+                    },
+                    {
+                        "type": "TOKENS_LIMIT",
+                        "unit": 6,
+                        "number": 1,
+                        "percentage": 13.0,
+                        "nextResetTime": 1747000000000
+                    }
+                ]
+            },
+            "success": true
         }"#;
-        let resp: QuotaLimitResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.level.as_deref(), Some("pro"));
-        let limits = resp.limits.unwrap();
-        assert_eq!(limits.len(), 2);
-        assert_eq!(limits[0].limit_type, "TOKENS_LIMIT");
-        assert_eq!(limits[0].percentage, Some(40.5));
-        assert_eq!(limits[1].limit_type, "TIME_LIMIT");
-        assert_eq!(limits[1].current_value, Some(123));
-        assert_eq!(limits[1].usage, Some(1000));
+        let envelope: ZaiEnvelope<QuotaLimitData> = serde_json::from_str(json).unwrap();
+        let data = envelope.data;
+        assert_eq!(data.level.as_deref(), Some("pro"));
+        let limits = data.limits.unwrap();
+        assert_eq!(limits.len(), 3);
+        assert_eq!(limits[0].limit_type, "TIME_LIMIT");
+        assert_eq!(limits[0].current_value, Some(123));
+        assert_eq!(limits[0].usage, Some(1000));
+        assert_eq!(limits[1].limit_type, "TOKENS_LIMIT");
+        assert_eq!(limits[1].unit, Some(3));
+        assert_eq!(limits[1].number, Some(5));
+        assert_eq!(limits[1].percentage, Some(40.5));
+        assert_eq!(limits[2].limit_type, "TOKENS_LIMIT");
+        assert_eq!(limits[2].unit, Some(6));
+        assert_eq!(limits[2].number, Some(1));
     }
 
     #[test]
     fn deserialize_model_usage_response() {
         let json = r#"{
-            "totalUsage": {
-                "totalTokensUsage": 12500000,
-                "totalModelCallCount": 1234
-            }
+            "code": 200,
+            "msg": "Operation successful",
+            "data": {
+                "totalUsage": {
+                    "totalTokensUsage": 12500000,
+                    "totalModelCallCount": 1234
+                }
+            },
+            "success": true
         }"#;
-        let resp: ModelUsageResponse = serde_json::from_str(json).unwrap();
-        let total = resp.total_usage.unwrap();
+        let envelope: ModelUsageEnvelope = serde_json::from_str(json).unwrap();
+        let total = envelope.data.total_usage.unwrap();
         assert_eq!(total.total_tokens_usage, Some(12_500_000));
         assert_eq!(total.total_model_call_count, Some(1234));
     }
@@ -354,14 +440,19 @@ mod tests {
     #[test]
     fn deserialize_tool_usage_response() {
         let json = r#"{
-            "totalUsage": {
-                "totalNetworkSearchCount": 5678,
-                "totalWebReadMcpCount": 2345,
-                "totalZreadMcpCount": 890
-            }
+            "code": 200,
+            "msg": "Operation successful",
+            "data": {
+                "totalUsage": {
+                    "totalNetworkSearchCount": 5678,
+                    "totalWebReadMcpCount": 2345,
+                    "totalZreadMcpCount": 890
+                }
+            },
+            "success": true
         }"#;
-        let resp: ToolUsageResponse = serde_json::from_str(json).unwrap();
-        let total = resp.total_usage.unwrap();
+        let envelope: ToolUsageEnvelope = serde_json::from_str(json).unwrap();
+        let total = envelope.data.total_usage.unwrap();
         assert_eq!(total.total_network_search_count, 5678);
         assert_eq!(total.total_web_read_mcp_count, 2345);
         assert_eq!(total.total_zread_mcp_count, 890);
