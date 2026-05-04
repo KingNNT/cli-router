@@ -1,5 +1,6 @@
 //! Provider adapters.
 
+pub mod account_usage;
 pub mod affinity;
 pub mod anthropic;
 pub mod builder;
