@@ -343,9 +343,16 @@ impl CompleteAnthropicOAuth {
                 };
             }
         };
+        // Tolerate users pasting the full `code#state` string Anthropic
+        // displays — strip everything from `#` onward. The locally generated
+        // `state` is what we actually send to the token endpoint, since it
+        // matches what Anthropic echoes back.
+        let trimmed = req.code.trim();
+        let code = trimmed.split('#').next().unwrap_or(trimmed);
         let tokens = match crate::adapters::oauth::exchange_code(
             &self.http,
-            req.code.trim(),
+            code,
+            &codes.state,
             &codes.verifier,
         )
         .await

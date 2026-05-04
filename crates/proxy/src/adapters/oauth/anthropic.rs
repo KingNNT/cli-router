@@ -50,13 +50,18 @@ pub struct PkceCodes {
 
 /// Build a PKCE verifier (RFC 7636: 43-128 chars from the unreserved set)
 /// from two stitched UUIDs base64-url-encoded with no padding.
+///
+/// `state` is set to the verifier itself — Anthropic's manual-paste OAuth
+/// endpoint validates that the `state` returned in the body matches the
+/// `code_verifier` (i.e. it round-trips the verifier as state). Sending a
+/// different value yields `400 invalid_request_error: Invalid request format`.
 pub fn generate_pkce() -> PkceCodes {
     let raw = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let verifier = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes());
     let mut h = Sha256::new();
     h.update(verifier.as_bytes());
     let challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(h.finalize());
-    let state = Uuid::new_v4().to_string();
+    let state = verifier.clone();
     PkceCodes {
         verifier,
         challenge,
@@ -67,10 +72,16 @@ pub fn generate_pkce() -> PkceCodes {
 pub fn build_authorize_url(codes: &PkceCodes) -> String {
     // Manual encoding to avoid pulling in url crate; everything we put in is
     // already URL-safe.
+    //
+    // `code=true` is what flips Anthropic into the manual-paste flow that
+    // displays `code#state` for the user to copy. Without it the
+    // authorization endpoint silently uses a different completion path that
+    // breaks the subsequent token exchange.
     let scopes_enc = SCOPES.replace(' ', "%20").replace(':', "%3A");
     let redirect_enc = REDIRECT_URI.replace(':', "%3A").replace('/', "%2F");
     format!(
         "{AUTHORIZE_URL}?\
+         code=true&\
          response_type=code&\
          client_id={CLIENT_ID}&\
          redirect_uri={redirect_enc}&\
@@ -102,11 +113,16 @@ struct TokenResponse {
 pub async fn exchange_code(
     http: &reqwest::Client,
     code: &str,
+    state: &str,
     verifier: &str,
 ) -> Result<OAuthTokens, OAuthError> {
+    // Anthropic's manual-paste flow requires `state` in the token-exchange
+    // body (the value Anthropic echoes back as `code#state` to the user).
+    // Without it the endpoint returns 400 "Invalid request format".
     let body = serde_json::json!({
         "grant_type": "authorization_code",
         "code": code,
+        "state": state,
         "client_id": CLIENT_ID,
         "redirect_uri": REDIRECT_URI,
         "code_verifier": verifier,
@@ -226,9 +242,11 @@ mod tests {
     }
 
     #[test]
-    fn pkce_state_is_uuid_shape() {
+    fn pkce_state_equals_verifier() {
+        // Anthropic's manual-paste OAuth requires state == code_verifier in
+        // the token-exchange body; we mirror that by using verifier-as-state.
         let c = generate_pkce();
-        assert_eq!(c.state.len(), 36); // uuid v4 dashed
+        assert_eq!(c.state, c.verifier);
     }
 
     #[test]
@@ -236,6 +254,7 @@ mod tests {
         let c = generate_pkce();
         let url = build_authorize_url(&c);
         assert!(url.starts_with("https://claude.ai/oauth/authorize?"));
+        assert!(url.contains("code=true"));
         assert!(url.contains(&format!("state={}", c.state)));
         assert!(url.contains(&format!("code_challenge={}", c.challenge)));
         assert!(url.contains("code_challenge_method=S256"));

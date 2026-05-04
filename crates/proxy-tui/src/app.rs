@@ -84,7 +84,43 @@ pub enum Modal {
     TestProvider(TestProviderModal),
     ProviderForm(ProviderFormModal),
     DeleteConfirm(DeleteConfirmModal),
+    Help,
 }
+
+/// Action exposed as a clickable button on the Providers tab toolbar.
+/// Mirrors the existing keyboard shortcuts so mouse and keyboard stay in sync.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderAction {
+    Add,
+    Edit,
+    Delete,
+    Test,
+    Refresh,
+}
+
+impl ProviderAction {
+    pub fn label(self) -> &'static str {
+        match self {
+            ProviderAction::Add => "[ Add ]",
+            ProviderAction::Edit => "[ Edit ]",
+            ProviderAction::Delete => "[ Delete ]",
+            ProviderAction::Test => "[ Test ]",
+            ProviderAction::Refresh => "[ Refresh ]",
+        }
+    }
+}
+
+pub const PROVIDER_TOOLBAR: &[ProviderAction] = &[
+    ProviderAction::Add,
+    ProviderAction::Edit,
+    ProviderAction::Delete,
+    ProviderAction::Test,
+    ProviderAction::Refresh,
+];
+
+/// Joiner rendered between toolbar buttons. Hit-test math depends on this
+/// matching the renderer exactly.
+pub const PROVIDER_TOOLBAR_GAP: &str = "  ";
 
 #[derive(Debug, Clone)]
 pub struct TestProviderModal {

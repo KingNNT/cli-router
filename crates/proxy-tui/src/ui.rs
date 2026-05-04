@@ -3,7 +3,7 @@
 
 use crate::app::{
     ALL_VIEWS, AppState, AuthInputKind, DeleteConfirmModal, FormField, FormMode, FormState, Modal,
-    ProviderFormModal, TestProviderModal, TestState, View,
+    PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderFormModal, TestProviderModal, TestState, View,
 };
 use chrono::{Local, TimeZone};
 use proxy_admin_api::{
@@ -41,6 +41,7 @@ pub fn draw(f: &mut Frame, state: &AppState) {
         Modal::TestProvider(m) => draw_test_modal(f, m),
         Modal::ProviderForm(m) => draw_form_modal(f, m),
         Modal::DeleteConfirm(m) => draw_delete_confirm_modal(f, m),
+        Modal::Help => draw_help_modal(f),
     }
 }
 
@@ -252,13 +253,26 @@ fn draw_providers(f: &mut Frame, area: Rect, state: &AppState) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    if inner.height == 0 {
+        return;
+    }
+
+    // Row 0 = toolbar; row 1 = gap; row 2 = table header; row 3+ = data.
+    let toolbar_area = Rect::new(inner.x, inner.y, inner.width, 1);
+    draw_provider_toolbar(f, toolbar_area);
+
+    if inner.height < 3 {
+        return; // not enough room for the table once the toolbar is in.
+    }
+    let table_area = Rect::new(inner.x, inner.y + 2, inner.width, inner.height - 2);
+
     let cfg = match &state.config {
-        None => return draw_message(f, inner, "loading…"),
-        Some(Err(e)) => return draw_error(f, inner, e),
+        None => return draw_message(f, table_area, "loading…"),
+        Some(Err(e)) => return draw_error(f, table_area, e),
         Some(Ok(c)) => c,
     };
     if cfg.providers.is_empty() {
-        return draw_message(f, inner, "(no providers configured)");
+        return draw_message(f, table_area, "(no providers configured)");
     }
 
     let header = Row::new(vec![
@@ -296,7 +310,24 @@ fn draw_providers(f: &mut Frame, area: Rect, state: &AppState) {
         Constraint::Min(20),
     ];
     let table = Table::new(rows, widths).header(header);
-    f.render_widget(table, inner);
+    f.render_widget(table, table_area);
+}
+
+fn draw_provider_toolbar(f: &mut Frame, area: Rect) {
+    let mut spans: Vec<Span> = Vec::new();
+    for (i, action) in PROVIDER_TOOLBAR.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(PROVIDER_TOOLBAR_GAP));
+        }
+        spans.push(Span::styled(
+            action.label(),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 // ---- Routing view ----
@@ -437,14 +468,12 @@ fn draw_requests_table(
 // ---- Status line ----
 
 fn draw_status_line(f: &mut Frame, area: Rect, state: &AppState) {
-    let mut hints = vec!["1-4: switch  r: refresh  q: quit"];
-    if matches!(state.view, View::Providers) {
-        hints.push("a: add  e: edit  d: delete  t: test");
-    }
-    if matches!(state.view, View::Providers | View::Requests) {
-        hints.push("↑↓: select");
-    }
-    let mut line = vec![Line::from(hints.join("    "))];
+    let mut line = vec![Line::from(Span::styled(
+        "[?] Help",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    ))];
     if let Some(msg) = &state.flash {
         line.push(Line::from(Span::styled(
             msg.clone(),
@@ -696,12 +725,16 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
             ..
         } => {
             lines.push(Line::from(Span::styled(
-                "1. Open this URL in a browser:",
+                "1. Your browser should have opened automatically.",
                 Style::default().add_modifier(Modifier::BOLD),
             )));
             lines.push(Line::from(Span::styled(
                 authorization_url.clone(),
                 Style::default().fg(Color::Cyan),
+            )));
+            lines.push(Line::from(Span::styled(
+                "   (click anywhere in this modal to re-open, or copy the URL above)",
+                Style::default().fg(Color::DarkGray),
             )));
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
@@ -709,7 +742,7 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
                 Style::default().add_modifier(Modifier::BOLD),
             )));
             lines.push(Line::from(
-                "   Copy the `code` part (everything before the `#`) and paste here:",
+                "   Paste it here (the whole thing or just the `code` part — both work):",
             ));
             lines.push(Line::from(format!(
                 "   code: {}",
@@ -789,5 +822,51 @@ fn draw_delete_confirm_modal(f: &mut Frame, m: &DeleteConfirmModal) {
             Style::default().add_modifier(Modifier::BOLD),
         )));
     }
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn draw_help_modal(f: &mut Frame) {
+    let area = centered_rect(60, 75, f.area());
+    f.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Help — keyboard & mouse ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+
+    let lines = vec![
+        Line::from(Span::styled("Global", bold)),
+        Line::from("  1 / 2 / 3 / 4 / 5     switch tab"),
+        Line::from("  r                     refresh current view"),
+        Line::from("  ?                     toggle this help"),
+        Line::from("  q / Esc / Ctrl+C      quit"),
+        Line::from(""),
+        Line::from(Span::styled("Providers tab", bold)),
+        Line::from("  ↑ / ↓ / j / k         move selection"),
+        Line::from("  a                     add provider"),
+        Line::from("  e                     edit selected"),
+        Line::from("  d                     delete selected"),
+        Line::from("  t                     test selected"),
+        Line::from(Span::styled("  (or click the toolbar buttons)", dim)),
+        Line::from(""),
+        Line::from(Span::styled("Requests tab", bold)),
+        Line::from("  ↑ / ↓ / j / k         move selection"),
+        Line::from(""),
+        Line::from(Span::styled("Usage tab", bold)),
+        Line::from("  1 / 2 / 3 / 4         range presets (Today / 7d / 30d / All)"),
+        Line::from("  ↑ / ↓                 scroll model table"),
+        Line::from(""),
+        Line::from(Span::styled("Mouse", bold)),
+        Line::from("  click tab             switch view"),
+        Line::from("  click row             select provider / request"),
+        Line::from("  click button          run action"),
+        Line::from("  scroll wheel          move selection / scroll table"),
+        Line::from("  click OAuth modal     re-open authorization URL"),
+        Line::from(""),
+        Line::from(Span::styled("[?] / [Esc] close", bold)),
+    ];
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
