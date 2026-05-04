@@ -2,8 +2,8 @@
 //! the daemon's composition root (`main.rs`) and the hot-reload path
 //! (`LiveProvider::reload`) call the same code.
 
-use super::{AnthropicProvider, AuthHeader, RoutingProvider, ZaiProvider};
 use super::account_usage::{AnthropicAccountUsage, ZaiAccountUsage};
+use super::{AnthropicProvider, AuthHeader, RoutingProvider, ZaiProvider};
 use crate::application::ports::{AccountUsagePort, Provider, QuotaPort};
 use crate::config::{AuthConfig, Config, ProviderConfig, ProviderKind};
 use std::collections::HashMap;
@@ -134,11 +134,7 @@ pub fn build_account_usage(
                     // e.g. "https://api.z.ai" regardless of the openai_base_url path.
                     let base_url = derive_monitor_base_url(p);
                     let token = resolve_auth_token(&p.auth);
-                    Arc::new(ZaiAccountUsage::new(
-                        p.name.clone(),
-                        token,
-                        base_url,
-                    ))
+                    Arc::new(ZaiAccountUsage::new(p.name.clone(), token, base_url))
                 }
                 ProviderKind::Anthropic => Arc::new(AnthropicAccountUsage),
             };

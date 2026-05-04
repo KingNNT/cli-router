@@ -325,7 +325,6 @@ pub struct ModelUsageDto {
     pub period_end_ms: i64,
 }
 
-
 #[cfg(test)]
 mod usage_summary_tests {
     use super::*;

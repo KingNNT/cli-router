@@ -148,6 +148,9 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
         quota_status: Arc::new(GetQuotaStatus::new(Arc::new(
             proxy::adapters::quota::InMemoryQuota::new(vec![]),
         ))),
+        account_usage: Arc::new(proxy::application::use_cases::admin::GetAccountUsage::new(
+            std::collections::HashMap::new(),
+        )),
     }
 }
 

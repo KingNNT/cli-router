@@ -143,6 +143,9 @@ fn dummy_admin_state_with_path(
         quota_status: Arc::new(GetQuotaStatus::new(Arc::new(
             proxy::adapters::quota::InMemoryQuota::new(vec![]),
         ))),
+        account_usage: Arc::new(proxy::application::use_cases::admin::GetAccountUsage::new(
+            std::collections::HashMap::new(),
+        )),
     }
 }
 
@@ -491,6 +494,9 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
         quota_status: Arc::new(GetQuotaStatus::new(Arc::new(
             proxy::adapters::quota::InMemoryQuota::new(vec![]),
         ))),
+        account_usage: Arc::new(proxy::application::use_cases::admin::GetAccountUsage::new(
+            std::collections::HashMap::new(),
+        )),
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

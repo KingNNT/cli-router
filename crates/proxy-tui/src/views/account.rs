@@ -54,7 +54,11 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, state: &AccountPaneState) {
     }
 
     // Remove trailing empty line.
-    if lines.last().map(|l| l.to_string().is_empty()).unwrap_or(false) {
+    if lines
+        .last()
+        .map(|l| l.to_string().is_empty())
+        .unwrap_or(false)
+    {
         lines.pop();
     }
 
@@ -62,7 +66,10 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, state: &AccountPaneState) {
     f.render_widget(p, area);
 }
 
-fn render_provider(lines: &mut Vec<ratatui::text::Line>, p: &proxy_admin_api::ProviderAccountUsageDto) {
+fn render_provider(
+    lines: &mut Vec<ratatui::text::Line>,
+    p: &proxy_admin_api::ProviderAccountUsageDto,
+) {
     // Title line: provider name + plan tier.
     let title = match (&p.plan, p.status) {
         (Some(plan), ProviderUsageStatus::Available) => {
@@ -165,7 +172,10 @@ fn render_window(lines: &mut Vec<ratatui::text::Line>, w: &UsageWindowDto) {
             .map(|s| format!("{}: {}", s.label, fmt_num_compact(s.used)))
             .collect::<Vec<_>>()
             .join("  ");
-        lines.push(ratatui::text::Line::raw(format!("│  {:16} {}", "", sub_line,)));
+        lines.push(ratatui::text::Line::raw(format!(
+            "│  {:16} {}",
+            "", sub_line,
+        )));
     }
 }
 

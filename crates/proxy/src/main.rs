@@ -147,9 +147,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let usage_summary = Arc::new(GetUsageSummary::new(request_read.clone()));
     let quota_status = Arc::new(GetQuotaStatus::new(quota_port.clone()));
 
-    let account_usage = Arc::new(
-        proxy::application::use_cases::admin::GetAccountUsage::new(account_usage_map),
-    );
+    let account_usage = Arc::new(proxy::application::use_cases::admin::GetAccountUsage::new(
+        account_usage_map,
+    ));
 
     let admin = AdminState {
         get_status: Arc::new(GetStatus::new(

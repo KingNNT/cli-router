@@ -5,9 +5,9 @@
 //! show "daemon offline" without crashing.
 
 use proxy_admin_api::{
-    CompleteOAuthRequest, CompleteOAuthResponse, ConfigPayload, QuotaStatusListDto,
-    RecentRequestsResponse, StartOAuthRequest, StartOAuthResponse, StatusResponse,
-    TestProviderRequest, TestProviderResponse, UsageSummaryResponse, AccountUsageResponse,
+    AccountUsageResponse, CompleteOAuthRequest, CompleteOAuthResponse, ConfigPayload,
+    QuotaStatusListDto, RecentRequestsResponse, StartOAuthRequest, StartOAuthResponse,
+    StatusResponse, TestProviderRequest, TestProviderResponse, UsageSummaryResponse,
 };
 use thiserror::Error;
 

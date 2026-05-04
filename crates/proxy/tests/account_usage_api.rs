@@ -33,9 +33,7 @@ impl AccountUsagePort for StubUsage {
     }
 }
 
-async fn handler(
-    State(uc): State<Arc<GetAccountUsage>>,
-) -> Json<AccountUsageResponse> {
+async fn handler(State(uc): State<Arc<GetAccountUsage>>) -> Json<AccountUsageResponse> {
     Json(uc.execute())
 }
 

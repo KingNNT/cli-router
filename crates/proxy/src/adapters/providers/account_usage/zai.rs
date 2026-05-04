@@ -35,9 +35,11 @@ impl ZaiAccountUsage {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     fn fetch_quota_limit(&self) -> Result<QuotaLimitResponse, ureq::Error> {
         let url = format!("{}/api/monitor/usage/quota/limit", self.base_url);
-        let resp = self.agent
+        let resp = self
+            .agent
             .get(&url)
             .set("Authorization", &self.auth_token)
             .set("Accept-Language", "en-US,en")
@@ -45,6 +47,7 @@ impl ZaiAccountUsage {
         Ok(resp.into_json()?)
     }
 
+    #[allow(clippy::result_large_err)]
     fn fetch_model_usage(
         &self,
         start_ms: i64,
@@ -54,7 +57,8 @@ impl ZaiAccountUsage {
             "{}/api/monitor/usage/model-usage?startTime={start_ms}&endTime={end_ms}",
             self.base_url
         );
-        let resp = self.agent
+        let resp = self
+            .agent
             .get(&url)
             .set("Authorization", &self.auth_token)
             .set("Accept-Language", "en-US,en")
@@ -62,6 +66,7 @@ impl ZaiAccountUsage {
         Ok(resp.into_json()?)
     }
 
+    #[allow(clippy::result_large_err)]
     fn fetch_tool_usage(
         &self,
         start_ms: i64,
@@ -71,7 +76,8 @@ impl ZaiAccountUsage {
             "{}/api/monitor/usage/tool-usage?startTime={start_ms}&endTime={end_ms}",
             self.base_url
         );
-        let resp = self.agent
+        let resp = self
+            .agent
             .get(&url)
             .set("Authorization", &self.auth_token)
             .set("Accept-Language", "en-US,en")
@@ -83,6 +89,7 @@ impl ZaiAccountUsage {
 impl AccountUsagePort for ZaiAccountUsage {
     fn fetch_usage(&self) -> Option<Result<ProviderAccountUsage, ProxyError>> {
         let mut windows = Vec::new();
+        #[allow(unused_assignments)]
         let mut plan = None;
         let mut model_usage = None;
 
@@ -95,11 +102,7 @@ impl AccountUsagePort for ZaiAccountUsage {
                     for limit in &limits {
                         match limit.limit_type.as_str() {
                             "TOKENS_LIMIT" => {
-                                let label = if token_idx == 0 {
-                                    "5h Token"
-                                } else {
-                                    "Weekly"
-                                };
+                                let label = if token_idx == 0 { "5h Token" } else { "Weekly" };
                                 token_idx += 1;
                                 // Compute `used` from percentage + total if not provided directly.
                                 let used = limit.used.or_else(|| {
@@ -154,43 +157,41 @@ impl AccountUsagePort for ZaiAccountUsage {
         // 2. Model usage (24h window). Failure here is non-fatal.
         let now_ms = now_epoch_millis();
         let start_ms = now_ms - 24 * 3600 * 1000;
-        if let Ok(data) = self.fetch_model_usage(start_ms, now_ms) {
-            if let Some(total) = data.total_usage {
-                model_usage = Some(ModelUsageSnapshot {
-                    total_tokens: total.total_tokens_usage.unwrap_or(0),
-                    total_calls: total.total_model_call_count.unwrap_or(0),
-                    period_start_ms: start_ms,
-                    period_end_ms: now_ms,
-                });
-            }
+        if let Ok(data) = self.fetch_model_usage(start_ms, now_ms)
+            && let Some(total) = data.total_usage
+        {
+            model_usage = Some(ModelUsageSnapshot {
+                total_tokens: total.total_tokens_usage.unwrap_or(0),
+                total_calls: total.total_model_call_count.unwrap_or(0),
+                period_start_ms: start_ms,
+                period_end_ms: now_ms,
+            });
         }
 
         // 3. Tool usage (24h window). Merge into MCP window's sub_items
         //    if the MCP window exists but has no sub_items.
-        if let Ok(data) = self.fetch_tool_usage(start_ms, now_ms) {
-            if let Some(total) = data.total_usage {
-                if let Some(mcp) = windows.iter_mut().find(|w| w.label == "MCP (1 Month)") {
-                    if mcp.sub_items.is_empty() {
-                        if total.total_network_search_count > 0 {
-                            mcp.sub_items.push(UsageSubItem {
-                                label: "Network Searches".to_string(),
-                                used: total.total_network_search_count,
-                            });
-                        }
-                        if total.total_web_read_mcp_count > 0 {
-                            mcp.sub_items.push(UsageSubItem {
-                                label: "Web Reads".to_string(),
-                                used: total.total_web_read_mcp_count,
-                            });
-                        }
-                        if total.total_zread_mcp_count > 0 {
-                            mcp.sub_items.push(UsageSubItem {
-                                label: "ZRead Calls".to_string(),
-                                used: total.total_zread_mcp_count,
-                            });
-                        }
-                    }
-                }
+        if let Ok(data) = self.fetch_tool_usage(start_ms, now_ms)
+            && let Some(total) = data.total_usage
+            && let Some(mcp) = windows.iter_mut().find(|w| w.label == "MCP (1 Month)")
+            && mcp.sub_items.is_empty()
+        {
+            if total.total_network_search_count > 0 {
+                mcp.sub_items.push(UsageSubItem {
+                    label: "Network Searches".to_string(),
+                    used: total.total_network_search_count,
+                });
+            }
+            if total.total_web_read_mcp_count > 0 {
+                mcp.sub_items.push(UsageSubItem {
+                    label: "Web Reads".to_string(),
+                    used: total.total_web_read_mcp_count,
+                });
+            }
+            if total.total_zread_mcp_count > 0 {
+                mcp.sub_items.push(UsageSubItem {
+                    label: "ZRead Calls".to_string(),
+                    used: total.total_zread_mcp_count,
+                });
             }
         }
 
