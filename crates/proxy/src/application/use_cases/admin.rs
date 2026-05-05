@@ -736,13 +736,16 @@ impl GetAccountUsage {
                     model_usage: None,
                 },
                 Some(Ok(usage)) => account_usage_to_dto(usage),
-                Some(Err(_)) => ProviderAccountUsageDto {
-                    provider: name.clone(),
-                    status: ProviderUsageStatus::Error,
-                    plan: None,
-                    windows: vec![],
-                    model_usage: None,
-                },
+                Some(Err(e)) => {
+                    tracing::warn!(error = %e, "account usage fetch failed");
+                    ProviderAccountUsageDto {
+                        provider: name.clone(),
+                        status: ProviderUsageStatus::Error,
+                        plan: None,
+                        windows: vec![],
+                        model_usage: None,
+                    }
+                }
             })
             .collect();
 

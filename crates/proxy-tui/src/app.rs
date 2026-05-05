@@ -364,6 +364,9 @@ pub struct AppState {
     pub requests_selected: usize,
     pub usage: UsagePaneState,
     pub account: AccountPaneState,
+    /// Background-thread channel for in-flight Account fetches.
+    /// `None` = no fetch in progress; `Some(rx)` = waiting on a result.
+    pub account_rx: Option<std::sync::mpsc::Receiver<Result<proxy_admin_api::AccountUsageResponse, String>>>,
     pub flash: Option<String>,
     pub should_quit: bool,
 }
@@ -381,6 +384,7 @@ impl AppState {
             requests_selected: 0,
             usage: UsagePaneState::default(),
             account: AccountPaneState::default(),
+            account_rx: None,
             flash: None,
             should_quit: false,
         }

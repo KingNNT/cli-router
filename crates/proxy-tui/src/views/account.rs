@@ -35,6 +35,13 @@ pub fn draw(f: &mut Frame<'_>, area: Rect, state: &AccountPaneState) {
 
     // Render all provider blocks into one paragraph.
     let mut lines: Vec<ratatui::text::Line> = Vec::new();
+    if state.loading {
+        lines.push(ratatui::text::Line::styled(
+            "Refreshing…",
+            Style::default().fg(Color::DarkGray),
+        ));
+        lines.push(ratatui::text::Line::raw(""));
+    }
     let mut visible_idx = 0;
 
     for provider in &usage.providers {

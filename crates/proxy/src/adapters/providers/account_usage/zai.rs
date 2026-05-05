@@ -88,8 +88,28 @@ impl AccountUsagePort for ZaiAccountUsage {
         let mut plan = None;
         let mut model_usage = None;
 
+        // Fan out the three monitor calls in parallel — they're independent
+        // and Z.ai responses can take ~1s each. Sequential = 3× the latency.
+        let now_ms = now_epoch_millis();
+        let start_ms = now_ms - 24 * 3600 * 1000;
+        let (quota_result, model_result, tool_result) = std::thread::scope(|s| {
+            // The fetch_* helpers already #[allow] result_large_err for ureq::Error;
+            // propagate that allow to the spawned closures so clippy stays clean.
+            #[allow(clippy::result_large_err)]
+            let q = s.spawn(|| self.fetch_quota_limit());
+            #[allow(clippy::result_large_err)]
+            let m = s.spawn(|| self.fetch_model_usage(start_ms, now_ms));
+            #[allow(clippy::result_large_err)]
+            let t = s.spawn(|| self.fetch_tool_usage(start_ms, now_ms));
+            (
+                q.join().expect("quota thread panicked"),
+                m.join().expect("model-usage thread panicked"),
+                t.join().expect("tool-usage thread panicked"),
+            )
+        });
+
         // 1. Quota/limit endpoint (primary).
-        match self.fetch_quota_limit() {
+        match quota_result {
             Ok(data) => {
                 plan = data.level;
                 if let Some(limits) = data.limits {
@@ -104,21 +124,22 @@ impl AccountUsagePort for ZaiAccountUsage {
                     for limit in &limits {
                         match limit.limit_type.as_str() {
                             "TOKENS_LIMIT" => {
-                                // Determine window label from unit+number.
-                                // unit=3=hours, unit=6=days (observed values).
+                                // Z.ai labels: unit=3 → hourly window (5h plan window),
+                                // unit=6 → weekly window. Match the web dashboard wording.
                                 let (label, is_five_hour) = match (limit.unit, limit.number) {
                                     (Some(3), Some(n)) if n <= 12 => {
-                                        (format!("{n}h Token"), n == 5)
+                                        ("5 Hours Quota".to_string(), n == 5)
                                     }
-                                    (Some(6), Some(n)) => (format!("{n}d Token"), false),
+                                    (Some(6), _) => ("Weekly Quota".to_string(), false),
                                     _ => {
                                         // Fallback: use index-based naming.
-                                        let label = if five_hour.is_none() {
-                                            "5h Token"
+                                        let is_first = five_hour.is_none();
+                                        let label = if is_first {
+                                            "5 Hours Quota"
                                         } else {
-                                            "Weekly"
+                                            "Weekly Quota"
                                         };
-                                        (label.to_string(), label == "5h Token")
+                                        (label.to_string(), is_first)
                                     }
                                 };
 
@@ -155,7 +176,7 @@ impl AccountUsagePort for ZaiAccountUsage {
                                     }
                                 }
                                 mcp = Some(UsageWindow {
-                                    label: "MCP (1 Month)".to_string(),
+                                    label: "Total Monthly Web Search / Reader / Zread Quota".to_string(),
                                     used_pct: limit.percentage.unwrap_or(0.0),
                                     used: limit.current_value,
                                     limit: limit.usage,
@@ -188,9 +209,7 @@ impl AccountUsagePort for ZaiAccountUsage {
         }
 
         // 2. Model usage (24h window). Failure here is non-fatal.
-        let now_ms = now_epoch_millis();
-        let start_ms = now_ms - 24 * 3600 * 1000;
-        if let Ok(data) = self.fetch_model_usage(start_ms, now_ms)
+        if let Ok(data) = model_result
             && let Some(total) = data.total_usage
         {
             model_usage = Some(ModelUsageSnapshot {
@@ -203,9 +222,9 @@ impl AccountUsagePort for ZaiAccountUsage {
 
         // 3. Tool usage (24h window). Merge into MCP window's sub_items
         //    if the MCP window exists but has no sub_items.
-        if let Ok(data) = self.fetch_tool_usage(start_ms, now_ms)
+        if let Ok(data) = tool_result
             && let Some(total) = data.total_usage
-            && let Some(mcp) = windows.iter_mut().find(|w| w.label == "MCP (1 Month)")
+            && let Some(mcp) = windows.iter_mut().find(|w| w.label == "Total Monthly Web Search / Reader / Zread Quota")
             && mcp.sub_items.is_empty()
         {
             if total.total_network_search_count > 0 {

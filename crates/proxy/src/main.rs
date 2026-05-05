@@ -117,13 +117,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let leaves = build_leaves(&cfg.providers, http.clone());
     let initial_router = build_routing_provider(&cfg, &leaves, quota_port.clone())?;
 
-    let account_usage_map =
-        proxy::adapters::providers::builder::build_account_usage(&cfg.providers);
-
     let live = Arc::new(LiveProvider::new(initial_router, quota_port.clone()));
     let provider: Arc<dyn Provider> = live.clone();
 
     let cfg_lock = Arc::new(RwLock::new(cfg));
+
+    // Built after cfg_lock so the Anthropic adapter can read the live OAuth
+    // token (refreshed in place by the background token_refresh task).
+    let account_usage_map =
+        proxy::adapters::providers::builder::build_account_usage(cfg_lock.clone());
 
     let use_case = Arc::new(HandleMessages::new(
         provider,

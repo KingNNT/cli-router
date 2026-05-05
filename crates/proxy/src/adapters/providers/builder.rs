@@ -120,23 +120,32 @@ pub fn build_from_config(
 /// Build the per-name account usage adapter map.
 ///
 /// Z.ai providers get a `ZaiAccountUsage` adapter (hits Z.ai's monitoring API).
-/// All other kinds get `AnthropicAccountUsage` (returns `None` — no public API).
+/// Anthropic providers get an `AnthropicAccountUsage` adapter that hits the
+/// undocumented `/api/oauth/usage` endpoint when configured with OAuth auth,
+/// and returns `None` for API-key auth.
+///
+/// `config` is shared so the Anthropic adapter can read the **current**
+/// OAuth access token on each call — the background `token_refresh` task
+/// updates it in place every 60s.
 pub fn build_account_usage(
-    providers: &[ProviderConfig],
+    config: Arc<std::sync::RwLock<Config>>,
 ) -> HashMap<String, Arc<dyn AccountUsagePort>> {
+    let providers: Vec<ProviderConfig> = {
+        let cfg = config.read().expect("config rwlock poisoned");
+        cfg.providers.clone()
+    };
     providers
         .iter()
         .map(|p| {
             let adapter: Arc<dyn AccountUsagePort> = match p.kind {
                 ProviderKind::Zai => {
-                    // Derive the monitoring base URL from the provider config.
-                    // The Z.ai monitoring API lives at the scheme+host level,
-                    // e.g. "https://api.z.ai" regardless of the openai_base_url path.
                     let base_url = derive_monitor_base_url(p);
                     let token = resolve_auth_token(&p.auth);
                     Arc::new(ZaiAccountUsage::new(p.name.clone(), token, base_url))
                 }
-                ProviderKind::Anthropic => Arc::new(AnthropicAccountUsage),
+                ProviderKind::Anthropic => {
+                    Arc::new(AnthropicAccountUsage::new(p.name.clone(), config.clone()))
+                }
             };
             (p.name.clone(), adapter)
         })
@@ -166,7 +175,51 @@ fn derive_monitor_base_url(p: &ProviderConfig) -> String {
             let idx = u.find("://")?;
             let rest = &u[idx + 3..];
             let end = rest.find('/').unwrap_or(rest.len());
-            Some(format!("{}://{}", &u[..idx + 3], &rest[..end]))
+            Some(format!("{}{}", &u[..idx + 3], &rest[..end]))
         })
         .unwrap_or_else(|| "https://api.z.ai".to_string())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{AuthConfig, ProviderKind};
+
+    fn cfg(openai: Option<&str>, base: Option<&str>) -> ProviderConfig {
+        ProviderConfig {
+            name: "zai".into(),
+            kind: ProviderKind::Zai,
+            auth: AuthConfig::Bearer { value: "x".into() },
+            base_url: base.map(str::to_string),
+            openai_base_url: openai.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn derive_monitor_base_url_strips_path_from_openai_url() {
+        let url = derive_monitor_base_url(&cfg(
+            Some("https://api.z.ai/api/coding/paas/v4"),
+            None,
+        ));
+        assert_eq!(url, "https://api.z.ai");
+    }
+
+    #[test]
+    fn derive_monitor_base_url_falls_back_to_base_url() {
+        let url = derive_monitor_base_url(&cfg(None, Some("http://localhost:1234/v1")));
+        assert_eq!(url, "http://localhost:1234");
+    }
+
+    #[test]
+    fn derive_monitor_base_url_handles_url_with_no_path() {
+        let url = derive_monitor_base_url(&cfg(Some("https://api.z.ai"), None));
+        assert_eq!(url, "https://api.z.ai");
+    }
+
+    #[test]
+    fn derive_monitor_base_url_defaults_when_unset() {
+        let url = derive_monitor_base_url(&cfg(None, None));
+        assert_eq!(url, "https://api.z.ai");
+    }
 }

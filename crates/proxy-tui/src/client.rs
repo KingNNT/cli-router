@@ -21,6 +21,7 @@ pub enum ClientError {
     Status(u16, String),
 }
 
+#[derive(Clone)]
 pub struct AdminClient {
     base_url: String,
 }

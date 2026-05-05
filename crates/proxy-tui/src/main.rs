@@ -47,8 +47,12 @@ fn main() -> std::io::Result<()> {
     let term = guard.0.as_mut().expect("term present");
 
     loop {
+        drain_account_rx(&mut state);
         term.draw(|f| ui::draw(f, &state))?;
-        if !event::poll(Duration::from_millis(250))? {
+        // Poll faster while a background fetch is pending so the UI flips
+        // from "Loading…" to data quickly once the result arrives.
+        let poll_ms = if state.account_rx.is_some() { 50 } else { 250 };
+        if !event::poll(Duration::from_millis(poll_ms))? {
             continue;
         }
         match event::read()? {
@@ -130,9 +134,7 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         }
         KeyCode::Char('6') => {
             state.set_view(View::Account);
-            if state.account.usage.is_none() && state.account.last_error.is_none() {
-                fetch_account(client, state);
-            }
+            fetch_account(client, state);
             return;
         }
         _ => {}
@@ -448,11 +450,15 @@ fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mu
             state.flash = None;
             if let Some(v) = tab_hit(m.column, m.row, tabs_area) {
                 state.set_view(v);
-                if v == View::Usage
-                    && state.usage.summary.is_none()
-                    && state.usage.last_error.is_none()
-                {
-                    fetch_usage(client, state);
+                match v {
+                    View::Usage
+                        if state.usage.summary.is_none()
+                            && state.usage.last_error.is_none() =>
+                    {
+                        fetch_usage(client, state);
+                    }
+                    View::Account => fetch_account(client, state),
+                    _ => {}
                 }
                 return;
             }
@@ -521,18 +527,46 @@ fn fetch_usage(client: &AdminClient, state: &mut AppState) {
 }
 
 fn fetch_account(client: &AdminClient, state: &mut AppState) {
+    // Non-blocking: spawn the HTTP call on a worker thread, leave the UI
+    // free to keep redrawing. The main loop drains the receiver between
+    // event polls and updates state when the response arrives.
     state.account.loading = true;
-    match client.get_account_usage() {
-        Ok(resp) => {
+    state.account.last_error = None;
+    let (tx, rx) = std::sync::mpsc::channel();
+    let client = client.clone();
+    std::thread::spawn(move || {
+        let res = client.get_account_usage().map_err(|e| e.to_string());
+        let _ = tx.send(res);
+    });
+    state.account_rx = Some(rx);
+}
+
+/// Drain any pending result from the in-flight Account fetch.
+/// Called once per main-loop iteration before reading events.
+fn drain_account_rx(state: &mut AppState) {
+    let Some(rx) = state.account_rx.as_ref() else {
+        return;
+    };
+    match rx.try_recv() {
+        Ok(Ok(resp)) => {
             state.account.usage = Some(resp);
             state.account.last_error = None;
             state.account.scroll_offset = 0;
+            state.account.loading = false;
+            state.account_rx = None;
         }
-        Err(e) => {
-            state.account.last_error = Some(format!("{e}"));
+        Ok(Err(e)) => {
+            state.account.last_error = Some(e);
+            state.account.loading = false;
+            state.account_rx = None;
+        }
+        Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            // Worker died without sending — clear the in-flight flag.
+            state.account.loading = false;
+            state.account_rx = None;
         }
     }
-    state.account.loading = false;
 }
 
 // ---- Modal handling ----
