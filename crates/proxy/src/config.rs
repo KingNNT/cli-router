@@ -10,6 +10,9 @@
 //!   generated when the user has neither a config file nor API keys set.
 //! - `CLI_ROUTER_UPSTREAM=zai|anthropic` is honoured for backward
 //!   compatibility when the file doesn't exist.
+//! - `CLI_ROUTER_PROFILE=dev|prod` selects between `config.toml` (default)
+//!   and `config.dev.toml` in the same directory. `CLI_ROUTER_CONFIG=<path>`
+//!   still wins when set.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -58,7 +61,7 @@ pub enum ProviderKind {
 /// `Passthrough` keeps the client's incoming auth headers intact — this is the
 /// default and matches the Phase 0 behaviour. The other variants strip
 /// incoming `x-api-key`/`authorization` and inject the configured value.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthConfig {
     #[default]
@@ -78,6 +81,32 @@ pub enum AuthConfig {
         /// Unix epoch millis when the access token expires.
         expires_at_ms: u64,
     },
+}
+
+// Manual Debug to keep secrets out of logs. The derived Debug would print
+// every API key / OAuth token verbatim — anything that debug-prints a Config
+// (e.g. tracing::info!(?cfg)) would leak credentials to log files.
+impl std::fmt::Debug for AuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const REDACTED: &str = "<redacted>";
+        match self {
+            AuthConfig::Passthrough => f.debug_tuple("Passthrough").finish(),
+            AuthConfig::ApiKey { .. } => f
+                .debug_struct("ApiKey")
+                .field("value", &REDACTED)
+                .finish(),
+            AuthConfig::Bearer { .. } => f
+                .debug_struct("Bearer")
+                .field("value", &REDACTED)
+                .finish(),
+            AuthConfig::AnthropicOAuth { expires_at_ms, .. } => f
+                .debug_struct("AnthropicOAuth")
+                .field("access_token", &REDACTED)
+                .field("refresh_token", &REDACTED)
+                .field("expires_at_ms", expires_at_ms)
+                .finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -203,9 +232,11 @@ impl Config {
     /// The resolved config-file path: env override, else XDG default.
     /// The file may or may not exist — `from_env` falls back to defaults.
     pub fn resolved_path() -> PathBuf {
-        std::env::var_os("CLI_ROUTER_CONFIG")
-            .map(PathBuf::from)
-            .unwrap_or_else(default_config_path)
+        if let Some(path) = std::env::var_os("CLI_ROUTER_CONFIG") {
+            return PathBuf::from(path);
+        }
+        let profile = std::env::var("CLI_ROUTER_PROFILE").ok();
+        config_dir().join(config_filename_for_profile(profile.as_deref()))
     }
 
     pub fn from_env() -> Result<Self, ConfigError> {
@@ -349,11 +380,23 @@ fn default_pricing_db() -> PathBuf {
     home().join(".local/share/cli-router/pricing.db")
 }
 
-fn default_config_path() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+fn config_dir() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| home().join(".config"));
-    base.join("cli-router/config.toml")
+        .unwrap_or_else(|| home().join(".config"))
+        .join("cli-router")
+}
+
+// Pure for unit-testability — env-var read happens in `resolved_path`.
+fn config_filename_for_profile(profile: Option<&str>) -> &'static str {
+    match profile {
+        Some("dev") | Some("development") => "config.dev.toml",
+        Some(other) if !matches!(other, "" | "prod" | "production") => {
+            tracing::warn!(profile = other, "unknown CLI_ROUTER_PROFILE; using prod");
+            "config.toml"
+        }
+        _ => "config.toml",
+    }
 }
 
 /// Replace `${VAR}` with the env var value (or empty string if unset).
@@ -383,6 +426,55 @@ fn interpolate(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_filename_resolves_dev_prod_default() {
+        assert_eq!(config_filename_for_profile(Some("dev")), "config.dev.toml");
+        assert_eq!(
+            config_filename_for_profile(Some("development")),
+            "config.dev.toml"
+        );
+        assert_eq!(config_filename_for_profile(Some("prod")), "config.toml");
+        assert_eq!(
+            config_filename_for_profile(Some("production")),
+            "config.toml"
+        );
+        assert_eq!(config_filename_for_profile(Some("")), "config.toml");
+        assert_eq!(config_filename_for_profile(None), "config.toml");
+        // Unknown profile falls back to prod (with a warning logged).
+        assert_eq!(config_filename_for_profile(Some("staging")), "config.toml");
+    }
+
+    #[test]
+    fn auth_config_debug_redacts_secrets() {
+        let cases = [
+            AuthConfig::ApiKey {
+                value: "sk-leak-apikey".into(),
+            },
+            AuthConfig::Bearer {
+                value: "sk-leak-bearer".into(),
+            },
+            AuthConfig::AnthropicOAuth {
+                access_token: "sk-leak-access".into(),
+                refresh_token: "sk-leak-refresh".into(),
+                expires_at_ms: 1_700_000_000_000,
+            },
+        ];
+        for auth in &cases {
+            let s = format!("{auth:?}");
+            assert!(!s.contains("sk-leak"), "debug leaked secret: {s}");
+            assert!(s.contains("redacted"), "debug should mark redaction: {s}");
+        }
+
+        // Sanity: Passthrough has nothing to redact and non-secret fields stay visible.
+        assert_eq!(format!("{:?}", AuthConfig::Passthrough), "Passthrough");
+        let oauth = AuthConfig::AnthropicOAuth {
+            access_token: "x".into(),
+            refresh_token: "y".into(),
+            expires_at_ms: 42,
+        };
+        assert!(format!("{oauth:?}").contains("expires_at_ms: 42"));
+    }
 
     #[test]
     fn interpolate_replaces_env_vars() {

@@ -1,6 +1,8 @@
 .DEFAULT_GOAL := help
 
 include makefiles/install.mk
+include makefiles/service.mk
+include makefiles/dev.mk
 
 ## General ────────────────────────────────────────────
 
