@@ -36,7 +36,7 @@ cargo coverage                # summary in terminal
 cargo coverage-html           # open HTML report
 ```
 
-Release binaries land at `target/release/{proxy,analysis,proxy-tui}` after `cargo build --release --workspace`.
+Release binaries land at `target/release/{cli-router-proxy,analysis,cli-router-proxy-tui}` after `cargo build --release --workspace`.
 
 Tests live alongside code (`#[cfg(test)] mod tests`), as crate-level integration tests under `crates/<crate>/tests/`, and as `///` doc examples on public value-object constructors.
 

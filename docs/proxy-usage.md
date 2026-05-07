@@ -401,7 +401,7 @@ RUST_LOG=debug cargo run -p proxy
 
 # Release build
 cargo build --release --workspace
-./target/release/proxy
+./target/release/cli-router-proxy
 ```
 
 The proxy binds to `127.0.0.1:8787` by default. Configure the port:

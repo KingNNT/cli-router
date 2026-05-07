@@ -65,7 +65,7 @@ cargo run -p proxy-tui
 cargo run -p analysis
 ```
 
-Release binaries: `target/release/proxy`, `target/release/proxy-tui`, and `target/release/analysis` after `cargo build --release --workspace`.
+Release binaries: `target/release/cli-router-proxy`, `target/release/cli-router-proxy-tui`, and `target/release/analysis` after `cargo build --release --workspace`.
 
 ## Architecture
 

@@ -3,7 +3,7 @@
 LAUNCH_AGENT_DIR := $(HOME)/Library/LaunchAgents
 SERVICE_LABEL    := com.cli-router.proxy
 SERVICE_PLIST    := $(LAUNCH_AGENT_DIR)/$(SERVICE_LABEL).plist
-SERVICE_BIN      := $(HOME)/.cargo/bin/proxy
+SERVICE_BIN      := $(HOME)/.cargo/bin/cli-router-proxy
 SERVICE_LOG_DIR  := $(HOME)/Library/Logs
 SERVICE_LOG_OUT  := $(SERVICE_LOG_DIR)/cli-router-proxy.log
 SERVICE_LOG_ERR  := $(SERVICE_LOG_DIR)/cli-router-proxy.err

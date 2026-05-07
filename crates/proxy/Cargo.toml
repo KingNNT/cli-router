@@ -8,7 +8,7 @@ name = "proxy"
 path = "src/lib.rs"
 
 [[bin]]
-name = "proxy"
+name = "cli-router-proxy"
 path = "src/main.rs"
 
 [dependencies]
