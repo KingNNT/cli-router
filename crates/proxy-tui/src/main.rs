@@ -56,7 +56,13 @@ fn main() -> std::io::Result<()> {
             continue;
         }
         match event::read()? {
-            Event::Key(k) => handle_key(k, &client, &mut state),
+            Event::Key(k) => {
+                let term_area = term
+                    .size()
+                    .map(|s| Rect::new(0, 0, s.width, s.height))
+                    .unwrap_or_default();
+                handle_key(k, &client, &mut state, term_area);
+            }
             Event::Mouse(m) => {
                 let term_area = term
                     .size()
@@ -76,7 +82,7 @@ fn main() -> std::io::Result<()> {
 fn refresh_all(client: &AdminClient, state: &mut AppState) {
     state.set_status(client.get_status().map_err(|e| e.to_string()));
     state.set_config(client.get_config().map_err(|e| e.to_string()));
-    state.set_recent(client.get_recent(50).map_err(|e| e.to_string()));
+    state.set_recent(client.get_recent(50, 0).map_err(|e| e.to_string()));
     state.quota = Some(client.get_quota_status().map_err(|e| e.to_string()));
 }
 
@@ -89,7 +95,7 @@ fn refresh_view(client: &AdminClient, state: &mut AppState) {
         View::Providers | View::Routing => {
             state.set_config(client.get_config().map_err(|e| e.to_string()))
         }
-        View::Requests => state.set_recent(client.get_recent(50).map_err(|e| e.to_string())),
+        View::Requests => state.set_recent(client.get_recent(50, 0).map_err(|e| e.to_string())),
         // Usage refreshes on demand from `handle_key`'s Usage-tab branch
         // (`fetch_usage`); no auto-refresh tick should hit this arm.
         View::Usage => {}
@@ -98,7 +104,7 @@ fn refresh_view(client: &AdminClient, state: &mut AppState) {
     }
 }
 
-fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
+fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState, term_area: Rect) {
     if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
         state.should_quit = true;
         return;
@@ -188,6 +194,74 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
                     && state.account.scroll_offset + 1 < u.providers.len()
                 {
                     state.account.scroll_offset += 1;
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Requests-tab-specific keys.
+    if state.view == View::Requests {
+        let visible_height = requests_visible_height(term_area, state);
+        match k.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                // If near the bottom of the viewport, scroll down too.
+                if state.requests.selected + 1 < state.requests.items.len() {
+                    state.requests.selected += 1;
+                    let max_scroll = state.requests.items.len().saturating_sub(visible_height);
+                    if state.requests.selected > state.requests.scroll_offset + visible_height.saturating_sub(1) {
+                        state.requests.scroll_offset = (state.requests.selected + 1)
+                            .saturating_sub(visible_height)
+                            .min(max_scroll);
+                    }
+                }
+                // Auto-fetch more if we're near the end of loaded items.
+                if state.requests.selected + 5 >= state.requests.items.len()
+                    && state.requests.has_more()
+                {
+                    fetch_requests_next_page(client, state);
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.requests.selected = state.requests.selected.saturating_sub(1);
+                if state.requests.selected < state.requests.scroll_offset {
+                    state.requests.scroll_offset = state.requests.selected;
+                }
+            }
+            KeyCode::PageDown => {
+                let jump = visible_height.max(1);
+                let target = (state.requests.selected + jump).min(state.requests.items.len().saturating_sub(1));
+                state.requests.selected = target;
+                let max_scroll = state.requests.items.len().saturating_sub(visible_height);
+                state.requests.scroll_offset = (state.requests.selected + 1)
+                    .saturating_sub(visible_height)
+                    .min(max_scroll);
+                // Auto-fetch more if we're near the end.
+                if state.requests.selected + 5 >= state.requests.items.len()
+                    && state.requests.has_more()
+                {
+                    fetch_requests_next_page(client, state);
+                }
+            }
+            KeyCode::PageUp => {
+                let jump = visible_height.max(1);
+                state.requests.selected = state.requests.selected.saturating_sub(jump);
+                if state.requests.selected < state.requests.scroll_offset {
+                    state.requests.scroll_offset = state.requests.selected;
+                }
+            }
+            KeyCode::Home => {
+                state.requests.selected = 0;
+                state.requests.scroll_offset = 0;
+            }
+            KeyCode::End => {
+                state.requests.selected = state.requests.items.len().saturating_sub(1);
+                let max_scroll = state.requests.items.len().saturating_sub(visible_height);
+                state.requests.scroll_offset = max_scroll;
+                // Fetch more if we're at the end and there's more data.
+                if state.requests.has_more() {
+                    fetch_requests_next_page(client, state);
                 }
             }
             _ => {}
@@ -390,12 +464,15 @@ fn providers_count(state: &AppState) -> usize {
 }
 
 fn requests_count(state: &AppState) -> usize {
-    state
-        .recent
-        .as_ref()
-        .and_then(|r| r.as_ref().ok())
-        .map(|r| r.items.len())
-        .unwrap_or(0)
+    state.requests.item_count()
+}
+
+fn requests_visible_height(term_area: Rect, _state: &AppState) -> usize {
+    let chunks = main_layout(term_area);
+    let body_area = chunks[1];
+    // Block border (2) + header (1) + footer (1) = 4 rows of overhead.
+    let visible = body_area.height.saturating_sub(4) as usize;
+    visible.max(1)
 }
 
 fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mut AppState) {
@@ -434,6 +511,14 @@ fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mu
             View::Usage => {
                 state.usage.table_offset = state.usage.table_offset.saturating_sub(1);
             }
+            View::Requests => {
+                if state.requests.selected > 0 {
+                    state.requests.selected -= 1;
+                    if state.requests.selected < state.requests.scroll_offset {
+                        state.requests.scroll_offset = state.requests.selected;
+                    }
+                }
+            }
             _ => state.move_selection_up(),
         },
         MouseEventKind::ScrollDown => match state.view {
@@ -442,6 +527,24 @@ fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mu
                     && state.usage.table_offset + 1 < s.models.len()
                 {
                     state.usage.table_offset += 1;
+                }
+            }
+            View::Requests => {
+                if state.requests.selected + 1 < state.requests.items.len() {
+                    state.requests.selected += 1;
+                    let visible_height = requests_visible_height(term_area, state);
+                    let max_scroll = state.requests.items.len().saturating_sub(visible_height);
+                    if state.requests.selected > state.requests.scroll_offset + visible_height.saturating_sub(1) {
+                        state.requests.scroll_offset = (state.requests.selected + 1)
+                            .saturating_sub(visible_height)
+                            .min(max_scroll);
+                    }
+                }
+                // Auto-fetch more if near the end.
+                if state.requests.selected + 5 >= state.requests.items.len()
+                    && state.requests.has_more()
+                {
+                    fetch_requests_next_page(client, state);
                 }
             }
             _ => state.move_selection_down(),
@@ -478,10 +581,14 @@ fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mu
                     }
                 }
                 View::Requests => {
+                    // top_pad=1 for the footer row rendered inside the block
                     if let Some(idx) =
                         table_row_hit(m.column, m.row, body_area, requests_count(state), 0)
                     {
-                        state.requests_selected = idx;
+                        let actual = idx + state.requests.scroll_offset;
+                        if actual < state.requests.items.len() {
+                            state.requests.selected = actual;
+                        }
                     }
                 }
                 View::Usage => {
@@ -495,6 +602,29 @@ fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mu
             }
         }
         _ => {}
+    }
+}
+
+/// Fetch the next page of requests and append to the existing list.
+fn fetch_requests_next_page(client: &AdminClient, state: &mut AppState) {
+    if !state.requests.has_more() || state.requests.loading {
+        return;
+    }
+    state.requests.loading = true;
+    let page_size = state.requests.page_size;
+    let offset = state.requests.fetched_offset as u32;
+    match client.get_recent(page_size, offset) {
+        Ok(resp) => {
+            state.requests.items.extend(resp.items);
+            state.requests.total_count = resp.total_count;
+            state.requests.fetched_offset = state.requests.items.len();
+            state.requests.loading = false;
+            state.requests.last_error = None;
+        }
+        Err(e) => {
+            state.requests.last_error = Some(e.to_string());
+            state.requests.loading = false;
+        }
     }
 }
 

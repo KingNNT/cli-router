@@ -8,7 +8,7 @@ use crate::app::{
 use chrono::{Local, TimeZone};
 use proxy_admin_api::{
     AuthPayload, ConfigPayload, QuotaMetricDto, QuotaMetricState, QuotaStatusListDto,
-    RecentRequestsResponse, StatusResponse,
+    StatusResponse,
 };
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -382,29 +382,48 @@ fn draw_routing(f: &mut Frame, area: Rect, cfg: Option<&Result<ConfigPayload, St
 // ---- Requests view ----
 
 fn draw_requests(f: &mut Frame, area: Rect, state: &AppState) {
-    let block = Block::default()
+    let reqs = &state.requests;
+
+    // Reserve 1 row at the bottom for the pagination footer.
+    let outer = Block::default()
         .borders(Borders::ALL)
         .title(" Recent requests ");
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = outer.inner(area);
+    f.render_widget(outer, area);
 
-    let recent = match &state.recent {
-        None => return draw_message(f, inner, "loading…"),
-        Some(Err(e)) => return draw_error(f, inner, e),
-        Some(Ok(r)) => r,
-    };
-    if recent.items.is_empty() {
+    if reqs.loading && reqs.items.is_empty() {
+        return draw_message(f, inner, "loading…");
+    }
+    if let Some(e) = &reqs.last_error {
+        return draw_error(f, inner, e);
+    }
+    if reqs.items.is_empty() {
         return draw_message(f, inner, "(no requests recorded yet)");
     }
 
-    draw_requests_table(f, inner, recent, state.requests_selected);
+    // Split inner into table area (all but last row) and footer (1 row).
+    let table_h = inner.height.saturating_sub(1);
+    if table_h == 0 {
+        return;
+    }
+    let table_area = Rect {
+        height: table_h,
+        ..inner
+    };
+    let footer_area = Rect {
+        y: inner.y + table_h,
+        height: 1,
+        ..inner
+    };
+
+    draw_requests_table(f, table_area, reqs);
+    draw_requests_footer(f, footer_area, reqs);
 }
 
 fn draw_requests_table(
     f: &mut Frame,
     area: Rect,
-    recent: &RecentRequestsResponse,
-    selected: usize,
+    reqs: &crate::app::RequestsPaneState,
 ) {
     let header = Row::new(vec![
         Cell::from("started"),
@@ -418,12 +437,18 @@ fn draw_requests_table(
     ])
     .style(Style::default().add_modifier(Modifier::BOLD));
 
-    let rows: Vec<Row> = recent
+    let visible_height = area.height.saturating_sub(1) as usize; // minus header row
+    let max_scroll = reqs.items.len().saturating_sub(visible_height);
+    let scroll_offset = reqs.scroll_offset.min(max_scroll);
+
+    let rows: Vec<Row> = reqs
         .items
         .iter()
         .enumerate()
+        .skip(scroll_offset)
+        .take(visible_height)
         .map(|(i, item)| {
-            let style = if i == selected {
+            let style = if i == reqs.selected {
                 Style::default().fg(Color::Black).bg(Color::Yellow)
             } else {
                 Style::default()
@@ -464,6 +489,28 @@ fn draw_requests_table(
     ];
     let table = Table::new(rows, widths).header(header);
     f.render_widget(table, area);
+}
+
+fn draw_requests_footer(
+    f: &mut Frame,
+    area: Rect,
+    reqs: &crate::app::RequestsPaneState,
+) {
+    let loaded = reqs.items.len();
+    let total = reqs.total_count as usize;
+    let from = if loaded == 0 { 0 } else { 1 };
+    let to = loaded;
+    let more = if reqs.has_more() { " │ ↓/PgDn=more" } else { "" };
+    let label = if total == 0 {
+        "no requests".to_string()
+    } else {
+        format!("Showing {from}–{to} of {total}{more}")
+    };
+    let footer = Paragraph::new(Span::styled(
+        label,
+        Style::default().add_modifier(Modifier::DIM),
+    ));
+    f.render_widget(footer, area);
 }
 
 // ---- Status line ----
@@ -857,6 +904,9 @@ fn draw_help_modal(f: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled("Requests tab", bold)),
         Line::from("  ↑ / ↓ / j / k         move selection"),
+        Line::from("  PgUp / PgDn           scroll page"),
+        Line::from("  Home / End            jump to start / end"),
+        Line::from("  scroll wheel          scroll table"),
         Line::from(""),
         Line::from(Span::styled("Usage tab", bold)),
         Line::from("  1 / 2 / 3 / 4         range presets (Today / 7d / 30d / All)"),
@@ -867,7 +917,7 @@ fn draw_help_modal(f: &mut Frame) {
         Line::from("  click tab             switch view"),
         Line::from("  click row             select provider / request"),
         Line::from("  click button          run action"),
-        Line::from("  scroll wheel          move selection / scroll table"),
+        Line::from("  scroll wheel          scroll / move selection"),
         Line::from("  click OAuth modal     re-open authorization URL"),
         Line::from(""),
         Line::from(Span::styled("[?] / [Esc] close help", bold)),

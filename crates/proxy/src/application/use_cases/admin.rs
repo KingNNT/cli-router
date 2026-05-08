@@ -95,11 +95,14 @@ impl GetRecentRequests {
         }
     }
 
-    pub fn execute(&self, limit: Option<u32>) -> Result<RecentRequestsResponse, ProxyError> {
+    pub fn execute(&self, limit: Option<u32>, offset: Option<u32>) -> Result<RecentRequestsResponse, ProxyError> {
         let n = limit.unwrap_or(self.default_limit).clamp(1, 500);
-        let rows = self.read.recent(n)?;
+        let o = offset.unwrap_or(0);
+        let rows = self.read.recent(n, o)?;
+        let total_count = self.read.total_count()?;
         Ok(RecentRequestsResponse {
             items: rows.into_iter().map(row_to_dto).collect(),
+            total_count,
         })
     }
 }
@@ -816,7 +819,7 @@ mod tests {
         fn count_by_status(&self) -> Result<BTreeMap<String, u64>, ProxyError> {
             Ok(self.by_status.clone())
         }
-        fn recent(&self, _: u32) -> Result<Vec<RequestRow>, ProxyError> {
+        fn recent(&self, _: u32, _: u32) -> Result<Vec<RequestRow>, ProxyError> {
             Ok(self.rows.clone())
         }
         fn summarize(&self, from_ms: i64, to_ms: i64) -> Result<UsageSummary, ProxyError> {
@@ -891,8 +894,8 @@ mod tests {
         let uc = GetRecentRequests::new(stub());
         // No way to observe the clamp via the stub's fixed return, but we
         // can at least confirm it doesn't panic on extreme values.
-        let _ = uc.execute(Some(0)).unwrap();
-        let _ = uc.execute(Some(u32::MAX)).unwrap();
+        let _ = uc.execute(Some(0), None).unwrap();
+        let _ = uc.execute(Some(u32::MAX), None).unwrap();
     }
 
     #[test]

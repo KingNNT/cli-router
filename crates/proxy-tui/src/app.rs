@@ -90,6 +90,52 @@ pub struct AccountPaneState {
 }
 
 #[derive(Debug, Clone)]
+pub struct RequestsPaneState {
+    /// Currently loaded items.
+    pub items: Vec<proxy_admin_api::RecentRequestItem>,
+    /// Total row count in the database (for pagination indicator).
+    pub total_count: u64,
+    /// Index of the highlighted row within `items`.
+    pub selected: usize,
+    /// Vertical scroll offset for the visible viewport.
+    pub scroll_offset: usize,
+    /// Backend offset – how many rows we have fetched so far.
+    pub fetched_offset: usize,
+    /// Number of rows per backend fetch (page size).
+    pub page_size: u32,
+    /// Last error from the API, if any.
+    pub last_error: Option<String>,
+    /// Whether a fetch is in progress.
+    pub loading: bool,
+}
+
+impl Default for RequestsPaneState {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            total_count: 0,
+            selected: 0,
+            scroll_offset: 0,
+            fetched_offset: 0,
+            page_size: 50,
+            last_error: None,
+            loading: false,
+        }
+    }
+}
+
+impl RequestsPaneState {
+    pub fn item_count(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Whether more items can be fetched from the backend.
+    pub fn has_more(&self) -> bool {
+        (self.items.len() as u64) < self.total_count
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Modal {
     None,
     TestProvider(TestProviderModal),
@@ -358,10 +404,9 @@ pub struct AppState {
     pub modal: Modal,
     pub status: Option<Result<StatusResponse, String>>,
     pub config: Option<Result<ConfigPayload, String>>,
-    pub recent: Option<Result<RecentRequestsResponse, String>>,
     pub quota: Option<Result<QuotaStatusListDto, String>>,
     pub providers_selected: usize,
-    pub requests_selected: usize,
+    pub requests: RequestsPaneState,
     pub usage: UsagePaneState,
     pub account: AccountPaneState,
     /// Background-thread channel for in-flight Account fetches.
@@ -378,10 +423,9 @@ impl AppState {
             modal: Modal::None,
             status: None,
             config: None,
-            recent: None,
             quota: None,
             providers_selected: 0,
-            requests_selected: 0,
+            requests: RequestsPaneState::default(),
             usage: UsagePaneState::default(),
             account: AccountPaneState::default(),
             account_rx: None,
@@ -409,12 +453,22 @@ impl AppState {
     }
 
     pub fn set_recent(&mut self, r: Result<RecentRequestsResponse, String>) {
-        if let Ok(resp) = &r
-            && self.requests_selected >= resp.items.len()
-        {
-            self.requests_selected = resp.items.len().saturating_sub(1);
+        match r {
+            Ok(resp) => {
+                self.requests.items = resp.items;
+                self.requests.total_count = resp.total_count;
+                self.requests.fetched_offset = self.requests.items.len();
+                if self.requests.selected >= self.requests.items.len() {
+                    self.requests.selected = self.requests.items.len().saturating_sub(1);
+                }
+                self.requests.last_error = None;
+                self.requests.loading = false;
+            }
+            Err(e) => {
+                self.requests.last_error = Some(e);
+                self.requests.loading = false;
+            }
         }
-        self.recent = Some(r);
     }
 
     pub fn flash(&mut self, msg: impl Into<String>) {
@@ -436,10 +490,8 @@ impl AppState {
                 }
             }
             View::Requests => {
-                if let Some(Ok(r)) = &self.recent
-                    && self.requests_selected + 1 < r.items.len()
-                {
-                    self.requests_selected += 1;
+                if self.requests.selected + 1 < self.requests.items.len() {
+                    self.requests.selected += 1;
                 }
             }
             _ => {}
@@ -452,7 +504,7 @@ impl AppState {
                 self.providers_selected = self.providers_selected.saturating_sub(1);
             }
             View::Requests => {
-                self.requests_selected = self.requests_selected.saturating_sub(1);
+                self.requests.selected = self.requests.selected.saturating_sub(1);
             }
             _ => {}
         }

@@ -88,13 +88,14 @@ async fn update_config_handler(
 #[derive(Deserialize)]
 struct RecentParams {
     limit: Option<u32>,
+    offset: Option<u32>,
 }
 
 async fn recent_handler(
     State(s): State<AdminState>,
     Query(params): Query<RecentParams>,
 ) -> Result<Json<RecentRequestsResponse>, ProxyError> {
-    Ok(Json(s.get_recent.execute(params.limit)?))
+    Ok(Json(s.get_recent.execute(params.limit, params.offset)?))
 }
 
 #[derive(Debug, Deserialize)]

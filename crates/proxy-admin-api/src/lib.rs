@@ -108,10 +108,11 @@ pub struct MatchPayload {
     pub model: Option<String>,
 }
 
-/// `GET /admin/requests/recent?limit=N`
+/// `GET /admin/requests/recent?limit=N&offset=M`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecentRequestsResponse {
     pub items: Vec<RecentRequestItem>,
+    pub total_count: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,4 +1,4 @@
-.PHONY: dev dev-tui dev-init dev-reset dev-paths
+.PHONY: dev-proxy dev-proxy-tui dev-init dev-reset dev-paths dev-seed-requests
 
 DEV_PORT         := 8788
 CONFIG_DIR       := $(HOME)/.config/cli-router
@@ -12,7 +12,7 @@ LOAD_DOTENV = if [ -f .env ]; then set -a; . ./.env; set +a; fi
 
 ## Development ────────────────────────────────────────
 
-dev: ## Run proxy in foreground with CLI_ROUTER_PROFILE=dev (port 8788, separate DBs). Auto-sources ./.env.
+dev-proxy: ## Run proxy in foreground with CLI_ROUTER_PROFILE=dev (port 8788, separate DBs). Auto-sources ./.env.
 	@if [ ! -f "$(DEV_CONFIG)" ]; then \
 		echo "no dev config at $(DEV_CONFIG). Run 'make dev-init' first."; \
 		exit 1; \
@@ -22,7 +22,7 @@ dev: ## Run proxy in foreground with CLI_ROUTER_PROFILE=dev (port 8788, separate
 		: $${CLI_ROUTER_PROFILE:=dev}; export CLI_ROUTER_PROFILE; \
 		cargo run -p proxy
 
-dev-tui: ## Run proxy-tui pointed at the dev proxy (default 127.0.0.1:8788). Auto-sources ./.env.
+dev-proxy-tui: ## Run proxy-tui pointed at the dev proxy (default 127.0.0.1:8788). Auto-sources ./.env.
 	@$(LOAD_DOTENV); \
 		: $${CLI_ROUTER_PROXY_URL:=http://127.0.0.1:$(DEV_PORT)}; export CLI_ROUTER_PROXY_URL; \
 		cargo run -p proxy-tui
@@ -59,3 +59,16 @@ dev-paths: ## Print resolved dev paths and ports
 	@echo "dev port:       $(DEV_PORT)"
 	@echo "prod config:    $(PROD_CONFIG)"
 	@echo "prod port:      8787 (managed by launchd via make install-service)"
+
+DEV_DB := $(DEV_DATA_DIR)/proxy.db
+
+dev-seed-requests: ## Insert mock requests into the dev DB (default 200). Override: make dev-seed-requests SEED_COUNT=500
+	@if [ ! -f "$(DEV_DB)" ]; then \
+		echo "error: $(DEV_DB) not found. Run 'make dev-proxy' first to create it."; \
+		exit 1; \
+	fi
+	@count=$$(sqlite3 "$(DEV_DB)" "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo 0); \
+	echo "requests before seed: $$count"; \
+	sqlite3 "$(DEV_DB)" < scripts/seed-dev-requests.sql; \
+	count=$$(sqlite3 "$(DEV_DB)" "SELECT COUNT(*) FROM requests;"); \
+	echo "requests after seed:  $$count"

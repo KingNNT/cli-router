@@ -28,7 +28,7 @@ pub trait RequestLogReadPort: Send + Sync {
     fn total_count(&self) -> Result<u64, ProxyError>;
     fn count_by_provider(&self) -> Result<BTreeMap<String, u64>, ProxyError>;
     fn count_by_status(&self) -> Result<BTreeMap<String, u64>, ProxyError>;
-    fn recent(&self, limit: u32) -> Result<Vec<RequestRow>, ProxyError>;
+    fn recent(&self, limit: u32, offset: u32) -> Result<Vec<RequestRow>, ProxyError>;
     fn summarize(&self, from_ms: i64, to_ms: i64) -> Result<UsageSummary, ProxyError>;
     fn quota_seed(&self, cutoff_ms: i64) -> Result<Vec<QuotaSeedRow>, ProxyError>;
     fn count_translations(&self) -> Result<TranslationCounts, ProxyError>;

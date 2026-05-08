@@ -51,9 +51,9 @@ impl AdminClient {
             .map_err(|e| ClientError::Decode(e.to_string()))
     }
 
-    pub fn get_recent(&self, limit: u32) -> Result<RecentRequestsResponse, ClientError> {
+    pub fn get_recent(&self, limit: u32, offset: u32) -> Result<RecentRequestsResponse, ClientError> {
         get_json(&format!(
-            "{}/admin/requests/recent?limit={limit}",
+            "{}/admin/requests/recent?limit={limit}&offset={offset}",
             self.base_url
         ))
     }

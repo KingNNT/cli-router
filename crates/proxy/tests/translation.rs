@@ -507,7 +507,7 @@ async fn translation_direction_persists_in_request_log() {
     assert_eq!(resp.status(), 200, "proxy should return 200");
 
     // Verify the persisted row has translation_direction set.
-    let rows = repo.recent(10).unwrap();
+    let rows = repo.recent(10, 0).unwrap();
     assert_eq!(rows.len(), 1, "exactly one request row");
     assert_eq!(
         rows[0].translation_direction.as_deref(),
