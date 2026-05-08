@@ -45,7 +45,7 @@ Two enforcement levels: cargo-level between libraries and apps (compiler refuses
 
 ### Proxy config
 
-Both `config.rs` and `config/` directory exist. TOML config with multi-provider, routing rules, `${ENV}` interpolation, and `AuthConfig` variants (`Passthrough`, `ApiKey`, `Bearer`, `AnthropicOAuth`). Lives at `~/.config/cli-router/config.toml`.
+Both `config.rs` and `config/` directory exist. TOML config with multi-provider, routing rules, `${ENV}` interpolation (env vars sourced from `~/.config/cli-router/service.env` for the launchd service), and `AuthConfig` variants (`Passthrough`, `ApiKey`, `Bearer`, `AnthropicOAuth`). Lives at `~/.config/cli-router/config.toml`.
 
 ## Rules (in `.claude/rules/`)
 
