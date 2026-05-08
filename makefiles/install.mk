@@ -1,4 +1,4 @@
-.PHONY: install install-proxy install-proxy-tui install-analysis uninstall uninstall-proxy uninstall-proxy-tui uninstall-analysis _install-proxy-bin
+.PHONY: install install-proxy install-proxy-tui install-analysis uninstall uninstall-proxy uninstall-proxy-tui uninstall-analysis _install-proxy-bin prod
 
 CARGO          ?= cargo
 CARGO_INSTALL  ?= $(CARGO) install --locked --force
@@ -6,6 +6,10 @@ CARGO_INSTALL  ?= $(CARGO) install --locked --force
 PROXY_CRATE     := crates/proxy
 PROXY_TUI_CRATE := crates/proxy-tui
 ANALYSIS_CRATE  := crates/analysis
+
+## Production ─────────────────────────────────────────
+
+prod: install install-service ## Ship to production: build all binaries, install globally, register and start service
 
 ## Install ────────────────────────────────────────────
 
