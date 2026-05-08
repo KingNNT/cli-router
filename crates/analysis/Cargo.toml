@@ -7,7 +7,7 @@ edition = "2024"
 name = "analysis"
 
 [[bin]]
-name = "analysis"
+name = "cli-router-analysis"
 path = "src/main.rs"
 
 [dependencies]
