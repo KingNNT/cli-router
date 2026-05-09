@@ -5,6 +5,7 @@
 
 mod app;
 mod client;
+mod config_writer;
 mod terminal;
 mod ui;
 mod validate;
