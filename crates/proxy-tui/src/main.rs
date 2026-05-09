@@ -342,10 +342,10 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState, term_area
 fn handle_config_key(k: KeyEvent, _client: &AdminClient, state: &mut AppState) {
     match k.code {
         // Section switching
-        KeyCode::Left | KeyCode::Char('[') => {
+        KeyCode::Left | KeyCode::Char('[') | KeyCode::BackTab => {
             state.config_section = state.config_section.prev();
         }
-        KeyCode::Right | KeyCode::Char(']') => {
+        KeyCode::Right | KeyCode::Char(']') | KeyCode::Tab => {
             state.config_section = state.config_section.next();
         }
         // Up/Down handled by move_selection_up/down above
@@ -451,6 +451,32 @@ fn tab_hit(x: u16, y: u16, tabs_area: Rect) -> Option<View> {
         let w = label.chars().count() as u16 + 2;
         if x >= col && x < col + w {
             return Some(*v);
+        }
+        col += w;
+    }
+    None
+}
+
+/// Hit-test the config section sub-tabs.  The `draw_config` function places the
+/// section tabs on the first row inside the Config block's inner area.  The
+/// block occupies `body_area`, so the first inner row is `body_area.y + 1`.
+/// Each tab title is `" {Label} "` wrapped by the ratatui `Tabs` widget with
+/// default left/right padding of one space each.
+fn config_section_tab_hit(x: u16, y: u16, body_area: Rect) -> Option<ConfigSection> {
+    let tabs_y = body_area.y + 1;
+    if y != tabs_y {
+        return None;
+    }
+    let mut col = body_area.x + 1;
+    for (i, section) in ConfigSection::ALL.iter().enumerate() {
+        if i > 0 {
+            col += 1; // single-cell divider (│)
+        }
+        let label = format!(" {} ", section.label());
+        // +2 for the ratatui Tabs default left/right padding (one space each).
+        let w = label.chars().count() as u16 + 2;
+        if x >= col && x < col + w {
+            return Some(*section);
         }
         col += w;
     }
@@ -680,6 +706,11 @@ fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mu
             }
             match state.view {
                 View::Config => {
+                    // Check section tab clicks first
+                    if let Some(section) = config_section_tab_hit(m.column, m.row, body_area) {
+                        state.config_section = section;
+                        return;
+                    }
                     if let Some(action) = provider_toolbar_hit(m.column, m.row, body_area) {
                         dispatch_provider_action(action, client, state);
                         return;
