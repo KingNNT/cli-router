@@ -183,7 +183,6 @@ pub enum Modal {
     ProviderForm(ProviderFormModal),
     DeleteConfirm(DeleteConfirmModal),
     Help,
-    Wizard(WizardState),
     RoutingForm(RoutingFormModal),
     QuotaForm(QuotaFormModal),
 }
@@ -706,10 +705,29 @@ impl AppState {
     pub fn move_selection_down(&mut self) {
         match self.view {
             View::Config => {
-                if let Some(Ok(cfg)) = &self.config
-                    && self.providers_selected + 1 < cfg.providers.len()
-                {
-                    self.providers_selected += 1;
+                match self.config_section {
+                    ConfigSection::Providers => {
+                        if let Some(Ok(cfg)) = &self.config
+                            && self.providers_selected + 1 < cfg.providers.len()
+                        {
+                            self.providers_selected += 1;
+                        }
+                    }
+                    ConfigSection::Routing => {
+                        if let Some(Ok(cfg)) = &self.config
+                            && self.routing_selected + 1 < cfg.routing.len()
+                        {
+                            self.routing_selected += 1;
+                        }
+                    }
+                    ConfigSection::Quotas => {
+                        if let Some(Ok(cfg)) = &self.config
+                            && self.quota_selected + 1 < cfg.quota.len()
+                        {
+                            self.quota_selected += 1;
+                        }
+                    }
+                    ConfigSection::Settings => {}
                 }
             }
             View::Requests => {
@@ -724,7 +742,18 @@ impl AppState {
     pub fn move_selection_up(&mut self) {
         match self.view {
             View::Config => {
-                self.providers_selected = self.providers_selected.saturating_sub(1);
+                match self.config_section {
+                    ConfigSection::Providers => {
+                        self.providers_selected = self.providers_selected.saturating_sub(1);
+                    }
+                    ConfigSection::Routing => {
+                        self.routing_selected = self.routing_selected.saturating_sub(1);
+                    }
+                    ConfigSection::Quotas => {
+                        self.quota_selected = self.quota_selected.saturating_sub(1);
+                    }
+                    ConfigSection::Settings => {}
+                }
             }
             View::Requests => {
                 self.requests.selected = self.requests.selected.saturating_sub(1);

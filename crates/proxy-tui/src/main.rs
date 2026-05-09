@@ -10,11 +10,13 @@ mod terminal;
 mod ui;
 mod validate;
 mod views;
+mod wizard;
 
 use crate::app::{
-    ALL_VIEWS, AppState, AuthInputKind, DeleteConfirmModal, FormField, FormMode, FormState, Modal,
+    AppMode, ConfigSection, QuotaField, QuotaFormModal, RoutingField, RoutingFormModal, ALL_VIEWS,
+    AppState, AuthInputKind, DeleteConfirmModal, FormField, FormMode, FormState, Modal,
     PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderAction, ProviderFormModal, RangePreset,
-    TestProviderModal, TestState, View,
+    TestProviderModal, TestState, View, WizardStep,
 };
 use crate::client::AdminClient;
 use chrono::{Datelike, Local, TimeZone};
@@ -41,7 +43,31 @@ fn main() -> std::io::Result<()> {
     let client = AdminClient::new(base);
     let mut state = AppState::new();
 
-    refresh_all(&client, &mut state);
+    // Startup flow: try connecting to the proxy daemon.
+    let config_path = config_writer::resolved_config_path();
+    let config_exists = config_path.exists();
+
+    match client.get_status() {
+        Ok(status) => {
+            // Connected to running proxy.
+            state.mode = AppMode::Connected;
+            state.set_status(Ok(status));
+            refresh_all(&client, &mut state);
+        }
+        Err(_) if config_exists => {
+            // Offline but config file exists — read from file.
+            state.mode = AppMode::Offline;
+            match config_writer::read_from_file(&config_path) {
+                Ok(cfg) => state.set_config(Ok(cfg)),
+                Err(e) => state.set_config(Err(e)),
+            }
+        }
+        Err(_) => {
+            // No proxy, no config — launch the first-run wizard.
+            state.mode = AppMode::Offline;
+            state.wizard = Some(wizard::new_wizard());
+        }
+    }
 
     let term = terminal::setup()?;
     let mut guard = TermGuard(Some(term));
@@ -110,6 +136,13 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState, term_area
         state.should_quit = true;
         return;
     }
+
+    // Wizard: all key events go to wizard handler when active.
+    if state.wizard.is_some() {
+        handle_wizard_key(k, client, state);
+        return;
+    }
+
     if !matches!(&state.modal, Modal::None) {
         handle_modal_key(k, client, state);
         return;
@@ -276,16 +309,93 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState, term_area
         KeyCode::Char('2') => state.set_view(View::Config),
         KeyCode::Char('3') => state.set_view(View::Requests),
         KeyCode::Char('r') => {
-            refresh_view(client, state);
-            state.flash("refreshed");
+            if state.mode == AppMode::Offline {
+                // Offline refresh: re-read config from file.
+                let path = config_writer::resolved_config_path();
+                match config_writer::read_from_file(&path) {
+                    Ok(cfg) => {
+                        state.set_config(Ok(cfg));
+                        state.flash("config reloaded from file");
+                    }
+                    Err(e) => {
+                        state.set_config(Err(e));
+                    }
+                }
+            } else {
+                refresh_view(client, state);
+                state.flash("refreshed");
+            }
         }
         KeyCode::Down | KeyCode::Char('j') => state.move_selection_down(),
         KeyCode::Up | KeyCode::Char('k') => state.move_selection_up(),
-        KeyCode::Char('a') if state.view == View::Config => open_add_modal(state),
-        KeyCode::Char('t') if state.view == View::Config => open_test_modal(state),
-        KeyCode::Char('e') if state.view == View::Config => open_edit_modal(state),
-        KeyCode::Char('d') if state.view == View::Config => open_delete_modal(state),
         _ => {}
+    }
+
+    // Config-tab-specific keys.
+    if state.view == View::Config {
+        handle_config_key(k, client, state);
+    }
+}
+
+// ---- Config tab key handling ----
+
+fn handle_config_key(k: KeyEvent, _client: &AdminClient, state: &mut AppState) {
+    match k.code {
+        // Section switching
+        KeyCode::Left | KeyCode::Char('[') => {
+            state.config_section = state.config_section.prev();
+        }
+        KeyCode::Right | KeyCode::Char(']') => {
+            state.config_section = state.config_section.next();
+        }
+        // Up/Down handled by move_selection_up/down above
+        _ => {}
+    }
+
+    // Section-specific actions
+    match state.config_section {
+        ConfigSection::Providers => {
+            match k.code {
+                KeyCode::Char('a') => open_add_modal(state),
+                KeyCode::Char('e') => open_edit_modal(state),
+                KeyCode::Char('d') => open_delete_modal(state),
+                KeyCode::Char('t') => open_test_modal(state),
+                _ => {}
+            }
+        }
+        ConfigSection::Routing => {
+            match k.code {
+                KeyCode::Char('a') => {
+                    state.modal = Modal::RoutingForm(RoutingFormModal::new_for_add());
+                }
+                KeyCode::Char('e') => {
+                    open_routing_edit_modal(state);
+                }
+                KeyCode::Char('d') => {
+                    delete_routing_rule(state);
+                }
+                _ => {}
+            }
+        }
+        ConfigSection::Quotas => {
+            match k.code {
+                KeyCode::Char('a') => {
+                    state.modal = Modal::QuotaForm(QuotaFormModal::new_for_add());
+                }
+                KeyCode::Char('e') => {
+                    open_quota_edit_modal(state);
+                }
+                KeyCode::Char('d') => {
+                    delete_quota_rule(state);
+                }
+                _ => {}
+            }
+        }
+        ConfigSection::Settings => {
+            if k.code == KeyCode::Char('e') {
+                toggle_affinity(state);
+            }
+        }
     }
 }
 
@@ -712,10 +822,8 @@ fn handle_modal_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => Modal::None,
             _ => Modal::Help,
         },
-        Modal::Wizard(_) | Modal::RoutingForm(_) | Modal::QuotaForm(_) => {
-            // TODO: Task 7+ will add handlers for these modals
-            Modal::None
-        }
+        Modal::RoutingForm(m) => handle_routing_form_key(k, client, state, m),
+        Modal::QuotaForm(m) => handle_quota_form_key(k, client, state, m),
     };
     state.modal = next;
 }
@@ -1136,6 +1244,487 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
         }
     }
     Modal::ProviderForm(m)
+}
+
+// ---- Wizard handling ----
+
+fn handle_wizard_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
+    let mut wizard = match state.wizard.take() {
+        Some(w) => w,
+        None => return,
+    };
+
+    match (&wizard.step, k.code) {
+        // Ctrl+C always quits
+        _ if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') => {
+            state.should_quit = true;
+            return;
+        }
+        // Welcome step
+        (WizardStep::Welcome, KeyCode::Enter) => {
+            let mut w = wizard;
+            w.step = WizardStep::AddProvider;
+            state.wizard = Some(w);
+        }
+        (WizardStep::Welcome, KeyCode::Char('q')) => {
+            state.should_quit = true;
+        }
+        // Add Provider step — delegate to form key handling
+        (WizardStep::AddProvider, _) => {
+            let m = std::mem::replace(&mut wizard.form, ProviderFormModal::new_for_add());
+            let modal = handle_wizard_form_key(k, client, state, m);
+            match modal {
+                Some(Modal::ProviderForm(updated_form)) => {
+                    // Still editing — put back
+                    let mut w = wizard;
+                    w.form = updated_form;
+                    state.wizard = Some(w);
+                }
+                None => {
+                    // Form was submitted or cancelled
+                    if !state.should_quit {
+                        let mut w = wizard;
+                        w.step = WizardStep::Done;
+                        state.wizard = Some(w);
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        // Done step
+        (WizardStep::Done, KeyCode::Char('e')) | (WizardStep::Done, KeyCode::Char('E')) => {
+            state.should_quit = true;
+        }
+        (WizardStep::Done, KeyCode::Char('t'))
+        | (WizardStep::Done, KeyCode::Char('T'))
+        | (WizardStep::Done, KeyCode::Enter) => {
+            // Dismiss wizard, load config, show normal TUI.
+            dismiss_wizard(state);
+        }
+        _ => {
+            // Unhandled key in wizard — put state back
+            state.wizard = Some(wizard);
+        }
+    }
+}
+
+/// Handle form keys within the wizard's Add Provider step.
+/// Returns `Some(Modal::ProviderForm)` if still editing (to put back into wizard state),
+/// or `None` if the form was submitted/cancelled.
+fn handle_wizard_form_key(
+    k: KeyEvent,
+    _client: &AdminClient,
+    state: &mut AppState,
+    mut m: ProviderFormModal,
+) -> Option<Modal> {
+    match k.code {
+        KeyCode::Esc => {
+            // In wizard context, Esc on the form means skip (save minimal config)
+            let cfg = wizard::build_minimal_config();
+            let path = config_writer::resolved_config_path();
+            match config_writer::write_to_file(&cfg, &path) {
+                Ok(()) => {
+                    state.set_config(Ok(cfg));
+                }
+                Err(e) => {
+                    state.set_config(Err(e));
+                }
+            }
+            return None;
+        }
+        KeyCode::Tab => {
+            m.focused = m.focused.next(m.auth_kind);
+        }
+        KeyCode::BackTab => {
+            m.focused = m.focused.prev(m.auth_kind);
+        }
+        KeyCode::Left => cycle_field_value(&mut m, false),
+        KeyCode::Right => cycle_field_value(&mut m, true),
+        KeyCode::Enter if m.focused == FormField::Save => {
+            // Submit: build config and write to file
+            if m.auth_kind == AuthInputKind::OAuthAnthropic {
+                // OAuth not supported in wizard — skip
+                m.error = Some("OAuth not supported in wizard. Use passthrough or api_key.".into());
+                return Some(Modal::ProviderForm(m));
+            }
+            let cfg = wizard::build_config_from_form(&m);
+            let path = config_writer::resolved_config_path();
+            match config_writer::write_to_file(&cfg, &path) {
+                Ok(()) => {
+                    state.set_config(Ok(cfg));
+                    return None;
+                }
+                Err(e) => {
+                    m.error = Some(format!("failed to save config: {e}"));
+                    return Some(Modal::ProviderForm(m));
+                }
+            }
+        }
+        KeyCode::Char('s') => {
+            // s also submits (same as Enter on Save)
+            let cfg = wizard::build_config_from_form(&m);
+            let path = config_writer::resolved_config_path();
+            match config_writer::write_to_file(&cfg, &path) {
+                Ok(()) => {
+                    state.set_config(Ok(cfg));
+                    return None;
+                }
+                Err(e) => {
+                    m.error = Some(format!("failed to save config: {e}"));
+                    return Some(Modal::ProviderForm(m));
+                }
+            }
+        }
+        KeyCode::Backspace => {
+            edit_focused_text(&mut m, |s| {
+                s.pop();
+            });
+        }
+        KeyCode::Char(c) => {
+            edit_focused_text(&mut m, |s| s.push(c));
+        }
+        _ => {}
+    }
+    Some(Modal::ProviderForm(m))
+}
+
+/// Dismiss the wizard and enter normal TUI mode.
+fn dismiss_wizard(state: &mut AppState) {
+    state.wizard = None;
+    state.set_view(View::Config);
+    // Config was already loaded during wizard submission
+}
+
+// ---- Routing / Quota form handlers ----
+
+fn open_routing_edit_modal(state: &mut AppState) {
+    let cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()) {
+        Some(c) => c,
+        None => return,
+    };
+    let idx = state.routing_selected;
+    let rule = match cfg.routing.get(idx) {
+        Some(r) => r,
+        None => return,
+    };
+    state.modal = Modal::RoutingForm(RoutingFormModal::from_rule(idx, rule));
+}
+
+fn open_quota_edit_modal(state: &mut AppState) {
+    let cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()) {
+        Some(c) => c,
+        None => return,
+    };
+    let idx = state.quota_selected;
+    let quota = match cfg.quota.get(idx) {
+        Some(q) => q,
+        None => return,
+    };
+    state.modal = Modal::QuotaForm(QuotaFormModal::from_rule(idx, quota));
+}
+
+fn delete_routing_rule(state: &mut AppState) {
+    let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+        Some(c) => c,
+        None => return,
+    };
+    let idx = state.routing_selected;
+    if idx >= cfg.routing.len() {
+        return;
+    }
+    cfg.routing.remove(idx);
+    // Clamp selection
+    if state.routing_selected >= cfg.routing.len() {
+        state.routing_selected = cfg.routing.len().saturating_sub(1);
+    }
+    match save_config_state(&cfg, state) {
+        Ok(updated) => {
+            state.set_config(Ok(updated));
+            state.flash("routing rule deleted");
+        }
+        Err(e) => state.flash(format!("delete failed: {e}")),
+    }
+}
+
+fn delete_quota_rule(state: &mut AppState) {
+    let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+        Some(c) => c,
+        None => return,
+    };
+    let idx = state.quota_selected;
+    if idx >= cfg.quota.len() {
+        return;
+    }
+    cfg.quota.remove(idx);
+    // Clamp selection
+    if state.quota_selected >= cfg.quota.len() {
+        state.quota_selected = cfg.quota.len().saturating_sub(1);
+    }
+    match save_config_state(&cfg, state) {
+        Ok(updated) => {
+            state.set_config(Ok(updated));
+            state.flash("quota rule deleted");
+        }
+        Err(e) => state.flash(format!("delete failed: {e}")),
+    }
+}
+
+fn toggle_affinity(state: &mut AppState) {
+    let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+        Some(c) => c,
+        None => return,
+    };
+    cfg.affinity.enabled = !cfg.affinity.enabled;
+    match save_config_state(&cfg, state) {
+        Ok(updated) => {
+            let enabled = updated.affinity.enabled;
+            state.set_config(Ok(updated));
+            let status = if enabled {
+                "enabled"
+            } else {
+                "disabled"
+            };
+            state.flash(format!("affinity {status}"));
+        }
+        Err(e) => state.flash(format!("toggle failed: {e}")),
+    }
+}
+
+fn handle_routing_form_key(
+    k: KeyEvent,
+    client: &AdminClient,
+    state: &mut AppState,
+    mut m: RoutingFormModal,
+) -> Modal {
+    match k.code {
+        KeyCode::Esc => Modal::None,
+        KeyCode::Tab => {
+            m.focused = m.focused.next();
+            Modal::RoutingForm(m)
+        }
+        KeyCode::BackTab => {
+            m.focused = m.focused.prev();
+            Modal::RoutingForm(m)
+        }
+        KeyCode::Enter if m.focused == RoutingField::Strategy => {
+            m.strategy = wizard::strategy_cycle(&m.strategy);
+            Modal::RoutingForm(m)
+        }
+        KeyCode::Char('s') | KeyCode::Enter => {
+            // Submit
+            if m.match_model.trim().is_empty() {
+                m.error = Some("match model is required".into());
+                return Modal::RoutingForm(m);
+            }
+            if m.provider.trim().is_empty() {
+                m.error = Some("provider is required".into());
+                return Modal::RoutingForm(m);
+            }
+
+            let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+                Some(c) => c,
+                None => {
+                    m.error = Some("config not loaded".into());
+                    return Modal::RoutingForm(m);
+                }
+            };
+
+            let rule = proxy_admin_api::RoutingRulePayload {
+                r#match: proxy_admin_api::MatchPayload {
+                    model: Some(m.match_model.trim().to_string()),
+                },
+                provider: m.provider.trim().to_string(),
+                fallback: m
+                    .fallback
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                strategy: m.strategy.clone(),
+                priority: m.priority.trim().parse::<u32>().ok(),
+            };
+
+            match &m.mode {
+                FormMode::Add => cfg.routing.push(rule),
+                FormMode::Edit { original_index, .. } => {
+                    if *original_index >= cfg.routing.len() {
+                        m.error = Some("routing list changed; press Esc and reopen".into());
+                        return Modal::RoutingForm(m);
+                    }
+                    cfg.routing[*original_index] = rule;
+                }
+            }
+
+            match save_config_via_client(client, &cfg, state) {
+                Ok(updated) => {
+                    state.set_config(Ok(updated));
+                    let action = match m.mode {
+                        FormMode::Add => "added",
+                        FormMode::Edit { .. } => "updated",
+                    };
+                    state.flash(format!("routing rule {action}"));
+                    Modal::None
+                }
+                Err(e) => {
+                    m.error = Some(format!("save failed: {e}"));
+                    Modal::RoutingForm(m)
+                }
+            }
+        }
+        KeyCode::Backspace => {
+            edit_routing_text(&mut m, |s| { s.pop(); });
+            Modal::RoutingForm(m)
+        }
+        KeyCode::Char(c) => {
+            edit_routing_text(&mut m, |s| s.push(c));
+            Modal::RoutingForm(m)
+        }
+        _ => Modal::RoutingForm(m),
+    }
+}
+
+fn edit_routing_text(m: &mut RoutingFormModal, f: impl FnOnce(&mut String)) {
+    m.error = None;
+    let target: Option<&mut String> = match m.focused {
+        RoutingField::MatchModel => Some(&mut m.match_model),
+        RoutingField::Provider => Some(&mut m.provider),
+        RoutingField::Fallback => Some(&mut m.fallback),
+        RoutingField::Priority => Some(&mut m.priority),
+        _ => None,
+    };
+    if let Some(s) = target {
+        f(s);
+    }
+}
+
+fn handle_quota_form_key(
+    k: KeyEvent,
+    client: &AdminClient,
+    state: &mut AppState,
+    mut m: QuotaFormModal,
+) -> Modal {
+    match k.code {
+        KeyCode::Esc => Modal::None,
+        KeyCode::Tab => {
+            m.focused = m.focused.next();
+            Modal::QuotaForm(m)
+        }
+        KeyCode::BackTab => {
+            m.focused = m.focused.prev();
+            Modal::QuotaForm(m)
+        }
+        KeyCode::Char('s') | KeyCode::Enter => {
+            // Submit
+            if m.provider.trim().is_empty() {
+                m.error = Some("provider is required".into());
+                return Modal::QuotaForm(m);
+            }
+            if m.window.trim().is_empty() {
+                m.error = Some("window is required".into());
+                return Modal::QuotaForm(m);
+            }
+
+            let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+                Some(c) => c,
+                None => {
+                    m.error = Some("config not loaded".into());
+                    return Modal::QuotaForm(m);
+                }
+            };
+
+            let quota = proxy_admin_api::QuotaPayload {
+                provider: m.provider.trim().to_string(),
+                window: m.window.trim().to_string(),
+                max_requests: m.max_requests.trim().parse::<u64>().ok(),
+                max_input_tokens: m.max_input_tokens.trim().parse::<u64>().ok(),
+                max_output_tokens: m.max_output_tokens.trim().parse::<u64>().ok(),
+                warn_pct: m.warn_pct.trim().parse::<u8>().unwrap_or(80),
+            };
+
+            match &m.mode {
+                FormMode::Add => cfg.quota.push(quota),
+                FormMode::Edit { original_index, .. } => {
+                    if *original_index >= cfg.quota.len() {
+                        m.error = Some("quota list changed; press Esc and reopen".into());
+                        return Modal::QuotaForm(m);
+                    }
+                    cfg.quota[*original_index] = quota;
+                }
+            }
+
+            match save_config_via_client(client, &cfg, state) {
+                Ok(updated) => {
+                    state.set_config(Ok(updated));
+                    let action = match m.mode {
+                        FormMode::Add => "added",
+                        FormMode::Edit { .. } => "updated",
+                    };
+                    state.flash(format!("quota rule {action}"));
+                    Modal::None
+                }
+                Err(e) => {
+                    m.error = Some(format!("save failed: {e}"));
+                    Modal::QuotaForm(m)
+                }
+            }
+        }
+        KeyCode::Backspace => {
+            edit_quota_text(&mut m, |s| { s.pop(); });
+            Modal::QuotaForm(m)
+        }
+        KeyCode::Char(c) => {
+            edit_quota_text(&mut m, |s| s.push(c));
+            Modal::QuotaForm(m)
+        }
+        _ => Modal::QuotaForm(m),
+    }
+}
+
+fn edit_quota_text(m: &mut QuotaFormModal, f: impl FnOnce(&mut String)) {
+    m.error = None;
+    let target: Option<&mut String> = match m.focused {
+        QuotaField::Provider => Some(&mut m.provider),
+        QuotaField::Window => Some(&mut m.window),
+        QuotaField::MaxRequests => Some(&mut m.max_requests),
+        QuotaField::MaxInputTokens => Some(&mut m.max_input_tokens),
+        QuotaField::MaxOutputTokens => Some(&mut m.max_output_tokens),
+        QuotaField::WarnPct => Some(&mut m.warn_pct),
+    };
+    if let Some(s) = target {
+        f(s);
+    }
+}
+
+// ---- Dual-mode save helpers ----
+
+/// Save config: connected → API, offline → file.
+fn save_config_state(cfg: &proxy_admin_api::ConfigPayload, state: &AppState) -> Result<proxy_admin_api::ConfigPayload, String> {
+    if state.mode == AppMode::Connected {
+        // For offline operations that already have client context,
+        // use the direct file path instead
+        let path = config_writer::resolved_config_path();
+        config_writer::write_to_file(cfg, &path)?;
+        Ok(cfg.clone())
+    } else {
+        let path = config_writer::resolved_config_path();
+        config_writer::write_to_file(cfg, &path)?;
+        Ok(cfg.clone())
+    }
+}
+
+/// Save config via AdminClient when connected, or to file when offline.
+fn save_config_via_client(
+    client: &AdminClient,
+    cfg: &proxy_admin_api::ConfigPayload,
+    state: &AppState,
+) -> Result<proxy_admin_api::ConfigPayload, String> {
+    if state.mode == AppMode::Connected {
+        client.put_config(cfg).map_err(|e| e.to_string())
+    } else {
+        let path = config_writer::resolved_config_path();
+        config_writer::write_to_file(cfg, &path)?;
+        Ok(cfg.clone())
+    }
 }
 
 fn submit_oauth_edit(

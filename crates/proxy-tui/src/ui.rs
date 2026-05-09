@@ -2,12 +2,14 @@
 //! layout: tab bar, body for the active view, status line, optional modal.
 
 use crate::app::{
-    ALL_VIEWS, AppState, AuthInputKind, DeleteConfirmModal, FormField, FormMode, FormState, Modal,
+    AppMode, ConfigSection, QuotaField, QuotaFormModal, RoutingField, RoutingFormModal, ALL_VIEWS,
+    AppState, AuthInputKind, DeleteConfirmModal, FormField, FormMode, FormState, Modal,
     PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderFormModal, TestProviderModal, TestState, View,
+    WizardStep,
 };
 use chrono::{Local, TimeZone};
 use proxy_admin_api::{
-    AuthPayload, ConfigPayload, QuotaMetricDto, QuotaMetricState, QuotaStatusListDto,
+    AuthPayload, QuotaMetricDto, QuotaMetricState, QuotaStatusListDto,
     StatusResponse,
 };
 use ratatui::Frame;
@@ -17,6 +19,12 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Tabs, Wrap};
 
 pub fn draw(f: &mut Frame, state: &AppState) {
+    // Wizard: full-screen overlay with Clear.
+    if let Some(wizard) = &state.wizard {
+        draw_wizard(f, wizard);
+        return;
+    }
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -29,7 +37,7 @@ pub fn draw(f: &mut Frame, state: &AppState) {
     draw_tabs(f, chunks[0], state);
     match state.view {
         View::Status => draw_status(f, chunks[1], state.status.as_ref(), state.quota.as_ref()),
-        View::Config => draw_providers(f, chunks[1], state),
+        View::Config => draw_config(f, chunks[1], state),
         View::Requests => draw_requests(f, chunks[1], state),
         View::Usage => crate::views::usage::draw(f, chunks[1], &state.usage),
         View::Account => crate::views::account::draw(f, chunks[1], &state.account),
@@ -42,7 +50,8 @@ pub fn draw(f: &mut Frame, state: &AppState) {
         Modal::ProviderForm(m) => draw_form_modal(f, m),
         Modal::DeleteConfirm(m) => draw_delete_confirm_modal(f, m),
         Modal::Help => draw_help_modal(f),
-        Modal::Wizard(_) | Modal::RoutingForm(_) | Modal::QuotaForm(_) => {} // TODO: rendered in later tasks
+        Modal::RoutingForm(m) => draw_routing_form_modal(f, m),
+        Modal::QuotaForm(m) => draw_quota_form_modal(f, m),
     }
 }
 
@@ -247,10 +256,10 @@ fn fmt_duration_ms(ms: u64) -> String {
     }
 }
 
-// ---- Providers view ----
+// ---- Config view (with section tabs) ----
 
-fn draw_providers(f: &mut Frame, area: Rect, state: &AppState) {
-    let block = Block::default().borders(Borders::ALL).title(" Providers ");
+fn draw_config(f: &mut Frame, area: Rect, state: &AppState) {
+    let block = Block::default().borders(Borders::ALL).title(" Config ");
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -258,14 +267,55 @@ fn draw_providers(f: &mut Frame, area: Rect, state: &AppState) {
         return;
     }
 
+    // Row 0 = section tabs; row 1 = separator; row 2+ = section content.
+    let tabs_area = Rect::new(inner.x, inner.y, inner.width, 1);
+    draw_config_section_tabs(f, tabs_area, state.config_section);
+
+    if inner.height < 2 {
+        return;
+    }
+    let content_area = Rect::new(inner.x, inner.y + 1, inner.width, inner.height - 1);
+
+    match state.config_section {
+        ConfigSection::Providers => draw_providers_content(f, content_area, state),
+        ConfigSection::Routing => draw_routing_content(f, content_area, state),
+        ConfigSection::Quotas => draw_quotas_content(f, content_area, state),
+        ConfigSection::Settings => draw_settings_content(f, content_area, state),
+    }
+}
+
+fn draw_config_section_tabs(f: &mut Frame, area: Rect, active: ConfigSection) {
+    let titles: Vec<Line> = ConfigSection::ALL
+        .iter()
+        .map(|s| Line::from(format!(" {} ", s.label())))
+        .collect();
+    let active_idx = ConfigSection::ALL.iter().position(|&s| s == active).unwrap_or(0);
+    let tabs = Tabs::new(titles)
+        .select(active_idx)
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        );
+    f.render_widget(tabs, area);
+}
+
+// ---- Providers section (content-only, no outer Block) ----
+
+fn draw_providers_content(f: &mut Frame, area: Rect, state: &AppState) {
+    if area.height == 0 {
+        return;
+    }
+
     // Row 0 = toolbar; row 1 = gap; row 2 = table header; row 3+ = data.
-    let toolbar_area = Rect::new(inner.x, inner.y, inner.width, 1);
+    let toolbar_area = Rect::new(area.x, area.y, area.width, 1);
     draw_provider_toolbar(f, toolbar_area);
 
-    if inner.height < 3 {
-        return; // not enough room for the table once the toolbar is in.
+    if area.height < 3 {
+        return;
     }
-    let table_area = Rect::new(inner.x, inner.y + 2, inner.width, inner.height - 2);
+    let table_area = Rect::new(area.x, area.y + 2, area.width, area.height - 2);
 
     let cfg = match &state.config {
         None => return draw_message(f, table_area, "loading…"),
@@ -314,6 +364,235 @@ fn draw_providers(f: &mut Frame, area: Rect, state: &AppState) {
     f.render_widget(table, table_area);
 }
 
+// ---- Routing section ----
+
+fn draw_routing_content(f: &mut Frame, area: Rect, state: &AppState) {
+    if area.height == 0 {
+        return;
+    }
+
+    // Row 0 = toolbar
+    let toolbar_area = Rect::new(area.x, area.y, area.width, 1);
+    draw_routing_toolbar(f, toolbar_area);
+
+    if area.height < 3 {
+        return;
+    }
+    let table_area = Rect::new(area.x, area.y + 2, area.width, area.height - 2);
+
+    let cfg = match &state.config {
+        None => return draw_message(f, table_area, "loading…"),
+        Some(Err(e)) => return draw_error(f, table_area, e),
+        Some(Ok(c)) => c,
+    };
+    if cfg.routing.is_empty() {
+        return draw_message(f, table_area, "(no routing rules)");
+    }
+
+    let header = Row::new(vec![
+        Cell::from("#"),
+        Cell::from("match.model"),
+        Cell::from("provider"),
+        Cell::from("fallback"),
+        Cell::from("strategy"),
+    ])
+    .style(Style::default().add_modifier(Modifier::BOLD));
+
+    let rows: Vec<Row> = cfg
+        .routing
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let style = if i == state.routing_selected {
+                Style::default().fg(Color::Black).bg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+            let strategy_str = crate::wizard::strategy_label(&r.strategy);
+            Row::new(vec![
+                Cell::from(format!("{}", i + 1)),
+                Cell::from(r.r#match.model.clone().unwrap_or_else(|| "*".into())),
+                Cell::from(r.provider.clone()),
+                Cell::from(r.fallback.join(", ")),
+                Cell::from(strategy_str),
+            ])
+            .style(style)
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(4),
+        Constraint::Length(20),
+        Constraint::Length(20),
+        Constraint::Length(20),
+        Constraint::Min(12),
+    ];
+    let table = Table::new(rows, widths).header(header);
+    f.render_widget(table, table_area);
+}
+
+fn draw_routing_toolbar(f: &mut Frame, area: Rect) {
+    let actions = ["[a]dd", "[e]dit", "[d]elete"];
+    let mut spans: Vec<Span> = Vec::new();
+    for (i, label) in actions.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            *label,
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+// ---- Quotas section ----
+
+fn draw_quotas_content(f: &mut Frame, area: Rect, state: &AppState) {
+    if area.height == 0 {
+        return;
+    }
+
+    // Row 0 = toolbar
+    let toolbar_area = Rect::new(area.x, area.y, area.width, 1);
+    draw_quotas_toolbar(f, toolbar_area);
+
+    if area.height < 3 {
+        return;
+    }
+    let table_area = Rect::new(area.x, area.y + 2, area.width, area.height - 2);
+
+    let cfg = match &state.config {
+        None => return draw_message(f, table_area, "loading…"),
+        Some(Err(e)) => return draw_error(f, table_area, e),
+        Some(Ok(c)) => c,
+    };
+    if cfg.quota.is_empty() {
+        return draw_message(f, table_area, "(no quota rules)");
+    }
+
+    let header = Row::new(vec![
+        Cell::from("#"),
+        Cell::from("provider"),
+        Cell::from("window"),
+        Cell::from("max_req"),
+        Cell::from("max_in"),
+        Cell::from("max_out"),
+        Cell::from("warn%"),
+    ])
+    .style(Style::default().add_modifier(Modifier::BOLD));
+
+    let rows: Vec<Row> = cfg
+        .quota
+        .iter()
+        .enumerate()
+        .map(|(i, q)| {
+            let style = if i == state.quota_selected {
+                Style::default().fg(Color::Black).bg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+            Row::new(vec![
+                Cell::from(format!("{}", i + 1)),
+                Cell::from(q.provider.clone()),
+                Cell::from(q.window.clone()),
+                Cell::from(q.max_requests.map(|v| v.to_string()).unwrap_or_else(|| "—".into())),
+                Cell::from(
+                    q.max_input_tokens
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "—".into()),
+                ),
+                Cell::from(
+                    q.max_output_tokens
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "—".into()),
+                ),
+                Cell::from(q.warn_pct.to_string()),
+            ])
+            .style(style)
+        })
+        .collect();
+
+    let widths = [
+        Constraint::Length(4),
+        Constraint::Length(16),
+        Constraint::Length(12),
+        Constraint::Length(10),
+        Constraint::Length(10),
+        Constraint::Length(10),
+        Constraint::Min(6),
+    ];
+    let table = Table::new(rows, widths).header(header);
+    f.render_widget(table, table_area);
+}
+
+fn draw_quotas_toolbar(f: &mut Frame, area: Rect) {
+    let actions = ["[a]dd", "[e]dit", "[d]elete"];
+    let mut spans: Vec<Span> = Vec::new();
+    for (i, label) in actions.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            *label,
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+// ---- Settings section ----
+
+fn draw_settings_content(f: &mut Frame, area: Rect, state: &AppState) {
+    let cfg = match &state.config {
+        None => return draw_message(f, area, "loading…"),
+        Some(Err(e)) => return draw_error(f, area, e),
+        Some(Ok(c)) => c,
+    };
+
+    let affinity_str = if cfg.affinity.enabled { "enabled" } else { "disabled" };
+    let proxy_db_str = cfg.proxy_db.as_deref().unwrap_or("(default)");
+    let pricing_db_str = cfg.pricing_db.as_deref().unwrap_or("(default)");
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("port:       ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(cfg.port.to_string()),
+        ]),
+        Line::from(vec![
+            Span::styled("proxy_db:   ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(proxy_db_str),
+        ]),
+        Line::from(vec![
+            Span::styled("pricing_db: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(pricing_db_str),
+        ]),
+        Line::from(vec![
+            Span::styled("affinity:   ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(affinity_str),
+            Span::raw("  "),
+            Span::styled(
+                "[e] toggle",
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("headers:    ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw(cfg.affinity.headers.join(", ")),
+        ]),
+    ];
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+}
+
 fn draw_provider_toolbar(f: &mut Frame, area: Rect) {
     let mut spans: Vec<Span> = Vec::new();
     for (i, action) in PROVIDER_TOOLBAR.iter().enumerate() {
@@ -329,54 +608,6 @@ fn draw_provider_toolbar(f: &mut Frame, area: Rect) {
         ));
     }
     f.render_widget(Paragraph::new(Line::from(spans)), area);
-}
-
-// ---- Routing view ----
-
-fn draw_routing(f: &mut Frame, area: Rect, cfg: Option<&Result<ConfigPayload, String>>) {
-    let block = Block::default().borders(Borders::ALL).title(" Routing ");
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    let cfg = match cfg {
-        None => return draw_message(f, inner, "loading…"),
-        Some(Err(e)) => return draw_error(f, inner, e),
-        Some(Ok(c)) => c,
-    };
-    if cfg.routing.is_empty() {
-        return draw_message(f, inner, "(no routing rules)");
-    }
-
-    let header = Row::new(vec![
-        Cell::from("#"),
-        Cell::from("match.model"),
-        Cell::from("provider"),
-        Cell::from("fallback"),
-    ])
-    .style(Style::default().add_modifier(Modifier::BOLD));
-
-    let rows: Vec<Row> = cfg
-        .routing
-        .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            Row::new(vec![
-                Cell::from(format!("{}", i + 1)),
-                Cell::from(r.r#match.model.clone().unwrap_or_else(|| "*".into())),
-                Cell::from(r.provider.clone()),
-                Cell::from(r.fallback.join(", ")),
-            ])
-        })
-        .collect();
-
-    let widths = [
-        Constraint::Length(4),
-        Constraint::Length(20),
-        Constraint::Length(20),
-        Constraint::Min(20),
-    ];
-    let table = Table::new(rows, widths).header(header);
-    f.render_widget(table, inner);
 }
 
 // ---- Requests view ----
@@ -522,6 +753,14 @@ fn draw_status_line(f: &mut Frame, area: Rect, state: &AppState) {
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
     ))];
+    if state.mode == AppMode::Offline {
+        line.push(Line::from(Span::styled(
+            "⚠ Offline — editing config.toml directly",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )));
+    }
     if let Some(msg) = &state.flash {
         line.push(Line::from(Span::styled(
             msg.clone(),
@@ -922,5 +1161,260 @@ fn draw_help_modal(f: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled("[?] / [Esc] close help", bold)),
     ];
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+// ---- Wizard rendering ----
+
+fn draw_wizard(f: &mut Frame, wizard: &crate::app::WizardState) {
+    f.render_widget(Clear, f.area());
+
+    match &wizard.step {
+        WizardStep::Welcome => draw_wizard_welcome(f),
+        WizardStep::AddProvider => draw_wizard_add_provider(f, &wizard.form),
+        WizardStep::Done => draw_wizard_done(f, &wizard.saved_path),
+    }
+}
+
+fn draw_wizard_welcome(f: &mut Frame) {
+    let area = centered_rect(65, 55, f.area());
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Welcome to cli-router ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let config_path = crate::config_writer::resolved_config_path()
+        .display()
+        .to_string();
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "Welcome to cli-router",
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(Color::Cyan),
+        )),
+        Line::from(""),
+        Line::from("No config found. Let's set one up."),
+        Line::from(""),
+        Line::from("This wizard will help you:"),
+        Line::from("  \u{2022} Add your first LLM provider"),
+        Line::from("  \u{2022} Configure API authentication"),
+        Line::from(""),
+        Line::from(Span::styled("Config will be saved to:", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled(
+            format!("  {config_path}"),
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press Enter to start",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            "Press q to quit",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn draw_wizard_add_provider(f: &mut Frame, form: &ProviderFormModal) {
+    // Reuse the same form rendering as the regular provider form modal.
+    draw_form_modal(f, form);
+}
+
+fn draw_wizard_done(f: &mut Frame, saved_path: &Option<std::path::PathBuf>) {
+    let area = centered_rect(65, 50, f.area());
+    let block = Block::default().borders(Borders::ALL).title(" Setup complete ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let path_display = saved_path
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "(unknown)".into());
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "\u{2713} Config saved!",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  {path_display}"),
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
+        Line::from("Next steps:"),
+        Line::from("  \u{2022} Start proxy: cli-router-proxy"),
+        Line::from("  \u{2022} Re-run TUI to manage config"),
+        Line::from(""),
+        Line::from(""),
+        Line::from(Span::styled(
+            " [E] Exit    [T] Open TUI ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+    ];
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+// ---- Routing form modal ----
+
+fn draw_routing_form_modal(f: &mut Frame, m: &RoutingFormModal) {
+    let area = centered_rect(65, 55, f.area());
+    f.render_widget(Clear, area);
+    let title = match &m.mode {
+        FormMode::Add => " Add routing rule ".to_string(),
+        FormMode::Edit { .. } => " Edit routing rule ".to_string(),
+    };
+    let block = Block::default().borders(Borders::ALL).title(title);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if let Some(err) = &m.error {
+        lines.push(Line::from(Span::styled(
+            format!("\u{26a0} {err}"),
+            Style::default().fg(Color::Red),
+        )));
+        lines.push(Line::from(""));
+    }
+
+    let row = |field: RoutingField, label: &str, value: String| {
+        let marker = if m.focused == field { "\u{25b6} " } else { "  " };
+        let style = if m.focused == field {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        Line::from(vec![
+            Span::styled(format!("{marker}{label:<16}"), style),
+            Span::raw(value),
+        ])
+    };
+
+    lines.push(row(
+        RoutingField::MatchModel,
+        "Match Model:",
+        show_or_placeholder(&m.match_model),
+    ));
+    lines.push(row(
+        RoutingField::Provider,
+        "Provider:",
+        show_or_placeholder(&m.provider),
+    ));
+    lines.push(row(
+        RoutingField::Fallback,
+        "Fallback:",
+        show_or_placeholder(&m.fallback),
+    ));
+    let strategy_str = crate::wizard::strategy_label(&m.strategy);
+    lines.push(row(
+        RoutingField::Strategy,
+        "Strategy:",
+        format!("< {strategy_str} >    [Enter to cycle]"),
+    ));
+    lines.push(row(
+        RoutingField::Priority,
+        "Priority:",
+        show_or_placeholder(&m.priority),
+    ));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Tab/Shift+Tab: move  Enter on Strategy: cycle  s: submit  Esc: cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+// ---- Quota form modal ----
+
+fn draw_quota_form_modal(f: &mut Frame, m: &QuotaFormModal) {
+    let area = centered_rect(65, 55, f.area());
+    f.render_widget(Clear, area);
+    let title = match &m.mode {
+        FormMode::Add => " Add quota rule ".to_string(),
+        FormMode::Edit { .. } => " Edit quota rule ".to_string(),
+    };
+    let block = Block::default().borders(Borders::ALL).title(title);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if let Some(err) = &m.error {
+        lines.push(Line::from(Span::styled(
+            format!("\u{26a0} {err}"),
+            Style::default().fg(Color::Red),
+        )));
+        lines.push(Line::from(""));
+    }
+
+    let row = |field: QuotaField, label: &str, value: String| {
+        let marker = if m.focused == field { "\u{25b6} " } else { "  " };
+        let style = if m.focused == field {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        Line::from(vec![
+            Span::styled(format!("{marker}{label:<20}"), style),
+            Span::raw(value),
+        ])
+    };
+
+    lines.push(row(
+        QuotaField::Provider,
+        "Provider:",
+        show_or_placeholder(&m.provider),
+    ));
+    lines.push(row(
+        QuotaField::Window,
+        "Window:",
+        show_or_placeholder(&m.window),
+    ));
+    lines.push(row(
+        QuotaField::MaxRequests,
+        "Max Requests:",
+        show_or_placeholder(&m.max_requests),
+    ));
+    lines.push(row(
+        QuotaField::MaxInputTokens,
+        "Max Input Tokens:",
+        show_or_placeholder(&m.max_input_tokens),
+    ));
+    lines.push(row(
+        QuotaField::MaxOutputTokens,
+        "Max Output Tokens:",
+        show_or_placeholder(&m.max_output_tokens),
+    ));
+    lines.push(row(
+        QuotaField::WarnPct,
+        "Warn %:",
+        show_or_placeholder(&m.warn_pct),
+    ));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Tab/Shift+Tab: move  s: submit  Esc: cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
