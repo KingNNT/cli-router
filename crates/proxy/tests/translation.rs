@@ -210,10 +210,9 @@ async fn start_translation_proxy_with_repo(
 async fn anthropic_client_to_openai_upstream_translates_request() {
     // OpenAI-format mock upstream: expects chat/completions, returns OpenAI response.
     let upstream = MockServer::start().await;
-    // The routing provider calls forward_openai(path="/v1/messages", ...) where path is
-    // the original Anthropic path. ZaiProvider appends it to openai_base_url.
+    // The routing provider translates the Anthropic path to the OpenAI-native path.
     Mock::given(matchers::method("POST"))
-        .and(matchers::path("/v1/messages"))
+        .and(matchers::path("/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "chatcmpl-test",
             "object": "chat.completion",
@@ -300,11 +299,11 @@ async fn anthropic_client_to_openai_upstream_translates_request() {
 async fn openai_client_to_anthropic_upstream_translates_request() {
     // Anthropic-format mock upstream.
     // HandleMessages calls forward_openai("/chat/completions", ...) for OpenAI-format clients.
-    // The RoutingProvider receives this and, because the leaf is Anthropic-native, calls
-    // provider.forward("/chat/completions", ...) — that path is appended to base_url verbatim.
+    // The RoutingProvider receives this and, because the leaf is Anthropic-native, translates
+    // the path to "/v1/messages" and calls provider.forward("/v1/messages", ...).
     let upstream = MockServer::start().await;
     Mock::given(matchers::method("POST"))
-        .and(matchers::path("/chat/completions"))
+        .and(matchers::path("/v1/messages"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "msg_test",
             "type": "message",
@@ -459,8 +458,10 @@ async fn translation_direction_persists_in_request_log() {
     use proxy::application::ports::RequestLogReadPort;
 
     let upstream = MockServer::start().await;
+    // ZaiProvider is OpenAI-native, so the routing provider translates the Anthropic
+    // client path /v1/messages to /chat/completions.
     Mock::given(matchers::method("POST"))
-        .and(matchers::path("/v1/messages"))
+        .and(matchers::path("/chat/completions"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "id": "chatcmpl-persist",
             "object": "chat.completion",
