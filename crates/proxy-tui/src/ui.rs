@@ -29,8 +29,7 @@ pub fn draw(f: &mut Frame, state: &AppState) {
     draw_tabs(f, chunks[0], state);
     match state.view {
         View::Status => draw_status(f, chunks[1], state.status.as_ref(), state.quota.as_ref()),
-        View::Providers => draw_providers(f, chunks[1], state),
-        View::Routing => draw_routing(f, chunks[1], state.config.as_ref()),
+        View::Config => draw_providers(f, chunks[1], state),
         View::Requests => draw_requests(f, chunks[1], state),
         View::Usage => crate::views::usage::draw(f, chunks[1], &state.usage),
         View::Account => crate::views::account::draw(f, chunks[1], &state.account),
@@ -43,6 +42,7 @@ pub fn draw(f: &mut Frame, state: &AppState) {
         Modal::ProviderForm(m) => draw_form_modal(f, m),
         Modal::DeleteConfirm(m) => draw_delete_confirm_modal(f, m),
         Modal::Help => draw_help_modal(f),
+        Modal::Wizard(_) | Modal::RoutingForm(_) | Modal::QuotaForm(_) => {} // TODO: rendered in later tasks
     }
 }
 

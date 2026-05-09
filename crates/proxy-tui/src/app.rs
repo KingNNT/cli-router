@@ -8,11 +8,54 @@ use proxy_admin_api::{
     StatusResponse, TestProviderResponse, UsageSummaryResponse,
 };
 
+/// Whether the TUI is connected to a running proxy or operating offline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    Connected,
+    Offline,
+}
+
+/// Sub-sections within the Config tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigSection {
+    Providers,
+    Routing,
+    Quotas,
+    Settings,
+}
+
+impl ConfigSection {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Providers => "Providers",
+            Self::Routing => "Routing",
+            Self::Quotas => "Quotas",
+            Self::Settings => "Settings",
+        }
+    }
+
+    pub const ALL: &[ConfigSection] = &[
+        ConfigSection::Providers,
+        ConfigSection::Routing,
+        ConfigSection::Quotas,
+        ConfigSection::Settings,
+    ];
+
+    pub fn next(self) -> Self {
+        let idx = Self::ALL.iter().position(|&s| s == self).unwrap_or(0);
+        Self::ALL[(idx + 1) % Self::ALL.len()]
+    }
+
+    pub fn prev(self) -> Self {
+        let idx = Self::ALL.iter().position(|&s| s == self).unwrap_or(0);
+        Self::ALL[(idx + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
     Status,
-    Providers,
-    Routing,
+    Config,
     Requests,
     Usage,
     Account,
@@ -22,8 +65,7 @@ impl View {
     pub fn label(self) -> &'static str {
         match self {
             View::Status => "Status",
-            View::Providers => "Providers",
-            View::Routing => "Routing",
+            View::Config => "Config",
             View::Requests => "Requests",
             View::Usage => "Usage",
             View::Account => "Account",
@@ -33,8 +75,7 @@ impl View {
 
 pub const ALL_VIEWS: &[View] = &[
     View::Status,
-    View::Providers,
-    View::Routing,
+    View::Config,
     View::Requests,
     View::Usage,
     View::Account,
@@ -142,6 +183,9 @@ pub enum Modal {
     ProviderForm(ProviderFormModal),
     DeleteConfirm(DeleteConfirmModal),
     Help,
+    Wizard(WizardState),
+    RoutingForm(RoutingFormModal),
+    QuotaForm(QuotaFormModal),
 }
 
 /// Action exposed as a clickable button on the Providers tab toolbar.
@@ -399,13 +443,187 @@ pub struct DeleteConfirmModal {
     pub blocking_rules: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoutingField {
+    MatchModel,
+    Provider,
+    Fallback,
+    Strategy,
+    Priority,
+}
+
+impl RoutingField {
+    pub fn next(self) -> Self {
+        match self {
+            Self::MatchModel => Self::Provider,
+            Self::Provider => Self::Fallback,
+            Self::Fallback => Self::Strategy,
+            Self::Strategy => Self::Priority,
+            Self::Priority => Self::MatchModel,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::MatchModel => Self::Priority,
+            Self::Provider => Self::MatchModel,
+            Self::Fallback => Self::Provider,
+            Self::Strategy => Self::Fallback,
+            Self::Priority => Self::Strategy,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RoutingFormModal {
+    pub mode: FormMode,
+    pub focused: RoutingField,
+    pub match_model: String,
+    pub provider: String,
+    pub fallback: String,
+    pub strategy: proxy_admin_api::RoutingStrategyPayload,
+    pub priority: String,
+    pub error: Option<String>,
+}
+
+impl RoutingFormModal {
+    pub fn new_for_add() -> Self {
+        Self {
+            mode: FormMode::Add,
+            focused: RoutingField::MatchModel,
+            match_model: String::new(),
+            provider: String::new(),
+            fallback: String::new(),
+            strategy: proxy_admin_api::RoutingStrategyPayload::default(),
+            priority: String::new(),
+            error: None,
+        }
+    }
+
+    pub fn from_rule(index: usize, rule: &proxy_admin_api::RoutingRulePayload) -> Self {
+        Self {
+            mode: FormMode::Edit {
+                original_index: index,
+                original_name: rule.provider.clone(),
+            },
+            focused: RoutingField::MatchModel,
+            match_model: rule.r#match.model.clone().unwrap_or_default(),
+            provider: rule.provider.clone(),
+            fallback: rule.fallback.join(", "),
+            strategy: rule.strategy.clone(),
+            priority: rule.priority.map(|p| p.to_string()).unwrap_or_default(),
+            error: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuotaField {
+    Provider,
+    Window,
+    MaxRequests,
+    MaxInputTokens,
+    MaxOutputTokens,
+    WarnPct,
+}
+
+impl QuotaField {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Provider => Self::Window,
+            Self::Window => Self::MaxRequests,
+            Self::MaxRequests => Self::MaxInputTokens,
+            Self::MaxInputTokens => Self::MaxOutputTokens,
+            Self::MaxOutputTokens => Self::WarnPct,
+            Self::WarnPct => Self::Provider,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Provider => Self::WarnPct,
+            Self::Window => Self::Provider,
+            Self::MaxRequests => Self::Window,
+            Self::MaxInputTokens => Self::MaxRequests,
+            Self::MaxOutputTokens => Self::MaxInputTokens,
+            Self::WarnPct => Self::MaxOutputTokens,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct QuotaFormModal {
+    pub mode: FormMode,
+    pub focused: QuotaField,
+    pub provider: String,
+    pub window: String,
+    pub max_requests: String,
+    pub max_input_tokens: String,
+    pub max_output_tokens: String,
+    pub warn_pct: String,
+    pub error: Option<String>,
+}
+
+impl QuotaFormModal {
+    pub fn new_for_add() -> Self {
+        Self {
+            mode: FormMode::Add,
+            focused: QuotaField::Provider,
+            provider: String::new(),
+            window: String::new(),
+            max_requests: String::new(),
+            max_input_tokens: String::new(),
+            max_output_tokens: String::new(),
+            warn_pct: "80".into(),
+            error: None,
+        }
+    }
+
+    pub fn from_rule(index: usize, quota: &proxy_admin_api::QuotaPayload) -> Self {
+        Self {
+            mode: FormMode::Edit {
+                original_index: index,
+                original_name: quota.provider.clone(),
+            },
+            focused: QuotaField::Provider,
+            provider: quota.provider.clone(),
+            window: quota.window.clone(),
+            max_requests: quota.max_requests.map(|v| v.to_string()).unwrap_or_default(),
+            max_input_tokens: quota.max_input_tokens.map(|v| v.to_string()).unwrap_or_default(),
+            max_output_tokens: quota.max_output_tokens.map(|v| v.to_string()).unwrap_or_default(),
+            warn_pct: quota.warn_pct.to_string(),
+            error: None,
+        }
+    }
+}
+
+/// First-run wizard state.
+#[derive(Debug, Clone)]
+pub struct WizardState {
+    pub step: WizardStep,
+    pub form: ProviderFormModal,
+    pub saved_path: Option<std::path::PathBuf>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WizardStep {
+    Welcome,
+    AddProvider,
+    Done,
+}
+
 pub struct AppState {
+    pub mode: AppMode,
     pub view: View,
     pub modal: Modal,
     pub status: Option<Result<StatusResponse, String>>,
     pub config: Option<Result<ConfigPayload, String>>,
     pub quota: Option<Result<QuotaStatusListDto, String>>,
+    pub config_section: ConfigSection,
+    pub wizard: Option<WizardState>,
     pub providers_selected: usize,
+    pub routing_selected: usize,
+    pub quota_selected: usize,
     pub requests: RequestsPaneState,
     pub usage: UsagePaneState,
     pub account: AccountPaneState,
@@ -419,12 +637,17 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
+            mode: AppMode::Offline,
             view: View::Status,
             modal: Modal::None,
             status: None,
             config: None,
             quota: None,
+            config_section: ConfigSection::Providers,
+            wizard: None,
             providers_selected: 0,
+            routing_selected: 0,
+            quota_selected: 0,
             requests: RequestsPaneState::default(),
             usage: UsagePaneState::default(),
             account: AccountPaneState::default(),
@@ -482,7 +705,7 @@ impl AppState {
 
     pub fn move_selection_down(&mut self) {
         match self.view {
-            View::Providers => {
+            View::Config => {
                 if let Some(Ok(cfg)) = &self.config
                     && self.providers_selected + 1 < cfg.providers.len()
                 {
@@ -500,7 +723,7 @@ impl AppState {
 
     pub fn move_selection_up(&mut self) {
         match self.view {
-            View::Providers => {
+            View::Config => {
                 self.providers_selected = self.providers_selected.saturating_sub(1);
             }
             View::Requests => {

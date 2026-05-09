@@ -93,7 +93,7 @@ fn refresh_view(client: &AdminClient, state: &mut AppState) {
             state.set_status(client.get_status().map_err(|e| e.to_string()));
             state.quota = Some(client.get_quota_status().map_err(|e| e.to_string()));
         }
-        View::Providers | View::Routing => {
+        View::Config => {
             state.set_config(client.get_config().map_err(|e| e.to_string()))
         }
         View::Requests => state.set_recent(client.get_recent(50, 0).map_err(|e| e.to_string())),
@@ -132,14 +132,14 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState, term_area
             state.set_view(View::Status);
             return;
         }
-        KeyCode::Char('5') => {
+        KeyCode::Char('4') => {
             state.set_view(View::Usage);
             if state.usage.summary.is_none() && state.usage.last_error.is_none() {
                 fetch_usage(client, state);
             }
             return;
         }
-        KeyCode::Char('6') => {
+        KeyCode::Char('5') => {
             state.set_view(View::Account);
             fetch_account(client, state);
             return;
@@ -273,19 +273,18 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState, term_area
     // On all other tabs, 1–4 switch tabs.
     match k.code {
         KeyCode::Char('1') => state.set_view(View::Status),
-        KeyCode::Char('2') => state.set_view(View::Providers),
-        KeyCode::Char('3') => state.set_view(View::Routing),
-        KeyCode::Char('4') => state.set_view(View::Requests),
+        KeyCode::Char('2') => state.set_view(View::Config),
+        KeyCode::Char('3') => state.set_view(View::Requests),
         KeyCode::Char('r') => {
             refresh_view(client, state);
             state.flash("refreshed");
         }
         KeyCode::Down | KeyCode::Char('j') => state.move_selection_down(),
         KeyCode::Up | KeyCode::Char('k') => state.move_selection_up(),
-        KeyCode::Char('a') if state.view == View::Providers => open_add_modal(state),
-        KeyCode::Char('t') if state.view == View::Providers => open_test_modal(state),
-        KeyCode::Char('e') if state.view == View::Providers => open_edit_modal(state),
-        KeyCode::Char('d') if state.view == View::Providers => open_delete_modal(state),
+        KeyCode::Char('a') if state.view == View::Config => open_add_modal(state),
+        KeyCode::Char('t') if state.view == View::Config => open_test_modal(state),
+        KeyCode::Char('e') if state.view == View::Config => open_edit_modal(state),
+        KeyCode::Char('d') if state.view == View::Config => open_delete_modal(state),
         _ => {}
     }
 }
@@ -570,7 +569,7 @@ fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mu
                 return;
             }
             match state.view {
-                View::Providers => {
+                View::Config => {
                     if let Some(action) = provider_toolbar_hit(m.column, m.row, body_area) {
                         dispatch_provider_action(action, client, state);
                         return;
@@ -599,7 +598,7 @@ fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mu
                         fetch_usage(client, state);
                     }
                 }
-                View::Status | View::Routing | View::Account => {}
+                View::Status | View::Account => {}
             }
         }
         _ => {}
@@ -713,6 +712,10 @@ fn handle_modal_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => Modal::None,
             _ => Modal::Help,
         },
+        Modal::Wizard(_) | Modal::RoutingForm(_) | Modal::QuotaForm(_) => {
+            // TODO: Task 7+ will add handlers for these modals
+            Modal::None
+        }
     };
     state.modal = next;
 }
