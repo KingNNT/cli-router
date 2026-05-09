@@ -36,6 +36,55 @@ pub struct AffinityStatus {
     pub headers: Vec<String>,
 }
 
+/// Affinity config for conversation-affinity hashing (editable via `ConfigPayload`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AffinityPayload {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_affinity_headers")]
+    pub headers: Vec<String>,
+}
+
+impl Default for AffinityPayload {
+    fn default() -> Self {
+        Self {
+            enabled: default_true(),
+            headers: default_affinity_headers(),
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_affinity_headers() -> Vec<String> {
+    vec![
+        "x-session-id".into(),
+        "x-request-id".into(),
+        "x-api-key".into(),
+    ]
+}
+
+/// A single quota rule (editable via `ConfigPayload`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct QuotaPayload {
+    pub provider: String,
+    pub window: String,
+    #[serde(default)]
+    pub max_requests: Option<u64>,
+    #[serde(default)]
+    pub max_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub max_output_tokens: Option<u64>,
+    #[serde(default = "default_warn_pct")]
+    pub warn_pct: u8,
+}
+
+fn default_warn_pct() -> u8 {
+    80
+}
+
 /// `GET /admin/config` and `PUT /admin/config` body.
 ///
 /// Mirrors `proxy::config::Config` but lives outside the proxy crate so the
@@ -47,8 +96,18 @@ pub struct AffinityStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigPayload {
     pub port: u16,
+    #[serde(default)]
     pub providers: Vec<ProviderPayload>,
+    #[serde(default)]
     pub routing: Vec<RoutingRulePayload>,
+    #[serde(default)]
+    pub quota: Vec<QuotaPayload>,
+    #[serde(default)]
+    pub affinity: AffinityPayload,
+    #[serde(default)]
+    pub proxy_db: Option<String>,
+    #[serde(default)]
+    pub pricing_db: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -408,5 +467,56 @@ mod account_usage_tests {
     fn provider_usage_status_serializes_as_snake_case() {
         let s = serde_json::to_string(&ProviderUsageStatus::NotSupported).unwrap();
         assert_eq!(s, "\"not_supported\"");
+    }
+}
+
+#[cfg(test)]
+mod config_payload_toml_tests {
+    use super::*;
+
+    #[test]
+    fn config_payload_round_trips_through_toml() {
+        let payload = ConfigPayload {
+            port: 8787,
+            providers: vec![ProviderPayload {
+                name: "anthropic".into(),
+                kind: "anthropic".into(),
+                auth: AuthPayload::Passthrough,
+                base_url: None,
+                openai_base_url: None,
+            }],
+            routing: vec![],
+            quota: vec![QuotaPayload {
+                provider: "zai".into(),
+                window: "rolling:1h".into(),
+                max_requests: Some(100),
+                max_input_tokens: None,
+                max_output_tokens: None,
+                warn_pct: 80,
+            }],
+            affinity: AffinityPayload {
+                enabled: true,
+                headers: vec!["x-session-id".into()],
+            },
+            proxy_db: None,
+            pricing_db: None,
+        };
+        let toml_str = toml::to_string_pretty(&payload).unwrap();
+        let parsed: ConfigPayload = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.port, 8787);
+        assert_eq!(parsed.providers.len(), 1);
+        assert_eq!(parsed.quota.len(), 1);
+        assert_eq!(parsed.quota[0].provider, "zai");
+        assert!(parsed.affinity.enabled);
+    }
+
+    #[test]
+    fn config_payload_defaults_when_empty_toml() {
+        let toml_str = "port = 8787\n";
+        let parsed: ConfigPayload = toml::from_str(toml_str).unwrap();
+        assert!(parsed.providers.is_empty());
+        assert!(parsed.routing.is_empty());
+        assert!(parsed.quota.is_empty());
+        assert!(parsed.affinity.enabled);
     }
 }

@@ -5,13 +5,13 @@
 
 use crate::application::errors::ProxyError;
 use crate::application::ports::{QuotaPort, RequestLogReadPort, UpstreamResponse};
-use crate::config::{AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule};
+use crate::config::{AffinityConfig, AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, QuotaRule, RoutingRule};
 use crate::domain::RequestRow;
 use axum::http::HeaderMap;
 use bytes::Bytes;
 use proxy_admin_api::{
-    AuthPayload, ConfigPayload, MatchPayload, ProviderPayload, RecentRequestItem,
-    RecentRequestsResponse, RoutingRulePayload, StatusResponse, TestProviderResponse,
+    AffinityPayload, AuthPayload, ConfigPayload, MatchPayload, ProviderPayload, QuotaPayload,
+    RecentRequestItem, RecentRequestsResponse, RoutingRulePayload, StatusResponse, TestProviderResponse,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -189,10 +189,20 @@ impl UpdateConfig {
     /// live provider tree so subsequent requests use the new config without
     /// requiring a daemon restart.
     pub fn execute(&self, payload: ConfigPayload) -> Result<(), ProxyError> {
-        let (proxy_db, pricing_db, existing) = {
+        let existing = {
             let cur = self.config.read().expect("config rwlock poisoned");
-            (cur.proxy_db.clone(), cur.pricing_db.clone(), cur.clone())
+            cur.clone()
         };
+        let proxy_db = payload
+            .proxy_db
+            .as_ref()
+            .map(|s| PathBuf::from(s))
+            .unwrap_or_else(|| existing.proxy_db.clone());
+        let pricing_db = payload
+            .pricing_db
+            .as_ref()
+            .map(|s| PathBuf::from(s))
+            .unwrap_or_else(|| existing.pricing_db.clone());
         let new_cfg = payload_to_config(payload, proxy_db, pricing_db, &existing)?;
         new_cfg
             .validate()
@@ -572,6 +582,24 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                 priority: r.priority,
             })
             .collect(),
+        quota: c
+            .quota
+            .iter()
+            .map(|q| QuotaPayload {
+                provider: q.provider.clone(),
+                window: q.window.clone(),
+                max_requests: q.max_requests,
+                max_input_tokens: q.max_input_tokens,
+                max_output_tokens: q.max_output_tokens,
+                warn_pct: q.warn_pct,
+            })
+            .collect(),
+        affinity: AffinityPayload {
+            enabled: c.affinity.enabled,
+            headers: c.affinity.headers.clone(),
+        },
+        proxy_db: c.proxy_db.to_str().map(|s| s.to_owned()),
+        pricing_db: c.pricing_db.to_str().map(|s| s.to_owned()),
     }
 }
 
@@ -579,7 +607,7 @@ fn payload_to_config(
     p: ConfigPayload,
     proxy_db: PathBuf,
     pricing_db: PathBuf,
-    existing: &Config,
+    _existing: &Config,
 ) -> Result<Config, ProxyError> {
     let providers = p
         .providers
@@ -607,20 +635,29 @@ fn payload_to_config(
             priority: rr.priority,
         })
         .collect();
+    let quota = p
+        .quota
+        .into_iter()
+        .map(|qp| QuotaRule {
+            provider: qp.provider,
+            window: qp.window,
+            max_requests: qp.max_requests,
+            max_input_tokens: qp.max_input_tokens,
+            max_output_tokens: qp.max_output_tokens,
+            warn_pct: qp.warn_pct,
+        })
+        .collect();
     Ok(Config {
         port: p.port,
         proxy_db,
         pricing_db,
         providers,
         routing,
-        // Affinity is intentionally NOT round-tripped through `ConfigPayload` — it
-        // has no DTO field. Preserve the existing value across PUT /admin/config so
-        // a config update via the admin API doesn't silently reset affinity.
-        affinity: existing.affinity.clone(),
-        // Quota rules are NOT round-tripped through ConfigPayload — they have no
-        // DTO field. Preserve the existing rules across PUT /admin/config so a
-        // config update via the admin API doesn't silently disable quota enforcement.
-        quota: existing.quota.clone(),
+        affinity: AffinityConfig {
+            enabled: p.affinity.enabled,
+            headers: p.affinity.headers,
+        },
+        quota,
     })
 }
 
@@ -966,6 +1003,13 @@ mod tests {
                 openai_base_url: None,
             }],
             routing: vec![],
+            quota: vec![],
+            affinity: AffinityPayload {
+                enabled: true,
+                headers: vec![],
+            },
+            proxy_db: None,
+            pricing_db: None,
         };
         let existing = Config {
             port: 8787,
