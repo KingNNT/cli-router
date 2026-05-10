@@ -52,4 +52,13 @@ pub struct ModelUsageSnapshot {
     pub total_calls: u64,
     pub period_start_ms: i64,
     pub period_end_ms: i64,
+    pub model_breakdown: Vec<ModelBreakdownItem>,
+}
+
+/// Per-model usage breakdown within a snapshot period.
+#[derive(Debug, Clone)]
+pub struct ModelBreakdownItem {
+    pub model: String,
+    pub tokens: u64,
+    pub calls: u64,
 }

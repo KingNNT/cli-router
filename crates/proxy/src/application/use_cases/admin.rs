@@ -829,6 +829,7 @@ fn account_usage_to_dto(u: ProviderAccountUsage) -> ProviderAccountUsageDto {
             total_calls: m.total_calls,
             period_start_ms: m.period_start_ms,
             period_end_ms: m.period_end_ms,
+            model_breakdown: vec![],
         }),
     }
 }

@@ -217,6 +217,7 @@ impl AccountUsagePort for ZaiAccountUsage {
                 total_calls: total.total_model_call_count.unwrap_or(0),
                 period_start_ms: start_ms,
                 period_end_ms: now_ms,
+                model_breakdown: vec![],
             });
         }
 
