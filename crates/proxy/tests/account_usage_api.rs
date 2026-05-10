@@ -56,6 +56,7 @@ async fn account_usage_endpoint_returns_merged_providers() {
             total_calls: 1_234,
             period_start_ms: 1_746_220_800_000,
             period_end_ms: 1_746_292_800_000,
+            model_breakdown: vec![],
         }),
     };
 
