@@ -10,8 +10,9 @@ use crate::domain::RequestRow;
 use axum::http::HeaderMap;
 use bytes::Bytes;
 use proxy_admin_api::{
-    AffinityPayload, AuthPayload, ConfigPayload, MatchPayload, ProviderPayload, QuotaPayload,
-    RecentRequestItem, RecentRequestsResponse, RoutingRulePayload, StatusResponse, TestProviderResponse,
+    AffinityPayload, AuthPayload, ConfigPayload, MatchPayload, ModelBreakdownItemDto,
+    ProviderPayload, QuotaPayload, RecentRequestItem, RecentRequestsResponse,
+    RoutingRulePayload, StatusResponse, TestProviderResponse,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -829,7 +830,13 @@ fn account_usage_to_dto(u: ProviderAccountUsage) -> ProviderAccountUsageDto {
             total_calls: m.total_calls,
             period_start_ms: m.period_start_ms,
             period_end_ms: m.period_end_ms,
-            model_breakdown: vec![],
+            model_breakdown: m.model_breakdown.into_iter().map(|item| {
+                ModelBreakdownItemDto {
+                    model: item.model,
+                    tokens: item.tokens,
+                    calls: item.calls,
+                }
+            }).collect(),
         }),
     }
 }
