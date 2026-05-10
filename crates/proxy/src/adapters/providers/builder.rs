@@ -2,7 +2,7 @@
 //! the daemon's composition root (`main.rs`) and the hot-reload path
 //! (`LiveProvider::reload`) call the same code.
 
-use super::account_usage::{AnthropicAccountUsage, NoopAccountUsage, ZaiAccountUsage};
+use super::account_usage::{AnthropicAccountUsage, DeepSeekAccountUsage, ZaiAccountUsage};
 use super::{AnthropicProvider, AuthHeader, DeepSeekProvider, RoutingProvider, ZaiProvider};
 use crate::application::ports::{AccountUsagePort, Provider, QuotaPort};
 use crate::config::{AuthConfig, Config, ProviderConfig, ProviderKind};
@@ -152,9 +152,8 @@ pub fn build_account_usage(
                     Arc::new(AnthropicAccountUsage::new(p.name.clone(), config.clone()))
                 }
                 ProviderKind::DeepSeek => {
-                    // DeepSeek does not have an account-usage adapter yet;
-                    // use a no-op placeholder so the build succeeds.
-                    Arc::new(NoopAccountUsage)
+                    let token = resolve_auth_token(&p.auth);
+                    Arc::new(DeepSeekAccountUsage::new(p.name.clone(), token))
                 }
             };
             (p.name.clone(), adapter)
