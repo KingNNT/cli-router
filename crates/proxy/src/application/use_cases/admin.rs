@@ -692,6 +692,7 @@ fn kind_to_str(k: ProviderKind) -> &'static str {
     match k {
         ProviderKind::Anthropic => "anthropic",
         ProviderKind::Zai => "zai",
+        ProviderKind::DeepSeek => "deepseek",
     }
 }
 

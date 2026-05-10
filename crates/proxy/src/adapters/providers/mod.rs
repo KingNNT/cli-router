@@ -4,6 +4,7 @@ pub mod account_usage;
 pub mod affinity;
 pub mod anthropic;
 pub mod builder;
+pub mod deepseek;
 pub mod live;
 mod messages_protocol;
 pub mod routing;
@@ -17,4 +18,5 @@ pub use builder::{
 pub use live::LiveProvider;
 pub use messages_protocol::AuthHeader;
 pub use routing::RoutingProvider;
+pub use deepseek::DeepSeekProvider;
 pub use zai::ZaiProvider;
