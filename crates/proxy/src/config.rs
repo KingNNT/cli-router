@@ -54,6 +54,7 @@ pub struct ProviderConfig {
 pub enum ProviderKind {
     Anthropic,
     Zai,
+    DeepSeek,
 }
 
 /// How the proxy authenticates *to* the upstream when forwarding a request.
@@ -266,6 +267,7 @@ impl Config {
         let (name, env_key) = match kind {
             ProviderKind::Anthropic => ("anthropic", "ANTHROPIC_API_KEY"),
             ProviderKind::Zai => ("zai", "ZAI_API_KEY"),
+            ProviderKind::DeepSeek => ("deepseek", "DEEPSEEK_API_KEY"),
         };
 
         let auth = match std::env::var(env_key).ok() {
@@ -358,6 +360,7 @@ fn parse_kind(s: &str) -> Option<ProviderKind> {
     match s.trim().to_ascii_lowercase().as_str() {
         "anthropic" => Some(ProviderKind::Anthropic),
         "zai" | "z.ai" | "z-ai" => Some(ProviderKind::Zai),
+        "deepseek" | "deep-seek" => Some(ProviderKind::DeepSeek),
         _ => None,
     }
 }
@@ -401,6 +404,10 @@ fn config_filename_for_profile(profile: Option<&str>) -> &'static str {
 
 /// Replace `${VAR}` with the env var value (or empty string if unset).
 /// Unknown patterns like `${` without a closing `}` are left untouched.
+///
+/// On macOS launchd, plist `EnvironmentVariables` are not always visible to
+/// `std::env::var`, so we fall back to reading `~/.config/cli-router/.env`
+/// (a plain KEY=VALUE file sourced by the service Makefile).
 fn interpolate(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let bytes = s.as_bytes();
@@ -412,7 +419,9 @@ fn interpolate(s: &str) -> String {
             && let Some(end) = bytes[i + 2..].iter().position(|&b| b == b'}')
         {
             let var_name = &s[i + 2..i + 2 + end];
-            let value = std::env::var(var_name).unwrap_or_default();
+            let value = std::env::var(var_name)
+                .or_else(|_| read_service_env_var(var_name))
+                .unwrap_or_default();
             out.push_str(&value);
             i += 2 + end + 1;
             continue;
@@ -421,6 +430,37 @@ fn interpolate(s: &str) -> String {
         i += 1;
     }
     out
+}
+
+/// Read a KEY=VALUE from `~/.config/cli-router/.env` as a fallback when
+/// `std::env::var` fails (e.g. under macOS launchd where plist
+/// `EnvironmentVariables` may not propagate to the Rust runtime).
+/// The file is read once and cached in a `LazyLock`.
+fn read_service_env_var(name: &str) -> Result<String, std::env::VarError> {
+    use std::collections::HashMap;
+    use std::sync::LazyLock;
+
+    static SERVICE_ENV: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
+        let path = config_dir().join(".env");
+        let mut map = HashMap::new();
+        if let Ok(contents) = std::fs::read_to_string(&path) {
+            for line in contents.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once('=') {
+                    map.insert(key.trim().to_string(), value.trim().to_string());
+                }
+            }
+        }
+        map
+    });
+
+    SERVICE_ENV
+        .get(name)
+        .cloned()
+        .ok_or(std::env::VarError::NotPresent)
 }
 
 #[cfg(test)]
@@ -585,6 +625,13 @@ mod tests {
         "#;
         let cfg: Config = toml::from_str(toml_str).unwrap();
         assert!(format!("{}", cfg.validate().unwrap_err()).contains("duplicate"));
+    }
+
+    #[test]
+    fn parse_kind_accepts_deepseek_aliases() {
+        assert_eq!(parse_kind("deepseek"), Some(ProviderKind::DeepSeek));
+        assert_eq!(parse_kind("deep-seek"), Some(ProviderKind::DeepSeek));
+        assert_eq!(parse_kind("DEEPSEEK"), Some(ProviderKind::DeepSeek));
     }
 
     #[test]
