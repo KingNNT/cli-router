@@ -700,6 +700,7 @@ fn str_to_kind(s: &str) -> Result<ProviderKind, ProxyError> {
     match s.trim().to_ascii_lowercase().as_str() {
         "anthropic" => Ok(ProviderKind::Anthropic),
         "zai" => Ok(ProviderKind::Zai),
+        "deepseek" => Ok(ProviderKind::DeepSeek),
         other => Err(ProxyError::BadRequest(format!(
             "unknown provider kind: {other}"
         ))),
