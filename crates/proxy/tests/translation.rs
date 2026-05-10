@@ -150,6 +150,7 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
         ))),
         account_usage: Arc::new(proxy::application::use_cases::admin::GetAccountUsage::new(
             std::collections::HashMap::new(),
+            read.clone(),
         )),
     }
 }

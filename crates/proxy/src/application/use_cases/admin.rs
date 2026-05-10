@@ -759,42 +759,88 @@ use std::collections::HashMap;
 
 pub struct GetAccountUsage {
     adapters: HashMap<String, Arc<dyn AccountUsagePort>>,
+    read: Arc<dyn RequestLogReadPort>,
 }
 
 impl GetAccountUsage {
-    pub fn new(adapters: HashMap<String, Arc<dyn AccountUsagePort>>) -> Self {
-        Self { adapters }
+    pub fn new(
+        adapters: HashMap<String, Arc<dyn AccountUsagePort>>,
+        read: Arc<dyn RequestLogReadPort>,
+    ) -> Self {
+        Self { adapters, read }
     }
 
     pub fn execute(&self) -> AccountUsageResponse {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let from_ms = now_ms - 24 * 3600 * 1000;
+
         let mut providers: Vec<ProviderAccountUsageDto> = self
             .adapters
             .iter()
-            .map(|(name, adapter)| match adapter.fetch_usage() {
-                None => ProviderAccountUsageDto {
-                    provider: name.clone(),
-                    status: ProviderUsageStatus::NotSupported,
-                    plan: None,
-                    windows: vec![],
-                    model_usage: None,
-                },
-                Some(Ok(usage)) => account_usage_to_dto(usage),
-                Some(Err(e)) => {
-                    tracing::warn!(error = %e, "account usage fetch failed");
-                    ProviderAccountUsageDto {
+            .map(|(name, adapter)| {
+                let mut dto = match adapter.fetch_usage() {
+                    None => ProviderAccountUsageDto {
                         provider: name.clone(),
-                        status: ProviderUsageStatus::Error,
+                        status: ProviderUsageStatus::NotSupported,
                         plan: None,
                         windows: vec![],
                         model_usage: None,
+                    },
+                    Some(Ok(usage)) => account_usage_to_dto(usage),
+                    Some(Err(e)) => {
+                        tracing::warn!(error = %e, "account usage fetch failed");
+                        ProviderAccountUsageDto {
+                            provider: name.clone(),
+                            status: ProviderUsageStatus::Error,
+                            plan: None,
+                            windows: vec![],
+                            model_usage: None,
+                        }
+                    }
+                };
+
+                // Enrich with per-model breakdown from proxy request log.
+                match self.read.model_breakdown(name, from_ms, now_ms) {
+                    Ok(rows) if !rows.is_empty() => {
+                        let breakdown: Vec<ModelBreakdownItemDto> = rows
+                            .into_iter()
+                            .map(|r| ModelBreakdownItemDto {
+                                model: r.model,
+                                tokens: r.tokens,
+                                calls: r.calls,
+                            })
+                            .collect();
+                        match &mut dto.model_usage {
+                            Some(mu) => {
+                                mu.model_breakdown = breakdown;
+                            }
+                            None => {
+                                let total_tokens = breakdown.iter().map(|b| b.tokens).sum();
+                                let total_calls = breakdown.iter().map(|b| b.calls).sum();
+                                dto.model_usage = Some(ModelUsageDto {
+                                    total_tokens,
+                                    total_calls,
+                                    period_start_ms: from_ms,
+                                    period_end_ms: now_ms,
+                                    model_breakdown: breakdown,
+                                });
+                            }
+                        }
+                    }
+                    Ok(_) => {} // empty — no breakdown to add
+                    Err(e) => {
+                        tracing::debug!(error = %e, provider = %name, "model_breakdown query failed (non-fatal)");
                     }
                 }
+
+                dto
             })
             .collect();
 
-        // Sort by provider name for deterministic ordering.
         providers.sort_by(|a, b| a.provider.cmp(&b.provider));
-
         AccountUsageResponse { providers }
     }
 }
@@ -846,9 +892,19 @@ fn account_usage_to_dto(u: ProviderAccountUsage) -> ProviderAccountUsageDto {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::ModelBreakdownRow;
     use crate::domain::account_usage::{AccountUsageStatus, UsageWindow};
     use crate::domain::{DailyTotal, ModelTotal, RequestRow, UsageSummary};
     use std::collections::BTreeMap;
+
+    fn empty_stub_read() -> Arc<StubRead> {
+        Arc::new(StubRead {
+            total: 0,
+            by_provider: BTreeMap::new(),
+            by_status: BTreeMap::new(),
+            rows: vec![],
+        })
+    }
 
     struct StubRead {
         total: u64,
@@ -904,6 +960,14 @@ mod tests {
             &self,
         ) -> Result<crate::application::ports::TranslationCounts, ProxyError> {
             Ok(crate::application::ports::TranslationCounts::default())
+        }
+        fn model_breakdown(
+            &self,
+            _provider: &str,
+            _from_ms: i64,
+            _to_ms: i64,
+        ) -> Result<Vec<ModelBreakdownRow>, ProxyError> {
+            Ok(vec![])
         }
     }
 
@@ -1095,7 +1159,7 @@ mod tests {
             "anthropic".to_string(),
             Arc::new(StubAccountUsage { result: None }) as Arc<dyn AccountUsagePort>,
         );
-        let uc = GetAccountUsage::new(map);
+        let uc = GetAccountUsage::new(map, empty_stub_read());
         let resp = uc.execute();
         assert_eq!(resp.providers.len(), 1);
         assert_eq!(resp.providers[0].status, ProviderUsageStatus::NotSupported);
@@ -1124,7 +1188,7 @@ mod tests {
                 result: Some(Ok(usage)),
             }) as Arc<dyn AccountUsagePort>,
         );
-        let uc = GetAccountUsage::new(map);
+        let uc = GetAccountUsage::new(map, empty_stub_read());
         let resp = uc.execute();
         assert_eq!(resp.providers.len(), 1);
         assert_eq!(resp.providers[0].status, ProviderUsageStatus::Available);
@@ -1141,7 +1205,7 @@ mod tests {
                 result: Some(Err("timeout".to_string())),
             }) as Arc<dyn AccountUsagePort>,
         );
-        let uc = GetAccountUsage::new(map);
+        let uc = GetAccountUsage::new(map, empty_stub_read());
         let resp = uc.execute();
         assert_eq!(resp.providers.len(), 1);
         assert_eq!(resp.providers[0].status, ProviderUsageStatus::Error);
@@ -1158,7 +1222,7 @@ mod tests {
             "anthropic".to_string(),
             Arc::new(StubAccountUsage { result: None }) as Arc<dyn AccountUsagePort>,
         );
-        let uc = GetAccountUsage::new(map);
+        let uc = GetAccountUsage::new(map, empty_stub_read());
         let resp = uc.execute();
         assert_eq!(resp.providers[0].provider, "anthropic");
         assert_eq!(resp.providers[1].provider, "zai");
@@ -1166,7 +1230,7 @@ mod tests {
 
     #[test]
     fn get_account_usage_empty_map_returns_empty() {
-        let uc = GetAccountUsage::new(HashMap::new());
+        let uc = GetAccountUsage::new(HashMap::new(), empty_stub_read());
         let resp = uc.execute();
         assert!(resp.providers.is_empty());
     }

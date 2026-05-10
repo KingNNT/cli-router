@@ -151,6 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let account_usage = Arc::new(proxy::application::use_cases::admin::GetAccountUsage::new(
         account_usage_map,
+        request_read.clone(),
     ));
 
     let admin = AdminState {

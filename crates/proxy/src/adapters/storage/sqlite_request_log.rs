@@ -1,6 +1,7 @@
 //! SQLite-backed RequestLogPort adapter.
 
 use crate::application::errors::ProxyError;
+use crate::application::ports::ModelBreakdownRow;
 use crate::application::ports::QuotaSeedRow;
 use crate::application::ports::RequestLogPort;
 use crate::application::ports::TranslationCounts;
@@ -210,6 +211,39 @@ impl crate::application::ports::RequestLogReadPort for SqliteRequestLogRepositor
             }
         }
         Ok(counts)
+    }
+
+    fn model_breakdown(
+        &self,
+        provider: &str,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<ModelBreakdownRow>, ProxyError> {
+        let conn = self.conn.lock().expect("repo mutex poisoned");
+        let mut stmt = conn.prepare(
+            "SELECT model,
+                    COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) AS tokens,
+                    COUNT(*) AS calls
+             FROM requests
+             WHERE provider = ?1
+               AND started_at BETWEEN ?2 AND ?3
+               AND status = 'completed'
+             GROUP BY model
+             ORDER BY tokens DESC",
+        )?;
+
+        let rows = stmt
+            .query_map(params![provider, from_ms, to_ms], |row| {
+                Ok(ModelBreakdownRow {
+                    model: row.get(0)?,
+                    tokens: row.get::<_, i64>(1)? as u64,
+                    calls: row.get::<_, i64>(2)? as u64,
+                })
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        Ok(rows)
     }
 }
 

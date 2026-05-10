@@ -9,7 +9,7 @@ use axum::http::{Request, StatusCode};
 use axum::routing::get;
 use axum::{Json, Router};
 use proxy::application::errors::ProxyError;
-use proxy::application::ports::AccountUsagePort;
+use proxy::application::ports::{AccountUsagePort, ModelBreakdownRow, RequestLogReadPort};
 use proxy::application::use_cases::admin::GetAccountUsage;
 use proxy::domain::account_usage::{
     AccountUsageStatus, ModelUsageSnapshot, ProviderAccountUsage, UsageWindow,
@@ -31,6 +31,22 @@ impl AccountUsagePort for StubUsage {
             }),
         })
     }
+}
+
+struct StubRead;
+impl RequestLogReadPort for StubRead {
+    fn total_count(&self) -> Result<u64, ProxyError> { Ok(0) }
+    fn count_by_provider(&self) -> Result<std::collections::BTreeMap<String, u64>, ProxyError> { Ok(std::collections::BTreeMap::new()) }
+    fn count_by_status(&self) -> Result<std::collections::BTreeMap<String, u64>, ProxyError> { Ok(std::collections::BTreeMap::new()) }
+    fn recent(&self, _: u32, _: u32) -> Result<Vec<proxy::domain::RequestRow>, ProxyError> { Ok(vec![]) }
+    fn summarize(&self, _: i64, _: i64) -> Result<proxy::domain::UsageSummary, ProxyError> {
+        Ok(proxy::domain::UsageSummary { from_ms: 0, to_ms: 0, daily: vec![], models: vec![] })
+    }
+    fn quota_seed(&self, _: i64) -> Result<Vec<proxy::application::ports::QuotaSeedRow>, ProxyError> { Ok(vec![]) }
+    fn count_translations(&self) -> Result<proxy::application::ports::TranslationCounts, ProxyError> {
+        Ok(proxy::application::ports::TranslationCounts::default())
+    }
+    fn model_breakdown(&self, _: &str, _: i64, _: i64) -> Result<Vec<ModelBreakdownRow>, ProxyError> { Ok(vec![]) }
 }
 
 async fn handler(State(uc): State<Arc<GetAccountUsage>>) -> Json<AccountUsageResponse> {
@@ -72,7 +88,7 @@ async fn account_usage_endpoint_returns_merged_providers() {
         Arc::new(StubUsage { result: None }) as Arc<dyn AccountUsagePort>,
     );
 
-    let uc = Arc::new(GetAccountUsage::new(map));
+    let uc = Arc::new(GetAccountUsage::new(map, Arc::new(StubRead)));
     let app = Router::new()
         .route("/admin/account/usage", get(handler))
         .with_state(uc);
@@ -116,7 +132,7 @@ async fn account_usage_endpoint_returns_error_provider() {
         }) as Arc<dyn AccountUsagePort>,
     );
 
-    let uc = Arc::new(GetAccountUsage::new(map));
+    let uc = Arc::new(GetAccountUsage::new(map, Arc::new(StubRead)));
     let app = Router::new()
         .route("/admin/account/usage", get(handler))
         .with_state(uc);

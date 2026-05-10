@@ -24,6 +24,15 @@ pub struct TranslationCounts {
     pub by_direction: BTreeMap<String, u64>,
 }
 
+
+/// One row of per-model usage breakdown.
+#[derive(Debug, Clone)]
+pub struct ModelBreakdownRow {
+    pub model: String,
+    pub tokens: u64,
+    pub calls: u64,
+}
+
 pub trait RequestLogReadPort: Send + Sync {
     fn total_count(&self) -> Result<u64, ProxyError>;
     fn count_by_provider(&self) -> Result<BTreeMap<String, u64>, ProxyError>;
@@ -32,4 +41,12 @@ pub trait RequestLogReadPort: Send + Sync {
     fn summarize(&self, from_ms: i64, to_ms: i64) -> Result<UsageSummary, ProxyError>;
     fn quota_seed(&self, cutoff_ms: i64) -> Result<Vec<QuotaSeedRow>, ProxyError>;
     fn count_translations(&self) -> Result<TranslationCounts, ProxyError>;
+
+    /// Per-model token+calls breakdown for a provider in the given time range.
+    fn model_breakdown(
+        &self,
+        provider: &str,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<ModelBreakdownRow>, ProxyError>;
 }
