@@ -282,6 +282,7 @@ impl AuthInputKind {
 pub enum ProviderKind {
     Anthropic,
     Zai,
+    DeepSeek,
 }
 
 impl ProviderKind {
@@ -289,20 +290,27 @@ impl ProviderKind {
         match self {
             ProviderKind::Anthropic => "anthropic",
             ProviderKind::Zai => "zai",
+            ProviderKind::DeepSeek => "deepseek",
         }
     }
     pub fn cycle_next(self) -> Self {
         match self {
             ProviderKind::Anthropic => ProviderKind::Zai,
-            ProviderKind::Zai => ProviderKind::Anthropic,
+            ProviderKind::Zai => ProviderKind::DeepSeek,
+            ProviderKind::DeepSeek => ProviderKind::Anthropic,
         }
     }
     pub fn cycle_prev(self) -> Self {
-        self.cycle_next() // only two variants, so prev == next
+        match self {
+            ProviderKind::Anthropic => ProviderKind::DeepSeek,
+            ProviderKind::Zai => ProviderKind::Anthropic,
+            ProviderKind::DeepSeek => ProviderKind::Zai,
+        }
     }
     pub fn from_str_or_default(s: &str) -> Self {
         match s {
             "zai" => ProviderKind::Zai,
+            "deepseek" => ProviderKind::DeepSeek,
             _ => ProviderKind::Anthropic,
         }
     }
@@ -800,7 +808,12 @@ mod form_field_tests {
     #[test]
     fn provider_kind_cycle() {
         assert_eq!(ProviderKind::Anthropic.cycle_next(), ProviderKind::Zai);
-        assert_eq!(ProviderKind::Zai.cycle_next(), ProviderKind::Anthropic);
+        assert_eq!(ProviderKind::Zai.cycle_next(), ProviderKind::DeepSeek);
+        assert_eq!(ProviderKind::DeepSeek.cycle_next(), ProviderKind::Anthropic);
+        // prev direction
+        assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::DeepSeek);
+        assert_eq!(ProviderKind::DeepSeek.cycle_prev(), ProviderKind::Zai);
+        assert_eq!(ProviderKind::Zai.cycle_prev(), ProviderKind::Anthropic);
     }
 }
 

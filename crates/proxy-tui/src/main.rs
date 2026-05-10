@@ -866,6 +866,7 @@ fn open_test_modal(state: &mut AppState) {
     let suggested = match prov.kind.as_str() {
         "anthropic" => "claude-3-5-haiku-latest",
         "zai" => "glm-4.5-air",
+        "deepseek" => "deepseek-chat",
         _ => "",
     };
     state.modal = Modal::TestProvider(TestProviderModal {
