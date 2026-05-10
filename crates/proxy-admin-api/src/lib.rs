@@ -377,12 +377,22 @@ pub struct UsageSubItemDto {
     pub used: u64,
 }
 
+/// Per-model usage breakdown item.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelBreakdownItemDto {
+    pub model: String,
+    pub tokens: u64,
+    pub calls: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ModelUsageDto {
     pub total_tokens: u64,
     pub total_calls: u64,
     pub period_start_ms: i64,
     pub period_end_ms: i64,
+    #[serde(default)]
+    pub model_breakdown: Vec<ModelBreakdownItemDto>,
 }
 
 #[cfg(test)]
@@ -446,6 +456,7 @@ mod account_usage_tests {
                         total_calls: 1_234,
                         period_start_ms: 1_746_220_800_000,
                         period_end_ms: 1_746_292_800_000,
+                        model_breakdown: vec![],
                     }),
                 },
                 ProviderAccountUsageDto {
@@ -467,6 +478,39 @@ mod account_usage_tests {
     fn provider_usage_status_serializes_as_snake_case() {
         let s = serde_json::to_string(&ProviderUsageStatus::NotSupported).unwrap();
         assert_eq!(s, "\"not_supported\"");
+    }
+
+    #[test]
+    fn model_breakdown_dto_round_trips_through_json() {
+        let original = ModelUsageDto {
+            total_tokens: 1_200_000,
+            total_calls: 500,
+            period_start_ms: 1_746_220_800_000,
+            period_end_ms: 1_746_292_800_000,
+            model_breakdown: vec![
+                ModelBreakdownItemDto {
+                    model: "deepseek-chat".into(),
+                    tokens: 800_000,
+                    calls: 300,
+                },
+                ModelBreakdownItemDto {
+                    model: "deepseek-reasoner".into(),
+                    tokens: 400_000,
+                    calls: 200,
+                },
+            ],
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let decoded: ModelUsageDto = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, original);
+        assert_eq!(decoded.model_breakdown.len(), 2);
+    }
+
+    #[test]
+    fn model_usage_dto_defaults_empty_breakdown() {
+        let json = r#"{"total_tokens":100,"total_calls":1,"period_start_ms":0,"period_end_ms":0}"#;
+        let decoded: ModelUsageDto = serde_json::from_str(json).unwrap();
+        assert!(decoded.model_breakdown.is_empty());
     }
 }
 
