@@ -127,6 +127,15 @@ fn render_provider(
             fmt_num_compact(m.total_tokens),
             fmt_num_compact(m.total_calls),
         )));
+        // Per-model breakdown
+        for item in &m.model_breakdown {
+            lines.push(ratatui::text::Line::raw(format!(
+                "│    {:<24} {} tokens  {} calls",
+                item.model,
+                fmt_num_compact(item.tokens),
+                fmt_num_compact(item.calls),
+            )));
+        }
     }
 
     lines.push(ratatui::text::Line::raw("╰─"));
