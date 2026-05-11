@@ -2,10 +2,11 @@
 //!
 //! Two routes share the same use case but differ in `ApiFormat`:
 //! - `/v1/messages` → Anthropic Messages API
+//! - `/v1/messages/count_tokens` → Anthropic Token Count API
 //! - `/v1/chat/completions` → OpenAI Chat Completions API
 
 use crate::application::ports::ApiFormat;
-use crate::application::use_cases::{HandleMessages, HandleMessagesInput, HandleMessagesOutput};
+use crate::application::use_cases::{CountTokensInput, HandleMessages, HandleMessagesInput, HandleMessagesOutput};
 use crate::frameworks::error::ProxyError;
 use crate::frameworks::stream::TeedStream;
 use axum::body::Body;
@@ -63,6 +64,28 @@ pub async fn messages(
             build_response(status, headers, Body::from_stream(teed))
         }
     })
+}
+
+/// Handles `POST /v1/messages/count_tokens` — forwards the token counting
+/// request to the upstream provider. Claude Code requires this endpoint;
+/// without it, clients get a 404 "Not Found" error.
+pub async fn count_tokens(
+    State(use_case): State<Arc<HandleMessages>>,
+    req: Request,
+) -> Result<Response, ProxyError> {
+    let (parts, body) = req.into_parts();
+    let body_bytes = axum::body::to_bytes(body, BODY_LIMIT)
+        .await
+        .map_err(|e| ProxyError::BadRequest(format!("body read: {e}")))?;
+
+    let output = use_case
+        .count_tokens(CountTokensInput {
+            headers: parts.headers,
+            body: body_bytes,
+        })
+        .await?;
+
+    Ok(build_response(output.status, output.headers, Body::from(output.body)))
 }
 
 pub async fn chat_completions(

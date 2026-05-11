@@ -20,7 +20,7 @@ Built with [axum](https://github.com/tokio-rs/axum) (proxy), [Ratatui](https://r
 - **Dual-protocol support** — accepts both Anthropic (`/v1/messages`) and OpenAI (`/v1/chat/completions`) request formats. Works with Claude Code, OpenCode, Cursor, and any OpenAI-compatible client.
 - **Streaming support** — forwards SSE streaming and buffered JSON responses unchanged
 - **Token usage logging** — parses upstream events to extract input/output/cache token counts, looks up cost, writes to `~/.local/share/cli-router/proxy.db`
-- **Admin API** — `GET/PUT /admin/config`, `GET /admin/status`, `GET /admin/requests/recent`, `POST /admin/providers/:name/test`, `POST /admin/oauth/anthropic/{start,complete}`
+- **Admin API** — `GET/PUT /admin/config`, `GET /admin/status`, `GET /admin/requests/recent`, `GET /admin/usage/summary`, `GET /admin/account/usage`, `GET /admin/quota/status`, `POST /admin/providers/:name/test`, `POST /admin/oauth/anthropic/{start,complete}`
 - **Anthropic OAuth** — PKCE-based browser flow with automatic token refresh (background task refreshes tokens every 60s, persists to config file)
 - **401 retry** — on auth failure, automatically refreshes OAuth token and retries once
 - **Hot reload** — config changes via admin API take effect immediately without daemon restart
@@ -29,9 +29,12 @@ Built with [axum](https://github.com/tokio-rs/axum) (proxy), [Ratatui](https://r
 ### `proxy-tui` — admin terminal client
 
 - **Status view** — uptime, request counts by provider and status
-- **Config editor** — edit providers, auth, and routing rules from the terminal
+- **Config editor** — organized tabs (Providers, Routing, Quotas, Settings) with keyboard and mouse navigation. Dual-mode editing: structured forms or raw TOML.
+- **Account view** — provider balances, quota status, and per-model usage breakdown
+- **Usage view** — aggregate usage summaries (daily totals, per-model breakdowns) from the proxy request log
 - **OAuth flow** — start/complete Anthropic OAuth with browser-based PKCE flow
 - **Provider testing** — ping any configured provider to verify connectivity
+- **First-run wizard** — guided setup when no config file exists
 
 ### `analysis` — usage dashboard
 
@@ -65,7 +68,7 @@ cargo run -p proxy-tui
 cargo run -p analysis
 ```
 
-Release binaries: `target/release/cli-router-proxy`, `target/release/cli-router-proxy-tui`, and `target/release/analysis` after `cargo build --release --workspace`.
+Release binaries: `target/release/cli-router-proxy`, `target/release/cli-router-proxy-tui`, and `target/release/cli-router-analysis` after `cargo build --release --workspace`.
 
 ## Architecture
 

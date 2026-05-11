@@ -197,12 +197,12 @@ impl UpdateConfig {
         let proxy_db = payload
             .proxy_db
             .as_ref()
-            .map(|s| PathBuf::from(s))
+            .map(PathBuf::from)
             .unwrap_or_else(|| existing.proxy_db.clone());
         let pricing_db = payload
             .pricing_db
             .as_ref()
-            .map(|s| PathBuf::from(s))
+            .map(PathBuf::from)
             .unwrap_or_else(|| existing.pricing_db.clone());
         let new_cfg = payload_to_config(payload, proxy_db, pricing_db, &existing)?;
         new_cfg

@@ -14,6 +14,17 @@ use shared::domain::value_objects::{ModelId, PricePerToken};
 use std::sync::Arc;
 use uuid::Uuid;
 
+pub struct CountTokensInput {
+    pub headers: HeaderMap,
+    pub body: Bytes,
+}
+
+pub struct CountTokensOutput {
+    pub status: u16,
+    pub headers: HeaderMap,
+    pub body: Bytes,
+}
+
 pub struct HandleMessagesInput {
     pub headers: HeaderMap,
     pub body: Bytes,
@@ -60,6 +71,66 @@ impl HandleMessages {
             clock,
             local_user_id,
             quota,
+        }
+    }
+
+    /// Forward a `/v1/messages/count_tokens` request to the upstream provider.
+    /// This endpoint is required by Claude Code and other Anthropic clients
+    /// for pre-flight token counting.
+    ///
+    /// If the upstream returns a non-2xx status (e.g. 404 when the provider
+    /// doesn't support this endpoint), falls back to local token estimation
+    /// from the request body.
+    pub async fn count_tokens(
+        &self,
+        input: CountTokensInput,
+    ) -> Result<CountTokensOutput, ProxyError> {
+        let upstream = self
+            .provider
+            .forward("/v1/messages/count_tokens", &input.headers, input.body.clone(), false)
+            .await;
+
+        match upstream {
+            Ok(UpstreamResponse::Buffered {
+                status,
+                headers,
+                body,
+                ..
+            }) => {
+                if (200..300).contains(&status) {
+                    Ok(CountTokensOutput { status, headers, body })
+                } else {
+                    // Upstream returned an error — fall back to local estimation.
+                    tracing::debug!(
+                        upstream_status = status,
+                        "count_tokens upstream returned non-2xx; falling back to local estimation"
+                    );
+                    let estimated = estimate_tokens(&input.body);
+                    let resp = serde_json::json!({ "input_tokens": estimated });
+                    Ok(CountTokensOutput {
+                        status: 200,
+                        headers: HeaderMap::new(),
+                        body: Bytes::from(serde_json::to_vec(&resp).unwrap_or_default()),
+                    })
+                }
+            }
+            Ok(UpstreamResponse::Streaming { .. }) => Err(ProxyError::BadRequest(
+                "count_tokens returned unexpected streaming response".into(),
+            )),
+            Err(e) => {
+                // Upstream error (transport, bad request, etc.) — fall back to local estimation.
+                tracing::debug!(
+                    error = %e,
+                    "count_tokens upstream error; falling back to local estimation"
+                );
+                let estimated = estimate_tokens(&input.body);
+                let resp = serde_json::json!({ "input_tokens": estimated });
+                Ok(CountTokensOutput {
+                    status: 200,
+                    headers: HeaderMap::new(),
+                    body: Bytes::from(serde_json::to_vec(&resp).unwrap_or_default()),
+                })
+            }
         }
     }
 
@@ -340,6 +411,77 @@ fn compute_cost(
     Some(cost)
 }
 
+/// Estimate token count from an Anthropic-format request body when the
+/// upstream provider doesn't support `/v1/messages/count_tokens`.
+///
+/// Extracts all string content from the `messages` array (including `system`
+/// messages) and `system` field, then uses a heuristic of chars/4 for ASCII
+/// and chars/2 for CJK characters. Returns at least 1.
+fn estimate_tokens(body: &[u8]) -> u32 {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        tracing::warn!("count_tokens fallback: failed to parse request body as JSON");
+        return 1;
+    };
+
+    let mut total_chars: usize = 0;
+    let mut cjk_chars: usize = 0;
+
+    fn count_text(s: &str, total: &mut usize, cjk: &mut usize) {
+        for ch in s.chars() {
+            *total += 1;
+            // Rough CJK detection: Unicode ranges for Chinese, Japanese, Korean
+            if matches!(ch,
+                '\u{4E00}'..='\u{9FFF}' | // CJK Unified Ideographs
+                '\u{3400}'..='\u{4DBF}' | // CJK Unified Ideographs Extension A
+                '\u{AC00}'..='\u{D7AF}' | // Hangul Syllables
+                '\u{3040}'..='\u{309F}' | // Hiragana
+                '\u{30A0}'..='\u{30FF}'   // Katakana
+            ) {
+                *cjk += 1;
+            }
+        }
+    }
+
+    // Collect text from `messages` array
+    if let Some(messages) = value.get("messages").and_then(|m| m.as_array()) {
+        for msg in messages {
+            if let Some(content) = msg.get("content") {
+                match content {
+                    serde_json::Value::String(s) => count_text(s, &mut total_chars, &mut cjk_chars),
+                    serde_json::Value::Array(parts) => {
+                        for part in parts {
+                            if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                                count_text(text, &mut total_chars, &mut cjk_chars);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Also check top-level `system` field
+    if let Some(system) = value.get("system") {
+        match system {
+            serde_json::Value::String(s) => count_text(s, &mut total_chars, &mut cjk_chars),
+            serde_json::Value::Array(parts) => {
+                for part in parts {
+                    if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                        count_text(text, &mut total_chars, &mut cjk_chars);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let non_cjk = total_chars.saturating_sub(cjk_chars);
+    // ASCII ~4 chars per token, CJK ~2 chars per token (very rough)
+    let estimated = (non_cjk / 4) + (cjk_chars / 2);
+    (estimated as u32).max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,6 +491,51 @@ mod tests {
     use http::HeaderMap;
     use shared::application::test_support::{FakePricingRepository, FixedClock};
     use std::sync::Mutex;
+
+    #[test]
+    fn estimate_tokens_returns_at_least_1() {
+        let body = br#"{}"#;
+        assert!(estimate_tokens(body) >= 1);
+    }
+
+    #[test]
+    fn estimate_tokens_counts_simple_message() {
+        let body = br#"{"messages":[{"role":"user","content":"hello world"}]}"#;
+        let estimated = estimate_tokens(body);
+        // "hello world" = 11 chars, 11/4 = 2
+        assert_eq!(estimated, 2);
+    }
+
+    #[test]
+    fn estimate_tokens_counts_cjk_text() {
+        let json = r#"{"messages":[{"role":"user","content":"\u4f60\u597d\u4e16\u754c"}]}"#;
+        let body = Bytes::from(json);
+        let estimated = estimate_tokens(&body);
+        // "你好世界" = 4 CJK chars, 4/2 = 2
+        assert_eq!(estimated, 2);
+    }
+
+    #[test]
+    fn estimate_tokens_counts_system_prompt() {
+        let body = br#"{"system":"you are helpful","messages":[{"role":"user","content":"hi"}]}"#;
+        let estimated = estimate_tokens(body);
+        // "you are helpful" = 16 chars, "hi" = 2 chars, total 18/4 = 4
+        assert_eq!(estimated, 4);
+    }
+
+    #[test]
+    fn estimate_tokens_counts_multipart_content() {
+        let body = br#"{"messages":[{"role":"user","content":[{"type":"text","text":"hello"},{"type":"text","text":"world"}]}]}"#;
+        let estimated = estimate_tokens(body);
+        // "hello" + "world" = 10 chars, 10/4 = 2
+        assert_eq!(estimated, 2);
+    }
+
+    #[test]
+    fn estimate_tokens_handles_invalid_json() {
+        let body = b"not json";
+        assert_eq!(estimate_tokens(body), 1);
+    }
 
     /// Fake provider that returns prearranged responses.
     struct FakeProvider {

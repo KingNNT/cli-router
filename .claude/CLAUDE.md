@@ -36,7 +36,7 @@ cargo coverage                # summary in terminal
 cargo coverage-html           # open HTML report
 ```
 
-Release binaries land at `target/release/{cli-router-proxy,analysis,cli-router-proxy-tui}` after `cargo build --release --workspace`.
+Release binaries land at `target/release/{cli-router-proxy,cli-router-analysis,cli-router-proxy-tui}` after `cargo build --release --workspace`.
 
 Tests live alongside code (`#[cfg(test)] mod tests`), as crate-level integration tests under `crates/<crate>/tests/`, and as `///` doc examples on public value-object constructors.
 
@@ -78,20 +78,27 @@ crates/
 │
 └── proxy/               # APP 2 — axum HTTP proxy binary `proxy`
     └── src/
-        ├── domain/         RequestStart, RequestUsage, UsageRecord, RequestStatus
+        ├── domain/         RequestStart, RequestUsage, UsageRecord, RequestStatus,
+    │                   ProviderAccountUsage, UsageSummary, QuotaSnapshot,
+    │                   QuotaCheck, AccountUsageStatus
         ├── application/    Provider + RequestLogPort + UsageParser ports,
         │                   HandleMessages use case (with ApiFormat for dual-protocol),
-        │                   admin use cases (GetStatus, GetConfig, UpdateConfig,
-        │                   TestProvider, StartAnthropicOAuth, CompleteAnthropicOAuth)
-        ├── adapters/
-        │   ├── providers/  AnthropicProvider, ZaiProvider, RoutingProvider
-        │   │               (glob match + namespace + load balancing),
-        │   │               LiveProvider (hot reload), builder,
-        │   │               messages_protocol (shared forward/forward_openai logic),
-        │   │               token_refresh (background OAuth refresh)
-        │   ├── oauth/      Anthropic PKCE flow
-        │   ├── storage/    SqliteRequestLogRepository, schema migrations
-        │   └── usage/      AnthropicSseParser
+    │                   admin use cases (GetStatus, GetConfig, UpdateConfig,
+    │                   TestProvider, GetRecentRequests, GetUsageSummary,
+    │                   GetAccountUsage, GetQuotaStatus,
+    │                   StartAnthropicOAuth, CompleteAnthropicOAuth)
+    ├── adapters/
+    │   ├── providers/  AnthropicProvider, ZaiProvider, DeepSeekProvider,
+    │   │               RoutingProvider (glob match + namespace + load balancing),
+    │   │               LiveProvider (hot reload), builder, affinity (conversation
+    │   │               hashing for session stickiness),
+    │   │               messages_protocol (shared forward/forward_openai logic),
+    │   │               token_refresh (background OAuth refresh)
+    │   │   └── account_usage/  AnthropicAccountUsage, ZaiAccountUsage,
+    │   │                        DeepSeekAccountUsage, NoopAccountUsage
+    │   ├── oauth/      Anthropic PKCE flow
+    │   ├── storage/    SqliteRequestLogRepository, schema migrations
+    │   └── usage/      AnthropicSseParser
 ├── config.rs        TOML config with multi-provider, routing rules,
 │                   AuthConfig variants (Passthrough, ApiKey, Bearer, AnthropicOAuth),
 │                   ${ENV} interpolation with ~/.config/cli-router/.env fallback

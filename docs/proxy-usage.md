@@ -152,14 +152,12 @@ Pay-as-you-go users can use either header on `/api/paas/v4`; `type = "api_key"` 
 
 ### DeepSeek
 
-DeepSeek provides both Anthropic-compatible and OpenAI-compatible endpoints. Configure it like Z.ai with custom base URLs:
+DeepSeek provides an OpenAI-compatible endpoint. Configure it with `kind = "deepseek"`:
 
 ```toml
 [[providers]]
 name = "deepseek"
-kind = "zai"
-base_url = "https://api.deepseek.com/anthropic"
-openai_base_url = "https://api.deepseek.com"
+kind = "deepseek"
 auth = { type = "bearer", value = "${DEEPSEEK_API_KEY}" }
 
 [[routing]]
@@ -167,12 +165,16 @@ match = { model = "deepseek-*" }
 provider = "deepseek"
 ```
 
-| Auth config | Anthropic format (`/v1/messages`) | OpenAI format (`/v1/chat/completions`) |
-|---|---|---|
-| `type = "bearer"` | `Authorization: Bearer <key>` | `Authorization: Bearer <key>` |
-| `type = "api_key"` | `x-api-key: <key>` | auto-converted to `Bearer` |
+DeepSeek only speaks the OpenAI chat-completions format — requests via `/v1/messages` (Anthropic format) will return an error. Route all DeepSeek traffic through `/v1/chat/completions`.
 
-Both work; `bearer` is recommended for consistency across both endpoints.
+The default base URL is `https://api.deepseek.com/v1`. Override it with `base_url` if needed.
+
+| Auth config | OpenAI format (`/v1/chat/completions`) |
+|---|---|
+| `type = "bearer"` | `Authorization: Bearer <key>` |
+| `type = "api_key"` | auto-converted to `Bearer` |
+
+The `bearer` auth type is recommended. Use `api_key` only if your key comes from a source (e.g. the Anthropic SDK) that defaults to `x-api-key` headers.
 
 Available models: `deepseek-v4-pro`, `deepseek-v4-flash`.
 
@@ -347,6 +349,9 @@ The proxy serves admin endpoints on the same port (`127.0.0.1:8787`):
 | `/admin/config` | GET | Current config (secrets included — localhost only) |
 | `/admin/config` | PUT | Update config + hot reload |
 | `/admin/requests/recent?limit=N` | GET | Last N request rows |
+| `/admin/usage/summary` | GET | Aggregate usage (daily totals, per-model breakdowns) |
+| `/admin/account/usage` | GET | Provider account balances and quota status |
+| `/admin/quota/status` | GET | Per-provider quota health (remaining, reset time) |
 | `/admin/providers/:name/test` | POST | Ping a provider with a minimal request |
 | `/admin/oauth/anthropic/start` | POST | Start OAuth PKCE flow |
 | `/admin/oauth/anthropic/complete` | POST | Complete OAuth with pasted code |

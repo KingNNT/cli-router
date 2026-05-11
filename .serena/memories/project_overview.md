@@ -4,11 +4,11 @@ Rust workspace with 3 binary apps + 2 library crates. Built with axum (proxy), R
 
 ## Crates
 
-- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai, DeepSeek). DeepSeek has its own `DeepSeekProvider` (OpenAI-only, at `https://api.deepseek.com/v1`). It does NOT support the Anthropic messages format — `forward()` returns an error. Uses `NoopAccountUsage` since DeepSeek has no account-usage API. Multi-provider routing with glob model match, `provider/model` namespace override, round-robin load balancing with 429 cooldown, priority. Admin API for live config editing. Anthropic OAuth PKCE flow with background token refresh + 401 retry. Hot reload via `LiveProvider`. Accepts both Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`). Captures token usage to SQLite (`~/.local/share/cli-router/proxy.db`).
-- **`proxy-tui`** — Ratatui admin client for the proxy. Status, config editor, OAuth flow, provider testing.
+- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai, DeepSeek). `DeepSeekProvider` is OpenAI-only (default `https://api.deepseek.com/v1`); Anthropic-messages format (`forward()`) returns an error. Uses `DeepSeekAccountUsage` for the DeepSeek balance API. Multi-provider routing with glob model match, `provider/model` namespace override, round-robin load balancing with 429 cooldown, affinity-based session stickiness, priority. Admin API for live config editing (`GetStatus`, `GetConfig`, `UpdateConfig`, `TestProvider`, `GetRecentRequests`, `GetUsageSummary`, `GetAccountUsage`, `GetQuotaStatus`). Anthropic OAuth PKCE flow with background token refresh + 401 retry. Hot reload via `LiveProvider`. Accepts both Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`). Captures token usage to SQLite (`~/.local/share/cli-router/proxy.db`).
+- **`proxy-tui`** — Ratatui admin client for the proxy. Status, config editor (tabbed: Providers/Routing/Quotas/Settings, dual-mode: structured forms or raw TOML), Account view (balances, quota, per-model breakdown), Usage view (aggregate summaries), OAuth flow, provider testing, first-run wizard.
 - **`analysis`** — Ratatui TUI reading OpenCode SQLite (`~/.local/share/opencode/opencode.db`) and Claude Code JSONL sessions; renders ccusage-style dashboards (cost, tokens, models, projects). Menu-driven.
 - **`shared`** — domain types, ports (`Clock`, `PricingRepository`), pricing adapters (`SqlitePricingRepository`, `CompositePricingRepository`), shared SQLite helpers. Used by all apps.
-- **`proxy-admin-api`** — wire DTOs (`AuthPayload`, `ConfigPayload`, `StatusResponse`, …). Pure data + serde, zero logic. Keeps daemon and TUI in sync.
+- **`proxy-admin-api`** — wire DTOs (`AuthPayload`, `ConfigPayload`, `StatusResponse`, `AccountUsageResponse`, `QuotaStatusResponse`, `UsageSummaryResponse`, …). Pure data + serde, zero logic. Keeps daemon and TUI in sync.
 
 ## Tech stack
 
@@ -34,18 +34,30 @@ Two enforcement levels: cargo-level between libraries and apps (compiler refuses
 
 ### Proxy adapter layout
 
-- `adapters/providers/` — `AnthropicProvider`, `ZaiProvider`, `RoutingProvider` (glob + namespace + load-balancing), `LiveProvider` (hot reload), `builder`, `messages_protocol` (shared `forward`/`forward_openai`), `token_refresh` (background OAuth refresh).
+- `adapters/providers/` — `AnthropicProvider`, `ZaiProvider`, `DeepSeekProvider` (OpenAI-only, `https://api.deepseek.com/v1`), `RoutingProvider` (glob + namespace + load-balancing), `LiveProvider` (hot reload), `builder`, `affinity` (conversation hashing for session stickiness), `messages_protocol` (shared `forward`/`forward_openai`), `token_refresh` (background OAuth refresh).
+  - `adapters/providers/account_usage/` — `AnthropicAccountUsage`, `ZaiAccountUsage`, `DeepSeekAccountUsage`, `NoopAccountUsage` (fetches provider balance/usage APIs).
 - `adapters/oauth/` — Anthropic PKCE flow.
 - `adapters/storage/` — `SqliteRequestLogRepository`, schema migrations.
 - `adapters/usage/` — `AnthropicSseParser`.
 
 ### Proxy domain
 
-`crates/proxy/src/domain/` — `RequestStart`, `RequestUsage`, `UsageRecord`, `RequestStatus` (in `request_log.rs`, `usage_record.rs`).
+`crates/proxy/src/domain/` — `RequestStart`, `RequestUsage`, `UsageRecord`, `RequestStatus`, `ProviderAccountUsage`, `UsageSummary`, `DailyTotal`, `ModelTotal`, `QuotaSnapshot`, `QuotaCheck`, `AccountUsageStatus`, `ModelBreakdownItem`.
+
+### Proxy admin use cases
+
+- `GetStatus` — uptime and request counts
+- `GetConfig` / `UpdateConfig` — config read/write with hot reload
+- `GetRecentRequests` — paginated recent request log
+- `GetUsageSummary` — aggregate usage (daily totals, per-model breakdowns)
+- `GetAccountUsage` — provider account balances and per-model breakdown from upstream APIs
+- `GetQuotaStatus` — per-provider quota health (remaining, reset time)
+- `TestProvider` — connectivity test for a named provider
+- `StartAnthropicOAuth` / `CompleteAnthropicOAuth` — PKCE OAuth flow for Anthropic
 
 ### Proxy config
 
-Both `config.rs` and `config/` directory exist. TOML config with multi-provider, routing rules, `${ENV}` interpolation (env vars sourced from `~/.config/cli-router/.env` for the launchd service), but `std::env::var` doesn't see launchd plist vars on macOS — `interpolate()` falls back to reading `~/.config/cli-router/.env` directly., and `AuthConfig` variants (`Passthrough`, `ApiKey`, `Bearer`, `AnthropicOAuth`). Lives at `~/.config/cli-router/config.toml`.
+Both `config.rs` and `config/` directory exist. TOML config with multi-provider, routing rules, `${ENV}` interpolation (env vars sourced from `~/.config/cli-router/.env` for the launchd service), and `AuthConfig` variants (`Passthrough`, `ApiKey`, `Bearer`, `AnthropicOAuth`). Provider kinds: `anthropic`, `zai` / `z.ai` / `z-ai`, `deepseek` / `deep-seek`. Lives at `~/.config/cli-router/config.toml`.
 
 ## Rules (in `.claude/rules/`)
 
