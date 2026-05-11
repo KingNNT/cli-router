@@ -54,6 +54,7 @@ pub struct ProviderConfig {
 pub enum ProviderKind {
     Anthropic,
     Zai,
+    #[serde(alias = "deepseek")]
     DeepSeek,
 }
 
@@ -797,5 +798,36 @@ mod tests {
         "#;
         let cfg: Config = toml::from_str(toml).unwrap();
         assert!(cfg.quota.is_empty());
+    }
+
+    #[test]
+    fn toml_parses_deepseek_provider_with_and_without_underscore() {
+        // Without underscore (user-friendly alias)
+        let toml = r#"
+            [[providers]]
+            name = "ds"
+            kind = "deepseek"
+            auth = { type = "api_key", value = "sk-test" }
+
+            [[routing]]
+            match = { model = "*" }
+            provider = "ds"
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.providers[0].kind, ProviderKind::DeepSeek);
+
+        // With underscore (snake_case default)
+        let toml2 = r#"
+            [[providers]]
+            name = "ds2"
+            kind = "deep_seek"
+            auth = { type = "api_key", value = "sk-test" }
+
+            [[routing]]
+            match = { model = "*" }
+            provider = "ds2"
+        "#;
+        let cfg2: Config = toml::from_str(toml2).unwrap();
+        assert_eq!(cfg2.providers[0].kind, ProviderKind::DeepSeek);
     }
 }
