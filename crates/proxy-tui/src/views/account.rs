@@ -106,9 +106,11 @@ fn render_provider(
             return;
         }
         ProviderUsageStatus::Error => {
-            lines.push(ratatui::text::Line::raw(
-                "│  Failed to fetch usage data from this provider.",
-            ));
+            let detail = p.error_message.as_deref().unwrap_or("no details");
+            lines.push(ratatui::text::Line::raw(format!(
+                "│  Failed to fetch usage data: {}",
+                detail,
+            )));
             lines.push(ratatui::text::Line::raw("╰─"));
             return;
         }

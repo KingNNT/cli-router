@@ -36,6 +36,11 @@ impl DeepSeekAccountUsage {
 
 impl AccountUsagePort for DeepSeekAccountUsage {
     fn fetch_usage(&self) -> Option<Result<ProviderAccountUsage, ProxyError>> {
+        // If no auth token configured, this provider can't query usage.
+        if self.auth_token.is_empty() {
+            return None;
+        }
+
         let url = "https://api.deepseek.com/user/balance";
 
         let resp = match self

@@ -788,6 +788,7 @@ impl GetAccountUsage {
                         plan: None,
                         windows: vec![],
                         model_usage: None,
+                        error_message: None,
                     },
                     Some(Ok(usage)) => account_usage_to_dto(usage),
                     Some(Err(e)) => {
@@ -798,6 +799,7 @@ impl GetAccountUsage {
                             plan: None,
                             windows: vec![],
                             model_usage: None,
+                            error_message: Some(e.to_string()),
                         }
                     }
                 };
@@ -848,12 +850,16 @@ impl GetAccountUsage {
 fn account_usage_to_dto(u: ProviderAccountUsage) -> ProviderAccountUsageDto {
     ProviderAccountUsageDto {
         provider: u.provider,
-        status: match u.status {
+        status: match &u.status {
             AccountUsageStatus::Available => ProviderUsageStatus::Available,
             AccountUsageStatus::NotSupported => ProviderUsageStatus::NotSupported,
             AccountUsageStatus::Error(_) => ProviderUsageStatus::Error,
         },
         plan: u.plan,
+        error_message: match &u.status {
+            AccountUsageStatus::Error(msg) => Some(msg.clone()),
+            _ => None,
+        },
         windows: u
             .windows
             .into_iter()

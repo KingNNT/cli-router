@@ -351,6 +351,8 @@ pub struct ProviderAccountUsageDto {
     pub plan: Option<String>,
     pub windows: Vec<UsageWindowDto>,
     pub model_usage: Option<ModelUsageDto>,
+    #[serde(default)]
+    pub error_message: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -458,6 +460,7 @@ mod account_usage_tests {
                         period_end_ms: 1_746_292_800_000,
                         model_breakdown: vec![],
                     }),
+                    error_message: None,
                 },
                 ProviderAccountUsageDto {
                     provider: "anthropic".into(),
@@ -465,6 +468,7 @@ mod account_usage_tests {
                     plan: None,
                     windows: vec![],
                     model_usage: None,
+                    error_message: None,
                 },
             ],
         };
