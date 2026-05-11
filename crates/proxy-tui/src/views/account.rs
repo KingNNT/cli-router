@@ -117,27 +117,43 @@ fn render_provider(
         ProviderUsageStatus::Available => {}
     }
 
-    // Quota windows.
+    // Quota windows (from upstream provider API).
+    if !p.windows.is_empty() {
+        lines.push(ratatui::text::Line::styled(
+            "│  ── upstream API ──",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
     for window in &p.windows {
         render_window(lines, window);
     }
 
-    // Monthly expenses.
+    // Separator: data below comes from proxy request log (estimated).
+    let has_proxy_data = p.monthly_cost_usd.is_some()
+        || p.model_usage.as_ref().map(|m| !m.model_breakdown.is_empty() || m.total_tokens > 0).unwrap_or(false);
+    if !p.windows.is_empty() && has_proxy_data {
+        lines.push(ratatui::text::Line::styled(
+            "│  ── proxy log (estimated) ──",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    // Monthly expenses (proxy log, 30d).
     if let Some(cost) = p.monthly_cost_usd {
         lines.push(ratatui::text::Line::raw(format!(
-            "│  Monthly expenses:  {}",
+            "│  Monthly expenses (30d):  {}",
             fmt_cost(cost),
         )));
     }
 
-    // Model usage.
+    // Model usage (proxy log, 24h).
     if let Some(m) = &p.model_usage {
         lines.push(ratatui::text::Line::raw(format!(
             "│  Model usage (24h):  Tokens: {}   Calls: {}",
             fmt_num_compact(m.total_tokens),
             fmt_num_compact(m.total_calls),
         )));
-        // Per-model breakdown
+        // Per-model breakdown (proxy log, 24h).
         for item in &m.model_breakdown {
             lines.push(ratatui::text::Line::raw(format!(
                 "│    {:<24} {} tokens  {} calls  {}",
