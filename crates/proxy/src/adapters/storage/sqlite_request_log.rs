@@ -223,7 +223,8 @@ impl crate::application::ports::RequestLogReadPort for SqliteRequestLogRepositor
         let mut stmt = conn.prepare(
             "SELECT model,
                     COALESCE(SUM(input_tokens), 0) + COALESCE(SUM(output_tokens), 0) AS tokens,
-                    COUNT(*) AS calls
+                    COUNT(*) AS calls,
+                    COALESCE(SUM(cost_usd), 0.0) AS cost_usd
              FROM requests
              WHERE provider = ?1
                AND started_at BETWEEN ?2 AND ?3
@@ -238,12 +239,29 @@ impl crate::application::ports::RequestLogReadPort for SqliteRequestLogRepositor
                     model: row.get(0)?,
                     tokens: row.get::<_, i64>(1)? as u64,
                     calls: row.get::<_, i64>(2)? as u64,
+                    cost_usd: row.get(3)?,
                 })
             })?
             .filter_map(|r| r.ok())
             .collect();
 
         Ok(rows)
+    }
+
+    fn monthly_cost(&self, provider: &str) -> Result<f64, ProxyError> {
+        let conn = self.conn.lock().expect("repo mutex poisoned");
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let from_ms = now_ms - 30 * 24 * 3600 * 1000;
+        let cost: f64 = conn.query_row(
+            "SELECT COALESCE(SUM(cost_usd), 0.0) FROM requests \
+             WHERE provider = ?1 AND started_at BETWEEN ?2 AND ?3 AND status = 'completed'",
+            params![provider, from_ms, now_ms],
+            |row| row.get(0),
+        )?;
+        Ok(cost)
     }
 }
 

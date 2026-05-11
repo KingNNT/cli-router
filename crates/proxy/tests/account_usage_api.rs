@@ -47,6 +47,7 @@ impl RequestLogReadPort for StubRead {
         Ok(proxy::application::ports::TranslationCounts::default())
     }
     fn model_breakdown(&self, _: &str, _: i64, _: i64) -> Result<Vec<ModelBreakdownRow>, ProxyError> { Ok(vec![]) }
+    fn monthly_cost(&self, _: &str) -> Result<f64, ProxyError> { Ok(0.0) }
 }
 
 async fn handler(State(uc): State<Arc<GetAccountUsage>>) -> Json<AccountUsageResponse> {

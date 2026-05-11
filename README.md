@@ -2,7 +2,7 @@
 
 A Rust workspace with three binary apps and two shared library crates:
 
-- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai) with multi-provider routing, admin API, Anthropic OAuth with automatic token refresh, and hot reload. Captures token usage to SQLite per request.
+- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai, DeepSeek) with multi-provider routing, admin API, Anthropic OAuth with automatic token refresh, and hot reload. Captures token usage to SQLite per request.
 - **`proxy-tui`** — terminal admin client for the proxy. View status, edit config, manage providers, test connectivity, and run OAuth flows — all from the terminal.
 - **`analysis`** — terminal UI for analysing OpenCode and Claude Code usage (costs, token counts, model breakdowns, project insights). Companion to the proxy for historical analysis.
 
@@ -16,7 +16,7 @@ Built with [axum](https://github.com/tokio-rs/axum) (proxy), [Ratatui](https://r
 
 ### `proxy` — HTTP proxy with usage capture and admin control plane
 
-- **Multi-provider routing** — configure multiple LLM providers (Anthropic, Z.ai) with glob-based model matching and fallback chains. Override per-request with `provider-name/model` namespace syntax (e.g. `zai/glm-5`).
+- **Multi-provider routing** — configure multiple LLM providers (Anthropic, Z.ai, DeepSeek) with glob-based model matching and fallback chains. Override per-request with `provider-name/model` namespace syntax (e.g. `zai/glm-5`).
 - **Dual-protocol support** — accepts both Anthropic (`/v1/messages`) and OpenAI (`/v1/chat/completions`) request formats. Works with Claude Code, OpenCode, Cursor, and any OpenAI-compatible client.
 - **Streaming support** — forwards SSE streaming and buffered JSON responses unchanged
 - **Token usage logging** — parses upstream events to extract input/output/cache token counts, looks up cost, writes to `~/.local/share/cli-router/proxy.db`

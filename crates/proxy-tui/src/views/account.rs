@@ -6,7 +6,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{Paragraph, Wrap};
-use shared::adapters::presenters::formatting::fmt_num_compact;
+use shared::adapters::presenters::formatting::{fmt_cost, fmt_num_compact};
 
 pub fn draw(f: &mut Frame<'_>, area: Rect, state: &AccountPaneState) {
     if let Some(err) = &state.last_error {
@@ -122,6 +122,14 @@ fn render_provider(
         render_window(lines, window);
     }
 
+    // Monthly expenses.
+    if let Some(cost) = p.monthly_cost_usd {
+        lines.push(ratatui::text::Line::raw(format!(
+            "│  Monthly expenses:  {}",
+            fmt_cost(cost),
+        )));
+    }
+
     // Model usage.
     if let Some(m) = &p.model_usage {
         lines.push(ratatui::text::Line::raw(format!(
@@ -132,10 +140,11 @@ fn render_provider(
         // Per-model breakdown
         for item in &m.model_breakdown {
             lines.push(ratatui::text::Line::raw(format!(
-                "│    {:<24} {} tokens  {} calls",
+                "│    {:<24} {} tokens  {} calls  {}",
                 item.model,
                 fmt_num_compact(item.tokens),
                 fmt_num_compact(item.calls),
+                fmt_cost(item.cost_usd),
             )));
         }
     }

@@ -789,6 +789,7 @@ impl GetAccountUsage {
                         windows: vec![],
                         model_usage: None,
                         error_message: None,
+                        monthly_cost_usd: None,
                     },
                     Some(Ok(usage)) => account_usage_to_dto(usage),
                     Some(Err(e)) => {
@@ -800,6 +801,7 @@ impl GetAccountUsage {
                             windows: vec![],
                             model_usage: None,
                             error_message: Some(e.to_string()),
+                            monthly_cost_usd: None,
                         }
                     }
                 };
@@ -813,6 +815,7 @@ impl GetAccountUsage {
                                 model: r.model,
                                 tokens: r.tokens,
                                 calls: r.calls,
+                                cost_usd: r.cost_usd,
                             })
                             .collect();
                         match &mut dto.model_usage {
@@ -838,6 +841,12 @@ impl GetAccountUsage {
                     }
                 }
 
+                // Monthly cost (last 30 days).
+                match self.read.monthly_cost(name) {
+                    Ok(cost) => { dto.monthly_cost_usd = Some(cost); }
+                    Err(e) => { tracing::debug!(error = %e, provider = %name, "monthly_cost query failed (non-fatal)"); }
+                }
+
                 dto
             })
             .collect();
@@ -860,6 +869,7 @@ fn account_usage_to_dto(u: ProviderAccountUsage) -> ProviderAccountUsageDto {
             AccountUsageStatus::Error(msg) => Some(msg.clone()),
             _ => None,
         },
+        monthly_cost_usd: None,
         windows: u
             .windows
             .into_iter()
@@ -889,6 +899,7 @@ fn account_usage_to_dto(u: ProviderAccountUsage) -> ProviderAccountUsageDto {
                     model: item.model,
                     tokens: item.tokens,
                     calls: item.calls,
+                    cost_usd: item.cost_usd,
                 }
             }).collect(),
         }),
@@ -974,6 +985,12 @@ mod tests {
             _to_ms: i64,
         ) -> Result<Vec<ModelBreakdownRow>, ProxyError> {
             Ok(vec![])
+        }
+        fn monthly_cost(
+            &self,
+            _provider: &str,
+        ) -> Result<f64, ProxyError> {
+            Ok(0.0)
         }
     }
 

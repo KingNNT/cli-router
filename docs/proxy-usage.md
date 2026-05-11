@@ -150,6 +150,32 @@ A Coding Plan request that lands on the PAYG endpoint surfaces as `1113 Insuffic
 
 Pay-as-you-go users can use either header on `/api/paas/v4`; `type = "api_key"` matches the Anthropic SDK default.
 
+### DeepSeek
+
+DeepSeek provides both Anthropic-compatible and OpenAI-compatible endpoints. Configure it like Z.ai with custom base URLs:
+
+```toml
+[[providers]]
+name = "deepseek"
+kind = "zai"
+base_url = "https://api.deepseek.com/anthropic"
+openai_base_url = "https://api.deepseek.com"
+auth = { type = "bearer", value = "${DEEPSEEK_API_KEY}" }
+
+[[routing]]
+match = { model = "deepseek-*" }
+provider = "deepseek"
+```
+
+| Auth config | Anthropic format (`/v1/messages`) | OpenAI format (`/v1/chat/completions`) |
+|---|---|---|
+| `type = "bearer"` | `Authorization: Bearer <key>` | `Authorization: Bearer <key>` |
+| `type = "api_key"` | `x-api-key: <key>` | auto-converted to `Bearer` |
+
+Both work; `bearer` is recommended for consistency across both endpoints.
+
+Available models: `deepseek-v4-pro`, `deepseek-v4-flash`.
+
 ---
 
 ## Multiple Accounts

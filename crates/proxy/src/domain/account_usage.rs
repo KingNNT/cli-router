@@ -61,4 +61,5 @@ pub struct ModelBreakdownItem {
     pub model: String,
     pub tokens: u64,
     pub calls: u64,
+    pub cost_usd: f64,
 }

@@ -4,7 +4,7 @@ Rust workspace with 3 binary apps + 2 library crates. Built with axum (proxy), R
 
 ## Crates
 
-- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai). Multi-provider routing with glob model match, `provider/model` namespace override, round-robin load balancing with 429 cooldown, priority. Admin API for live config editing. Anthropic OAuth PKCE flow with background token refresh + 401 retry. Hot reload via `LiveProvider`. Accepts both Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`). Captures token usage to SQLite (`~/.local/share/cli-router/proxy.db`).
+- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai, DeepSeek). DeepSeek has its own `DeepSeekProvider` (OpenAI-only, at `https://api.deepseek.com/v1`). It does NOT support the Anthropic messages format — `forward()` returns an error. Uses `NoopAccountUsage` since DeepSeek has no account-usage API. Multi-provider routing with glob model match, `provider/model` namespace override, round-robin load balancing with 429 cooldown, priority. Admin API for live config editing. Anthropic OAuth PKCE flow with background token refresh + 401 retry. Hot reload via `LiveProvider`. Accepts both Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`). Captures token usage to SQLite (`~/.local/share/cli-router/proxy.db`).
 - **`proxy-tui`** — Ratatui admin client for the proxy. Status, config editor, OAuth flow, provider testing.
 - **`analysis`** — Ratatui TUI reading OpenCode SQLite (`~/.local/share/opencode/opencode.db`) and Claude Code JSONL sessions; renders ccusage-style dashboards (cost, tokens, models, projects). Menu-driven.
 - **`shared`** — domain types, ports (`Clock`, `PricingRepository`), pricing adapters (`SqlitePricingRepository`, `CompositePricingRepository`), shared SQLite helpers. Used by all apps.
@@ -45,7 +45,7 @@ Two enforcement levels: cargo-level between libraries and apps (compiler refuses
 
 ### Proxy config
 
-Both `config.rs` and `config/` directory exist. TOML config with multi-provider, routing rules, `${ENV}` interpolation (env vars sourced from `~/.config/cli-router/service.env` for the launchd service), and `AuthConfig` variants (`Passthrough`, `ApiKey`, `Bearer`, `AnthropicOAuth`). Lives at `~/.config/cli-router/config.toml`.
+Both `config.rs` and `config/` directory exist. TOML config with multi-provider, routing rules, `${ENV}` interpolation (env vars sourced from `~/.config/cli-router/.env` for the launchd service), but `std::env::var` doesn't see launchd plist vars on macOS — `interpolate()` falls back to reading `~/.config/cli-router/.env` directly., and `AuthConfig` variants (`Passthrough`, `ApiKey`, `Bearer`, `AnthropicOAuth`). Lives at `~/.config/cli-router/config.toml`.
 
 ## Rules (in `.claude/rules/`)
 

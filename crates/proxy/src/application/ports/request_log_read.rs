@@ -31,6 +31,7 @@ pub struct ModelBreakdownRow {
     pub model: String,
     pub tokens: u64,
     pub calls: u64,
+    pub cost_usd: f64,
 }
 
 pub trait RequestLogReadPort: Send + Sync {
@@ -49,4 +50,7 @@ pub trait RequestLogReadPort: Send + Sync {
         from_ms: i64,
         to_ms: i64,
     ) -> Result<Vec<ModelBreakdownRow>, ProxyError>;
+
+    /// Total cost in USD for a provider over the last 30 days.
+    fn monthly_cost(&self, provider: &str) -> Result<f64, ProxyError>;
 }

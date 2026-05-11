@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A Rust workspace named **`cli-router`** with **3 binary apps** and **2 library crates**:
 
 - **`analysis`** — interactive Ratatui TUI that reads the OpenCode SQLite database at `~/.local/share/opencode/opencode.db` and Claude Code's JSONL session files, then renders token/cost usage as a ccusage-style dashboard. Menu-driven, not argv-driven.
-- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai). Multi-provider routing with glob-based model matching, `provider/model` namespace overrides, round-robin load balancing with 429 cooldown, admin API for live config editing, Anthropic OAuth PKCE flow with automatic token refresh, and hot reload. Accepts both Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`) formats, captures token usage from streaming and non-streaming responses, and writes one row per request to a local SQLite file.
+- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai, DeepSeek). Multi-provider routing with glob-based model matching, `provider/model` namespace overrides, round-robin load balancing with 429 cooldown, admin API for live config editing, Anthropic OAuth PKCE flow with automatic token refresh, and hot reload. Accepts both Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`) formats, captures token usage from streaming and non-streaming responses, and writes one row per request to a local SQLite file.
 - **`proxy-tui`** — Ratatui admin client for the proxy daemon. Connects to the proxy's admin API to view status, edit config, manage providers, test connectivity, and initiate OAuth flows.
 
 Shared libraries:
@@ -92,8 +92,9 @@ crates/
         │   ├── oauth/      Anthropic PKCE flow
         │   ├── storage/    SqliteRequestLogRepository, schema migrations
         │   └── usage/      AnthropicSseParser
-        ├── config.rs        TOML config with multi-provider, routing rules,
-        │                   AuthConfig variants (Passthrough, ApiKey, Bearer, AnthropicOAuth)
+├── config.rs        TOML config with multi-provider, routing rules,
+│                   AuthConfig variants (Passthrough, ApiKey, Bearer, AnthropicOAuth),
+│                   ${ENV} interpolation with ~/.config/cli-router/.env fallback
         ├── frameworks/     framework ring — axum router (`/v1/messages`,
         │                   `/v1/chat/completions`, `/admin/*`), admin handler glue,
         │                   TeedStream, ProxyError IntoResponse

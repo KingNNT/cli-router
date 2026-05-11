@@ -353,6 +353,8 @@ pub struct ProviderAccountUsageDto {
     pub model_usage: Option<ModelUsageDto>,
     #[serde(default)]
     pub error_message: Option<String>,
+    #[serde(default)]
+    pub monthly_cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -385,6 +387,8 @@ pub struct ModelBreakdownItemDto {
     pub model: String,
     pub tokens: u64,
     pub calls: u64,
+    #[serde(default)]
+    pub cost_usd: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -461,6 +465,7 @@ mod account_usage_tests {
                         model_breakdown: vec![],
                     }),
                     error_message: None,
+                    monthly_cost_usd: None,
                 },
                 ProviderAccountUsageDto {
                     provider: "anthropic".into(),
@@ -469,6 +474,7 @@ mod account_usage_tests {
                     windows: vec![],
                     model_usage: None,
                     error_message: None,
+                    monthly_cost_usd: None,
                 },
             ],
         };
@@ -496,11 +502,13 @@ mod account_usage_tests {
                     model: "deepseek-chat".into(),
                     tokens: 800_000,
                     calls: 300,
+                    cost_usd: 1.20,
                 },
                 ModelBreakdownItemDto {
                     model: "deepseek-reasoner".into(),
                     tokens: 400_000,
                     calls: 200,
+                    cost_usd: 0.80,
                 },
             ],
         };
