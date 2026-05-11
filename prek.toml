@@ -1,0 +1,6 @@
+[[repos]]
+repo = "local"
+hooks = [
+  { id = "cargo-test", name = "Cargo test", language = "system", entry = "cargo test", pass_filenames = false },
+  { id = "gitleaks", name = "Gitleaks", language = "system", entry = "bin/gitleaks protect --staged", pass_filenames = false, always_run = true },
+]
