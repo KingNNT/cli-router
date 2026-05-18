@@ -98,7 +98,8 @@ async fn start_translation_proxy(leaf: Arc<dyn Provider>) -> SocketAddr {
 fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks::AdminState {
     use proxy::adapters::oauth::OAuthSessionStore;
     use proxy::adapters::providers::LiveProvider;
-    use proxy::application::ports::{Provider, RequestLogReadPort};
+    use proxy::adapters::storage::db_config::DbConfigRepository;
+    use proxy::application::ports::{ConfigRepository, Provider, RequestLogReadPort};
     use proxy::application::use_cases::{
         CompleteAnthropicOAuth, CompleteOpenAiOAuth, GetConfig, GetQuotaStatus, GetRecentRequests,
         GetStatus, GetUsageSummary, StartAnthropicOAuth, StartOpenAiOAuth, TestProvider,
@@ -121,7 +122,14 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
     let http = reqwest::Client::new();
     let stub_provider: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(http.clone()));
-    let config_path = std::env::temp_dir().join("cli-router-translation-test-config.toml");
+
+    // In-memory DB for config storage in tests
+    let config_conn = rusqlite::Connection::open_in_memory().unwrap();
+    proxy::adapters::storage::ensure_current(&config_conn).unwrap();
+    let config_repo: Arc<dyn ConfigRepository> = Arc::new(
+        DbConfigRepository::new(config_conn, ":memory:".to_string())
+    );
+
     let live = Arc::new(LiveProvider::new(
         stub_provider,
         Arc::new(proxy::adapters::quota::NoopQuota),
@@ -132,7 +140,7 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
         get_recent: Arc::new(GetRecentRequests::new(read.clone())),
         update_config: Arc::new(UpdateConfig::new(
             cfg.clone(),
-            config_path.clone(),
+            config_repo.clone(),
             live.clone(),
             http.clone(),
         )),
@@ -142,7 +150,7 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
             oauth_sessions,
             http.clone(),
             cfg.clone(),
-            config_path.clone(),
+            config_repo.clone(),
             live.clone(),
         )),
         start_openai_oauth: {
@@ -155,7 +163,7 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
                 Arc::new(OpenAiSessionStore::new()),
                 http,
                 cfg,
-                config_path,
+                config_repo,
                 live,
             ))
         },

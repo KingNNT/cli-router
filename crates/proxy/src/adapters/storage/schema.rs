@@ -2,7 +2,7 @@
 
 use rusqlite::{Connection, Error};
 
-const MIGRATIONS: &[(i32, &str)] = &[(1, MIGRATION_V1), (2, MIGRATION_V2)];
+const MIGRATIONS: &[(i32, &str)] = &[(1, MIGRATION_V1), (2, MIGRATION_V2), (3, MIGRATION_V3)];
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE users (
@@ -46,6 +46,51 @@ CREATE INDEX idx_requests_model        ON requests(model);
 
 const MIGRATION_V2: &str = r#"
 ALTER TABLE requests ADD COLUMN translation_direction TEXT;
+"#;
+
+const MIGRATION_V3: &str = r#"
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS providers (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    name              TEXT NOT NULL UNIQUE,
+    kind              TEXT NOT NULL,
+    base_url          TEXT,
+    openai_base_url   TEXT,
+    auth_type         TEXT NOT NULL,
+    auth_api_key      TEXT,
+    auth_bearer       TEXT,
+    auth_access_token TEXT,
+    auth_refresh_token TEXT,
+    auth_expires_at_ms INTEGER,
+    created_at        INTEGER NOT NULL DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)),
+    updated_at        INTEGER NOT NULL DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))
+);
+
+CREATE TABLE IF NOT EXISTS routing_rules (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    priority   INTEGER NOT NULL DEFAULT 0,
+    provider   TEXT NOT NULL,
+    model_glob TEXT NOT NULL,
+    strategy   TEXT NOT NULL DEFAULT 'failover',
+    fallback   TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL DEFAULT (CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))
+);
+
+CREATE INDEX IF NOT EXISTS idx_routing_rules_priority ON routing_rules(priority);
+
+CREATE TABLE IF NOT EXISTS quota_rules (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider          TEXT NOT NULL,
+    window            TEXT NOT NULL,
+    max_requests      INTEGER,
+    max_input_tokens  INTEGER,
+    max_output_tokens INTEGER,
+    warn_pct          INTEGER NOT NULL DEFAULT 80
+);
 "#;
 
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
@@ -130,5 +175,33 @@ mod tests {
             user_count, 1,
             "rerunning migrations must not duplicate seed rows"
         );
+    }
+
+    #[test]
+    fn v3_creates_config_tables() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+        let tables: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(tables.contains(&"settings".into()));
+        assert!(tables.contains(&"providers".into()));
+        assert!(tables.contains(&"routing_rules".into()));
+        assert!(tables.contains(&"quota_rules".into()));
+    }
+
+    #[test]
+    fn v3_is_idempotent() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+        ensure_current(&conn).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM settings", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "no seed data in settings");
     }
 }

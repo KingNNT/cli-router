@@ -2,18 +2,19 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use clap::Parser;
 use proxy::adapters::oauth::OAuthSessionStore;
 use proxy::adapters::oauth::openai::OAuthSessionStore as OpenAiOAuthSessionStore;
 use proxy::adapters::providers::{LiveProvider, build_leaves, build_routing_provider};
 use proxy::adapters::quota::InMemoryQuota;
 use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
-use proxy::application::ports::{Provider, QuotaPort, RequestLogPort, RequestLogReadPort};
+use proxy::adapters::storage::db_config::DbConfigRepository;
+use proxy::application::ports::{ConfigRepository, Provider, QuotaPort, RequestLogPort, RequestLogReadPort};
 use proxy::application::use_cases::{
     CompleteAnthropicOAuth, CompleteOpenAiOAuth, GetConfig, GetQuotaStatus, GetRecentRequests,
     GetStatus, GetUsageSummary, HandleMessages, StartAnthropicOAuth, StartOpenAiOAuth,
     TestProvider, UpdateConfig,
 };
-use proxy::config::Config;
 use proxy::frameworks::AdminState;
 use rusqlite::Connection;
 use shared::adapters::clock::SystemClock;
@@ -22,8 +23,33 @@ use shared::adapters::gateways::sqlite::{SqlitePricingRepository, open_readonly}
 use shared::application::ports::{Clock, PricingRepository};
 use tracing_subscriber::EnvFilter;
 
+#[derive(Parser)]
+#[command(name = "cli-router-proxy", about = "CLI Router Proxy")]
+struct Args {
+    /// Path to the SQLite database file
+    #[arg(long, default_value_t = default_db_path())]
+    db: String,
+
+    /// Import providers/routing from a legacy config.toml file into the DB, then exit.
+    #[arg(long)]
+    import_config: Option<String>,
+}
+
+fn default_db_path() -> String {
+    std::env::var_os("HOME")
+        .map(|h| {
+            std::path::PathBuf::from(h)
+                .join(".local/share/cli-router/proxy.db")
+                .display()
+                .to_string()
+        })
+        .unwrap_or_else(|| "/tmp/cli-router/proxy.db".to_string())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
@@ -31,16 +57,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    let cfg = Config::from_env()?;
-    tracing::info!(?cfg, "starting proxy");
-    let config_path = Config::resolved_path();
-
-    if let Some(parent) = cfg.proxy_db.parent() {
+    // Open DB, run migrations
+    let db_path = std::path::PathBuf::from(&args.db);
+    if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let proxy_conn = Connection::open(&cfg.proxy_db)?;
+    let proxy_conn = Connection::open(&db_path)?;
     ensure_current(&proxy_conn)?;
-    let proxy_conn = Arc::new(Mutex::new(proxy_conn));
+
+    // Config repository — DB is the single source of truth
+    let config_repo: Arc<dyn ConfigRepository> = Arc::new(
+        DbConfigRepository::new(proxy_conn, args.db)
+    );
+    // Import legacy config.toml into DB, then exit
+    if let Some(ref config_path) = args.import_config {
+        let raw = std::fs::read_to_string(config_path)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
+        let legacy_cfg: proxy::config::Config = toml::from_str(&raw)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        config_repo.save(&legacy_cfg)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        tracing::info!("Imported config from {} to DB", config_path);
+        return Ok(());
+    }
+
+    let cfg = config_repo.load()?;
+    tracing::info!(?cfg, "starting proxy (config from DB)");
+
+    let proxy_conn = Arc::new(Mutex::new(Connection::open(&db_path)?));
 
     let local_user_id: i64 = {
         let c = proxy_conn.lock().unwrap();
@@ -141,10 +185,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
     let openai_oauth_sessions = Arc::new(OpenAiOAuthSessionStore::new());
 
-    // Spawn background OAuth token refresh (checks every 60s, persists to disk).
+    // Spawn background OAuth token refresh (checks every 60s, persists to DB).
     proxy::adapters::providers::token_refresh::spawn(
         cfg_lock.clone(),
-        config_path.clone(),
+        config_repo.clone(),
         http.clone(),
         live.clone(),
     );
@@ -167,7 +211,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         get_recent: Arc::new(GetRecentRequests::new(request_read)),
         update_config: Arc::new(UpdateConfig::new(
             cfg_lock.clone(),
-            config_path.clone(),
+            config_repo.clone(),
             live.clone(),
             http.clone(),
         )),
@@ -177,7 +221,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             oauth_sessions,
             http.clone(),
             cfg_lock.clone(),
-            config_path.clone(),
+            config_repo.clone(),
             live.clone(),
         )),
         start_openai_oauth: Arc::new(StartOpenAiOAuth::new(openai_oauth_sessions.clone())),
@@ -185,7 +229,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             openai_oauth_sessions,
             http,
             cfg_lock,
-            config_path,
+            config_repo,
             live,
         )),
         usage_summary,

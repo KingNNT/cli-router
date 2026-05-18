@@ -1,23 +1,18 @@
 //! Background task that periodically refreshes OAuth tokens and persists
-//! the refreshed tokens back to the config file.
-//!
-//! This is the **primary** token refresh mechanism. The inline check in
-//! `messages_protocol::forward` only handles the 401-retry safety net;
-//! proactive refresh happens here so that refreshed tokens are always
-//! persisted to disk immediately (avoiding refresh-token rotation races).
+//! the refreshed tokens back to the config database.
 
+use crate::application::ports::ConfigRepository;
 use crate::config::AuthConfig;
-use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use tokio::time;
 
 /// Spawn a background task that checks OAuth token expiry every 60 seconds
 /// and refreshes any that are within 5 minutes of expiring. Refreshed tokens
-/// are written back to the config file and the live provider tree is rebuilt.
+/// are written back to the config DB and the live provider tree is rebuilt.
 pub fn spawn(
     config: Arc<RwLock<crate::config::Config>>,
-    config_path: PathBuf,
+    config_repo: Arc<dyn ConfigRepository>,
     http: reqwest::Client,
     live: Arc<super::LiveProvider>,
 ) -> tokio::task::JoinHandle<()> {
@@ -25,7 +20,7 @@ pub fn spawn(
         let mut interval = time::interval(Duration::from_secs(60));
         loop {
             interval.tick().await;
-            if let Err(e) = refresh_expiring(&config, &config_path, &http, &live).await {
+            if let Err(e) = refresh_expiring(&config, &config_repo, &http, &live).await {
                 tracing::warn!(error = %e, "background token refresh sweep failed");
             }
         }
@@ -40,7 +35,7 @@ enum OAuthKind {
 
 async fn refresh_expiring(
     config: &Arc<RwLock<crate::config::Config>>,
-    config_path: &PathBuf,
+    config_repo: &Arc<dyn ConfigRepository>,
     http: &reqwest::Client,
     live: &Arc<super::LiveProvider>,
 ) -> Result<(), String> {
@@ -159,16 +154,10 @@ async fn refresh_expiring(
             cfg.clone()
         }; // Write lock dropped here.
 
-        // Persist to disk and rebuild provider tree — skip for CodexAuto
-        // (CodexAuto never writes tokens to config.toml).
+        // Persist to DB and rebuild provider tree — skip for CodexAuto
+        // (CodexAuto never writes tokens to config).
         if !matches!(kind, OAuthKind::CodexAuto) {
-            // NOTE: This replaces any ${VAR} placeholders with their resolved
-            // values. This is a known limitation shared with CompleteAnthropicOAuth.
-            if let Some(parent) = config_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let toml_str = toml::to_string_pretty(&new_cfg).map_err(|e| format!("serialize: {e}"))?;
-            std::fs::write(config_path, toml_str).map_err(|e| format!("write: {e}"))?;
+            config_repo.save(&new_cfg).map_err(|e| format!("save config: {e}"))?;
         }
 
         live.reload(&new_cfg, http.clone())

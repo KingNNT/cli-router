@@ -4,7 +4,7 @@
 //! transport.
 
 use crate::application::errors::ProxyError;
-use crate::application::ports::{QuotaPort, RequestLogReadPort, UpstreamResponse};
+use crate::application::ports::{ConfigRepository, QuotaPort, RequestLogReadPort, UpstreamResponse};
 use crate::config::{AffinityConfig, AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, QuotaRule, RoutingRule};
 use crate::domain::RequestRow;
 use axum::http::HeaderMap;
@@ -166,7 +166,7 @@ impl GetUsageSummary {
 
 pub struct UpdateConfig {
     config: Arc<RwLock<Config>>,
-    config_path: PathBuf,
+    config_repo: Arc<dyn ConfigRepository>,
     live: Arc<crate::adapters::providers::LiveProvider>,
     http: reqwest::Client,
 }
@@ -174,13 +174,13 @@ pub struct UpdateConfig {
 impl UpdateConfig {
     pub fn new(
         config: Arc<RwLock<Config>>,
-        config_path: PathBuf,
+        config_repo: Arc<dyn ConfigRepository>,
         live: Arc<crate::adapters::providers::LiveProvider>,
         http: reqwest::Client,
     ) -> Self {
         Self {
             config,
-            config_path,
+            config_repo,
             live,
             http,
         }
@@ -209,12 +209,8 @@ impl UpdateConfig {
             .validate()
             .map_err(|e| ProxyError::BadRequest(format!("{e}")))?;
 
-        let toml_str = toml::to_string_pretty(&new_cfg)
-            .map_err(|e| ProxyError::BadRequest(format!("config serialize: {e}")))?;
-        if let Some(parent) = self.config_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&self.config_path, toml_str)?;
+        self.config_repo.save(&new_cfg)
+            .map_err(|e| ProxyError::BadRequest(format!("{e}")))?;
 
         // Hot reload: build a fresh provider tree, swap atomically. If the
         // build fails (bad routing rule somehow slipped past validate), we
@@ -332,7 +328,7 @@ pub struct CompleteAnthropicOAuth {
     sessions: Arc<crate::adapters::oauth::OAuthSessionStore>,
     http: reqwest::Client,
     config: Arc<RwLock<Config>>,
-    config_path: PathBuf,
+    config_repo: Arc<dyn ConfigRepository>,
     live: Arc<crate::adapters::providers::LiveProvider>,
 }
 
@@ -369,7 +365,7 @@ pub struct CompleteOpenAiOAuth {
     sessions: Arc<crate::adapters::oauth::openai::OAuthSessionStore>,
     http: reqwest::Client,
     config: Arc<RwLock<Config>>,
-    config_path: PathBuf,
+    config_repo: Arc<dyn ConfigRepository>,
     live: Arc<crate::adapters::providers::LiveProvider>,
 }
 
@@ -378,14 +374,14 @@ impl CompleteOpenAiOAuth {
         sessions: Arc<crate::adapters::oauth::openai::OAuthSessionStore>,
         http: reqwest::Client,
         config: Arc<RwLock<Config>>,
-        config_path: PathBuf,
+        config_repo: Arc<dyn ConfigRepository>,
         live: Arc<crate::adapters::providers::LiveProvider>,
     ) -> Self {
         Self {
             sessions,
             http,
             config,
-            config_path,
+            config_repo,
             live,
         }
     }
@@ -441,24 +437,11 @@ impl CompleteOpenAiOAuth {
             (config_to_payload(&cur), cur.clone())
         };
 
-        // Write back to disk.
-        let toml_str = match toml::to_string_pretty(&new_cfg_clone) {
-            Ok(s) => s,
-            Err(e) => {
-                return proxy_admin_api::CompleteOAuthResponse {
-                    success: false,
-                    error: Some(format!("config serialize: {e}")),
-                    config: None,
-                };
-            }
-        };
-        if let Some(parent) = self.config_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Err(e) = std::fs::write(&self.config_path, toml_str) {
+        // Write back to DB.
+        if let Err(e) = self.config_repo.save(&new_cfg_clone) {
             return proxy_admin_api::CompleteOAuthResponse {
                 success: false,
-                error: Some(format!("write config: {e}")),
+                error: Some(format!("save config: {e}")),
                 config: None,
             };
         }
@@ -483,14 +466,14 @@ impl CompleteAnthropicOAuth {
         sessions: Arc<crate::adapters::oauth::OAuthSessionStore>,
         http: reqwest::Client,
         config: Arc<RwLock<Config>>,
-        config_path: PathBuf,
+        config_repo: Arc<dyn ConfigRepository>,
         live: Arc<crate::adapters::providers::LiveProvider>,
     ) -> Self {
         Self {
             sessions,
             http,
             config,
-            config_path,
+            config_repo,
             live,
         }
     }
@@ -569,24 +552,11 @@ impl CompleteAnthropicOAuth {
             };
             (config_to_payload(&cur), cur.clone())
         };
-        // Write back to disk.
-        let toml_str = match toml::to_string_pretty(&new_cfg_clone) {
-            Ok(s) => s,
-            Err(e) => {
-                return proxy_admin_api::CompleteOAuthResponse {
-                    success: false,
-                    error: Some(format!("config serialize: {e}")),
-                    config: None,
-                };
-            }
-        };
-        if let Some(parent) = self.config_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Err(e) = std::fs::write(&self.config_path, toml_str) {
+        // Write back to DB.
+        if let Err(e) = self.config_repo.save(&new_cfg_clone) {
             return proxy_admin_api::CompleteOAuthResponse {
                 success: false,
-                error: Some(format!("write config: {e}")),
+                error: Some(format!("save config: {e}")),
                 config: None,
             };
         }
@@ -1087,6 +1057,7 @@ mod tests {
     use crate::domain::account_usage::{AccountUsageStatus, UsageWindow};
     use crate::domain::{DailyTotal, ModelTotal, RequestRow, UsageSummary};
     use std::collections::BTreeMap;
+    use std::path::PathBuf;
 
     fn empty_stub_read() -> Arc<StubRead> {
         Arc::new(StubRead {

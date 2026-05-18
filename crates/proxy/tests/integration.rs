@@ -82,24 +82,15 @@ async fn start_proxy(upstream_url: String) -> (SocketAddr, Arc<Mutex<Connection>
 }
 
 fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks::AdminState {
-    dummy_admin_state_with_path(
-        repo,
-        std::env::temp_dir().join("cli-router-test-config.toml"),
-    )
-}
-
-fn dummy_admin_state_with_path(
-    repo: Arc<SqliteRequestLogRepository>,
-    config_path: std::path::PathBuf,
-) -> proxy::frameworks::AdminState {
     use proxy::adapters::oauth::OAuthSessionStore;
     use proxy::adapters::providers::{AnthropicProvider, LiveProvider};
-    use proxy::application::ports::{Provider, RequestLogReadPort};
-use proxy::application::use_cases::{
-    CompleteAnthropicOAuth, CompleteOpenAiOAuth, GetConfig, GetQuotaStatus, GetRecentRequests,
-    GetStatus, GetUsageSummary, StartAnthropicOAuth, StartOpenAiOAuth, TestProvider,
-    UpdateConfig,
-};
+    use proxy::adapters::storage::db_config::DbConfigRepository;
+    use proxy::application::ports::{ConfigRepository, Provider, RequestLogReadPort};
+    use proxy::application::use_cases::{
+        CompleteAnthropicOAuth, CompleteOpenAiOAuth, GetConfig, GetQuotaStatus, GetRecentRequests,
+        GetStatus, GetUsageSummary, StartAnthropicOAuth, StartOpenAiOAuth, TestProvider,
+        UpdateConfig,
+    };
     use proxy::config::Config;
     use std::path::PathBuf;
     use std::sync::RwLock;
@@ -121,13 +112,21 @@ use proxy::application::use_cases::{
         stub_provider,
         Arc::new(proxy::adapters::quota::NoopQuota),
     ));
+
+    // In-memory DB for config storage in tests
+    let config_conn = rusqlite::Connection::open_in_memory().unwrap();
+    proxy::adapters::storage::ensure_current(&config_conn).unwrap();
+    let config_repo: Arc<dyn ConfigRepository> = Arc::new(
+        DbConfigRepository::new(config_conn, ":memory:".to_string())
+    );
+
     proxy::frameworks::AdminState {
         get_status: Arc::new(GetStatus::new(read.clone(), 0, cfg.clone())),
         get_config: Arc::new(GetConfig::new(cfg.clone())),
         get_recent: Arc::new(GetRecentRequests::new(read.clone())),
         update_config: Arc::new(UpdateConfig::new(
             cfg.clone(),
-            config_path.clone(),
+            config_repo.clone(),
             live.clone(),
             http.clone(),
         )),
@@ -137,7 +136,7 @@ use proxy::application::use_cases::{
             oauth_sessions,
             http.clone(),
             cfg.clone(),
-            config_path.clone(),
+            config_repo.clone(),
             live.clone(),
         )),
         start_openai_oauth: {
@@ -150,7 +149,7 @@ use proxy::application::use_cases::{
                 Arc::new(OpenAiSessionStore::new()),
                 http,
                 cfg,
-                config_path,
+                config_repo,
                 live,
             ))
         },
@@ -276,17 +275,8 @@ async fn admin_config_get_returns_empty_dummy_config() {
 }
 
 #[tokio::test]
-async fn admin_config_put_writes_file_and_replaces_in_memory() {
-    use std::time::SystemTime;
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let path = std::env::temp_dir().join(format!("cli-router-put-{nanos}.toml"));
-    let _ = std::fs::remove_file(&path);
-
-    // Build a proxy with a custom config-file path so the PUT roundtrips
-    // there instead of clobbering a shared file.
+async fn admin_config_put_saves_to_db_and_replaces_in_memory() {
+    // Build a proxy with DB-backed config storage.
     let conn = Connection::open_in_memory().unwrap();
     ensure_current(&conn).unwrap();
     let local_user_id: i64 = conn
@@ -315,7 +305,7 @@ async fn admin_config_put_writes_file_and_replaces_in_memory() {
     ));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let admin = dummy_admin_state_with_path(repo, path.clone());
+    let admin = dummy_admin_state(repo);
     let app = proxy::frameworks::build_router(use_case, admin);
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
@@ -345,11 +335,6 @@ async fn admin_config_put_writes_file_and_replaces_in_memory() {
         .unwrap();
     assert_eq!(resp.status(), 200);
 
-    // File on disk has the new config.
-    let written = std::fs::read_to_string(&path).unwrap();
-    assert!(written.contains("port = 9090"));
-    assert!(written.contains("sk-test"));
-
     // GET reflects the in-memory update.
     let body: serde_json::Value = reqwest::Client::new()
         .get(format!("http://{addr}/admin/config"))
@@ -361,8 +346,6 @@ async fn admin_config_put_writes_file_and_replaces_in_memory() {
         .unwrap();
     assert_eq!(body["port"], 9090);
     assert_eq!(body["providers"][0]["name"], "anthropic");
-
-    let _ = std::fs::remove_file(&path);
 }
 
 #[tokio::test]
@@ -387,17 +370,17 @@ async fn admin_test_provider_returns_failure_for_unknown_provider() {
 #[tokio::test]
 async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
     use proxy::adapters::providers::{LiveProvider, build_from_config};
-    use proxy::application::ports::Provider;
-use proxy::application::use_cases::{
-    CompleteAnthropicOAuth, CompleteOpenAiOAuth, GetConfig, GetQuotaStatus, GetRecentRequests,
-    GetStatus, GetUsageSummary, StartAnthropicOAuth, StartOpenAiOAuth, TestProvider,
-    UpdateConfig,
-};
+    use proxy::adapters::storage::db_config::DbConfigRepository;
+    use proxy::application::ports::{ConfigRepository, Provider};
+    use proxy::application::use_cases::{
+        CompleteAnthropicOAuth, CompleteOpenAiOAuth, GetConfig, GetQuotaStatus, GetRecentRequests,
+        GetStatus, GetUsageSummary, StartAnthropicOAuth, StartOpenAiOAuth, TestProvider,
+        UpdateConfig,
+    };
     use proxy::config::{
         AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule, RoutingStrategy,
     };
     use std::sync::RwLock;
-    use std::time::SystemTime;
 
     let upstream_a = MockServer::start().await;
     Mock::given(matchers::method("POST"))
@@ -458,12 +441,11 @@ use proxy::application::use_cases::{
         quota: Vec::new(),
     };
 
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("cli-router-reload-{nanos}.toml"));
-    let _ = std::fs::remove_file(&path);
+    let _tmp_path = std::env::temp_dir().join(format!("cli-router-reload-{nanos}.toml"));
 
     let http = reqwest::Client::new();
     let quota: Arc<dyn proxy::application::ports::QuotaPort> =
@@ -488,13 +470,21 @@ use proxy::application::use_cases::{
         Arc::new(proxy::adapters::quota::InMemoryQuota::new(vec![])),
     ));
     let oauth_sessions = Arc::new(proxy::adapters::oauth::OAuthSessionStore::new());
+
+    // In-memory DB for config storage in tests
+    let config_conn = Connection::open_in_memory().unwrap();
+    ensure_current(&config_conn).unwrap();
+    let config_repo: Arc<dyn ConfigRepository> = Arc::new(
+        DbConfigRepository::new(config_conn, ":memory:".to_string())
+    );
+
     let admin = proxy::frameworks::AdminState {
         get_status: Arc::new(GetStatus::new(read.clone(), 0, cfg_lock.clone())),
         get_config: Arc::new(GetConfig::new(cfg_lock.clone())),
         get_recent: Arc::new(GetRecentRequests::new(read.clone())),
         update_config: Arc::new(UpdateConfig::new(
             cfg_lock.clone(),
-            path.clone(),
+            config_repo.clone(),
             live.clone(),
             http.clone(),
         )),
@@ -504,7 +494,7 @@ use proxy::application::use_cases::{
             oauth_sessions,
             http.clone(),
             cfg_lock.clone(),
-            path.clone(),
+            config_repo.clone(),
             live.clone(),
         )),
         start_openai_oauth: {
@@ -517,7 +507,7 @@ use proxy::application::use_cases::{
                 Arc::new(OpenAiSessionStore::new()),
                 http,
                 cfg_lock,
-                path.clone(),
+                config_repo,
                 live,
             ))
         },
@@ -582,8 +572,6 @@ use proxy::application::use_cases::{
         .unwrap();
     assert_eq!(upstream_a.received_requests().await.unwrap().len(), 1);
     assert_eq!(upstream_b.received_requests().await.unwrap().len(), 1);
-
-    let _ = std::fs::remove_file(&path);
 }
 
 #[tokio::test]
