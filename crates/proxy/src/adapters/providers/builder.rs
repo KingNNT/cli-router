@@ -15,10 +15,12 @@ pub enum BuildError {
     UnknownProvider(String),
     #[error("invalid glob pattern '{0}': {1}")]
     BadPattern(String, String),
+    #[error("{0}")]
+    AuthResolve(String),
 }
 
 /// Build a single leaf provider from one `ProviderConfig` row.
-pub fn build_leaf(p: &ProviderConfig, http: reqwest::Client) -> Arc<dyn Provider> {
+pub fn build_leaf(p: &ProviderConfig, http: reqwest::Client) -> Result<Arc<dyn Provider>, BuildError> {
     let auth = match &p.auth {
         AuthConfig::Passthrough => AuthHeader::Passthrough,
         AuthConfig::ApiKey { value } => AuthHeader::ApiKey(value.clone()),
@@ -41,8 +43,25 @@ pub fn build_leaf(p: &ProviderConfig, http: reqwest::Client) -> Arc<dyn Provider
             refresh_token: refresh_token.clone(),
             expires_at_ms: *expires_at_ms,
         },
+        AuthConfig::CodexAuto => {
+            let tokens = crate::adapters::oauth::openai::read_auth_json()
+                .map_err(|e| BuildError::AuthResolve(format!(
+                    "provider '{}': CodexAuto requires ~/.codex/auth.json. Run 'codex login' first. ({e})",
+                    p.name
+                )))?;
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let expires_at_ms = now_ms + tokens.expires_in.unwrap_or(3600) * 1000;
+            AuthHeader::OAuth {
+                access_token: tokens.access_token,
+                refresh_token: tokens.refresh_token.unwrap_or_default(),
+                expires_at_ms,
+            }
+        }
     };
-    match p.kind {
+    Ok(match p.kind {
         ProviderKind::Anthropic => {
             Arc::new(AnthropicProvider::configure(http, p.base_url.clone(), auth))
         }
@@ -62,17 +81,17 @@ pub fn build_leaf(p: &ProviderConfig, http: reqwest::Client) -> Arc<dyn Provider
             p.base_url.clone(),
             auth,
         )),
-    }
+    })
 }
 
 /// Build the per-name leaf map.
 pub fn build_leaves(
     providers: &[ProviderConfig],
     http: reqwest::Client,
-) -> HashMap<String, Arc<dyn Provider>> {
+) -> Result<HashMap<String, Arc<dyn Provider>>, BuildError> {
     providers
         .iter()
-        .map(|p| (p.name.clone(), build_leaf(p, http.clone())))
+        .map(|p| Ok((p.name.clone(), build_leaf(p, http.clone())?)))
         .collect()
 }
 
@@ -132,7 +151,7 @@ pub fn build_from_config(
     http: reqwest::Client,
     quota: Arc<dyn QuotaPort>,
 ) -> Result<Arc<dyn Provider>, BuildError> {
-    let leaves = build_leaves(&cfg.providers, http);
+    let leaves = build_leaves(&cfg.providers, http)?;
     build_routing_provider(cfg, &leaves, quota)
 }
 
@@ -186,6 +205,7 @@ fn resolve_auth_token(auth: &AuthConfig) -> String {
         AuthConfig::Bearer { value } => value.clone(),
         AuthConfig::AnthropicOAuth { access_token, .. } => access_token.clone(),
         AuthConfig::OpenAiOAuth { access_token, .. } => access_token.clone(),
+        AuthConfig::CodexAuto => String::new(),
         AuthConfig::Passthrough => String::new(),
     }
 }

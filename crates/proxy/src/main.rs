@@ -116,7 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Wire quota into the routing provider so pre-flight checks use leaf provider names.
     let quota_port: Arc<dyn QuotaPort> = quota.clone();
-    let leaves = build_leaves(&cfg.providers, http.clone());
+    let leaves = build_leaves(&cfg.providers, http.clone())?;
     let initial_router = build_routing_provider(&cfg, &leaves, quota_port.clone())?;
 
     let live = Arc::new(LiveProvider::new(initial_router, quota_port.clone()));

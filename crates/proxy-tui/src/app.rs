@@ -279,6 +279,7 @@ impl AuthInputKind {
             AuthPayload::Bearer { .. } => AuthInputKind::Bearer,
             AuthPayload::AnthropicOAuth { .. } => AuthInputKind::OAuthAnthropic,
             AuthPayload::OpenAiOAuth { .. } => AuthInputKind::OAuthOpenAi,
+            AuthPayload::CodexAuto => AuthInputKind::OAuthOpenAi,
         }
     }
 }

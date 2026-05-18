@@ -145,6 +145,8 @@ pub enum AuthPayload {
         refresh_token: String,
         expires_at_ms: u64,
     },
+    #[serde(rename = "codex_auto")]
+    CodexAuto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -535,6 +537,15 @@ mod account_usage_tests {
 #[cfg(test)]
 mod config_payload_toml_tests {
     use super::*;
+
+    #[test]
+    fn codex_auto_payload_round_trips() {
+        let auth = AuthPayload::CodexAuto;
+        let json = serde_json::to_string(&auth).unwrap();
+        assert!(json.contains("\"type\":\"codex_auto\""));
+        let back: AuthPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(auth, back);
+    }
 
     #[test]
     fn openai_oauth_payload_round_trips() {

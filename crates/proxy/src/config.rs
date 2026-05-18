@@ -93,6 +93,11 @@ pub enum AuthConfig {
         /// Unix epoch millis when the access token expires.
         expires_at_ms: u64,
     },
+    /// Auto-read tokens from `~/.codex/auth.json` (Codex CLI cache).
+    /// The proxy reads the file at startup and during background refresh.
+    /// No tokens are stored in config.toml.
+    #[serde(rename = "codex_auto")]
+    CodexAuto,
 }
 
 // Manual Debug to keep secrets out of logs. The derived Debug would print
@@ -123,6 +128,7 @@ impl std::fmt::Debug for AuthConfig {
                 .field("refresh_token", &REDACTED)
                 .field("expires_at_ms", expires_at_ms)
                 .finish(),
+            AuthConfig::CodexAuto => f.debug_tuple("CodexAuto").finish(),
         }
     }
 }
@@ -335,6 +341,9 @@ impl Config {
                 }
                 AuthConfig::OpenAiOAuth { .. } => {
                     // OAuth tokens are set by the daemon, not env vars.
+                }
+                AuthConfig::CodexAuto => {
+                    // Tokens come from ~/.codex/auth.json, not env vars.
                 }
             }
         }
@@ -909,5 +918,28 @@ mod tests {
             assert_eq!(refresh_token, "oa-rt-xyz");
             assert_eq!(*expires_at_ms, 1746300000000);
         }
+    }
+
+    #[test]
+    fn toml_parses_codex_auto_auth() {
+        let toml_str = r#"
+            [[providers]]
+            name = "openai"
+            kind = "openai"
+            auth = { type = "codex_auto" }
+
+            [[routing]]
+            match = { model = "*" }
+            provider = "openai"
+        "#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert!(matches!(cfg.providers[0].auth, AuthConfig::CodexAuto));
+    }
+
+    #[test]
+    fn codex_auto_auth_debug_does_not_leak() {
+        let auth = AuthConfig::CodexAuto;
+        let s = format!("{auth:?}");
+        assert_eq!(s, "CodexAuto");
     }
 }

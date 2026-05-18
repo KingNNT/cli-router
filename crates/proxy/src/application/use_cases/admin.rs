@@ -258,7 +258,17 @@ impl TestProvider {
                     };
                 }
             };
-            crate::adapters::providers::build_leaf(&pcfg, self.http.clone())
+            match crate::adapters::providers::build_leaf(&pcfg, self.http.clone()) {
+                Ok(p) => p,
+                Err(e) => {
+                    return TestProviderResponse {
+                        success: false,
+                        status_code: None,
+                        latency_ms: 0,
+                        error: Some(format!("{e}")),
+                    };
+                }
+            }
         };
         let body_json = serde_json::json!({
             "model": model,
@@ -878,6 +888,7 @@ fn auth_to_payload(a: &AuthConfig) -> AuthPayload {
             refresh_token: refresh_token.clone(),
             expires_at_ms: *expires_at_ms,
         },
+        AuthConfig::CodexAuto => AuthPayload::CodexAuto,
     }
 }
 
@@ -904,6 +915,7 @@ fn payload_to_auth(a: AuthPayload) -> AuthConfig {
             refresh_token,
             expires_at_ms,
         },
+        AuthPayload::CodexAuto => AuthConfig::CodexAuto,
     }
 }
 

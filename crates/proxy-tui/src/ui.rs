@@ -873,6 +873,7 @@ fn auth_summary(a: &AuthPayload) -> String {
         AuthPayload::Bearer { value } => format!("bearer: {}", redact(value)),
         AuthPayload::AnthropicOAuth { .. } => "anthropic_oauth".into(),
         AuthPayload::OpenAiOAuth { .. } => "openai_oauth".into(),
+        AuthPayload::CodexAuto => "codex_auto".into(),
     }
 }
 
