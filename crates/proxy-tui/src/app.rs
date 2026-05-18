@@ -247,6 +247,8 @@ pub enum AuthInputKind {
     /// the modal initiates the browser dance instead of asking for a
     /// pasted value.
     OAuthAnthropic,
+    /// Same OAuth flow but for OpenAI providers.
+    OAuthOpenAi,
 }
 
 impl AuthInputKind {
@@ -256,6 +258,7 @@ impl AuthInputKind {
             AuthInputKind::ApiKey => "api_key",
             AuthInputKind::Bearer => "bearer",
             AuthInputKind::OAuthAnthropic => "oauth (anthropic)",
+            AuthInputKind::OAuthOpenAi => "oauth (openai)",
         }
     }
 
@@ -264,7 +267,8 @@ impl AuthInputKind {
             AuthInputKind::Passthrough => AuthInputKind::ApiKey,
             AuthInputKind::ApiKey => AuthInputKind::Bearer,
             AuthInputKind::Bearer => AuthInputKind::OAuthAnthropic,
-            AuthInputKind::OAuthAnthropic => AuthInputKind::Passthrough,
+            AuthInputKind::OAuthAnthropic => AuthInputKind::OAuthOpenAi,
+            AuthInputKind::OAuthOpenAi => AuthInputKind::Passthrough,
         }
     }
 
@@ -274,6 +278,7 @@ impl AuthInputKind {
             AuthPayload::ApiKey { .. } => AuthInputKind::ApiKey,
             AuthPayload::Bearer { .. } => AuthInputKind::Bearer,
             AuthPayload::AnthropicOAuth { .. } => AuthInputKind::OAuthAnthropic,
+            AuthPayload::OpenAiOAuth { .. } => AuthInputKind::OAuthOpenAi,
         }
     }
 }
@@ -283,6 +288,7 @@ pub enum ProviderKind {
     Anthropic,
     Zai,
     DeepSeek,
+    OpenAi,
 }
 
 impl ProviderKind {
@@ -291,26 +297,30 @@ impl ProviderKind {
             ProviderKind::Anthropic => "anthropic",
             ProviderKind::Zai => "zai",
             ProviderKind::DeepSeek => "deepseek",
+            ProviderKind::OpenAi => "openai",
         }
     }
     pub fn cycle_next(self) -> Self {
         match self {
             ProviderKind::Anthropic => ProviderKind::Zai,
             ProviderKind::Zai => ProviderKind::DeepSeek,
-            ProviderKind::DeepSeek => ProviderKind::Anthropic,
+            ProviderKind::DeepSeek => ProviderKind::OpenAi,
+            ProviderKind::OpenAi => ProviderKind::Anthropic,
         }
     }
     pub fn cycle_prev(self) -> Self {
         match self {
-            ProviderKind::Anthropic => ProviderKind::DeepSeek,
+            ProviderKind::Anthropic => ProviderKind::OpenAi,
             ProviderKind::Zai => ProviderKind::Anthropic,
             ProviderKind::DeepSeek => ProviderKind::Zai,
+            ProviderKind::OpenAi => ProviderKind::DeepSeek,
         }
     }
     pub fn from_str_or_default(s: &str) -> Self {
         match s {
             "zai" => ProviderKind::Zai,
             "deepseek" => ProviderKind::DeepSeek,
+            "openai" => ProviderKind::OpenAi,
             _ => ProviderKind::Anthropic,
         }
     }
@@ -344,7 +354,7 @@ impl FormField {
 /// need a typed value.
 fn field_order(auth_kind: AuthInputKind) -> &'static [FormField] {
     match auth_kind {
-        AuthInputKind::Passthrough | AuthInputKind::OAuthAnthropic => &[
+        AuthInputKind::Passthrough | AuthInputKind::OAuthAnthropic | AuthInputKind::OAuthOpenAi => &[
             FormField::Name,
             FormField::Kind,
             FormField::BaseUrl,
@@ -738,11 +748,10 @@ impl AppState {
                     ConfigSection::Settings => {}
                 }
             }
-            View::Requests => {
-                if self.requests.selected + 1 < self.requests.items.len() {
+            View::Requests
+                if self.requests.selected + 1 < self.requests.items.len() => {
                     self.requests.selected += 1;
                 }
-            }
             _ => {}
         }
     }
@@ -807,11 +816,14 @@ mod form_field_tests {
 
     #[test]
     fn provider_kind_cycle() {
+        // next direction
         assert_eq!(ProviderKind::Anthropic.cycle_next(), ProviderKind::Zai);
         assert_eq!(ProviderKind::Zai.cycle_next(), ProviderKind::DeepSeek);
-        assert_eq!(ProviderKind::DeepSeek.cycle_next(), ProviderKind::Anthropic);
+        assert_eq!(ProviderKind::DeepSeek.cycle_next(), ProviderKind::OpenAi);
+        assert_eq!(ProviderKind::OpenAi.cycle_next(), ProviderKind::Anthropic);
         // prev direction
-        assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::DeepSeek);
+        assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::OpenAi);
+        assert_eq!(ProviderKind::OpenAi.cycle_prev(), ProviderKind::DeepSeek);
         assert_eq!(ProviderKind::DeepSeek.cycle_prev(), ProviderKind::Zai);
         assert_eq!(ProviderKind::Zai.cycle_prev(), ProviderKind::Anthropic);
     }

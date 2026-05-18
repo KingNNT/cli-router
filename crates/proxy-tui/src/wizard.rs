@@ -31,7 +31,7 @@ pub fn build_config_from_form(form: &ProviderFormModal) -> ConfigPayload {
         crate::app::AuthInputKind::Bearer => AuthPayload::Bearer {
             value: form.auth_value.clone(),
         },
-        crate::app::AuthInputKind::OAuthAnthropic => AuthPayload::Passthrough,
+        crate::app::AuthInputKind::OAuthAnthropic | crate::app::AuthInputKind::OAuthOpenAi => AuthPayload::Passthrough,
     };
 
     let provider = if form.name.trim().is_empty() {

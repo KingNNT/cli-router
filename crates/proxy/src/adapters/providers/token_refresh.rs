@@ -32,14 +32,19 @@ pub fn spawn(
     })
 }
 
+enum OAuthKind {
+    Anthropic,
+    OpenAi,
+}
+
 async fn refresh_expiring(
     config: &Arc<RwLock<crate::config::Config>>,
     config_path: &PathBuf,
     http: &reqwest::Client,
     live: &Arc<super::LiveProvider>,
 ) -> Result<(), String> {
-    // Collect providers that need refresh (name + old refresh token).
-    let to_refresh: Vec<(String, String)> = {
+    // Collect providers that need refresh (name + old refresh token + kind).
+    let to_refresh: Vec<(String, String, OAuthKind)> = {
         let cfg = config.read().map_err(|e| format!("config read: {e}"))?;
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -53,33 +58,59 @@ async fn refresh_expiring(
                     expires_at_ms,
                     ..
                 } if now_ms + 300_000 >= *expires_at_ms && !refresh_token.is_empty() => {
-                    Some((p.name.clone(), refresh_token.clone()))
+                    Some((p.name.clone(), refresh_token.clone(), OAuthKind::Anthropic))
+                }
+                AuthConfig::OpenAiOAuth {
+                    refresh_token,
+                    expires_at_ms,
+                    ..
+                } if now_ms + 300_000 >= *expires_at_ms && !refresh_token.is_empty() => {
+                    Some((p.name.clone(), refresh_token.clone(), OAuthKind::OpenAi))
                 }
                 _ => None,
             })
             .collect()
     };
 
-    for (name, old_rt) in to_refresh {
+    for (name, old_rt, kind) in to_refresh {
         tracing::info!(provider = %name, "background refresh: refreshing OAuth token");
-        let tokens = crate::adapters::oauth::refresh_token(http, &old_rt)
-            .await
-            .map_err(|e| format!("refresh {name}: {e}"))?;
+
+        let (access_token, refresh_token, expires_in) = match kind {
+            OAuthKind::Anthropic => {
+                let t = crate::adapters::oauth::anthropic::refresh_token(http, &old_rt)
+                    .await
+                    .map_err(|e| format!("refresh {name}: {e}"))?;
+                (t.access_token, t.refresh_token, t.expires_in)
+            }
+            OAuthKind::OpenAi => {
+                let t = crate::adapters::oauth::openai::refresh_token(http, &old_rt)
+                    .await
+                    .map_err(|e| format!("refresh {name}: {e}"))?;
+                (t.access_token, t.refresh_token, t.expires_in)
+            }
+        };
 
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_millis() as u64;
-        let expires_at_ms = now_ms + tokens.expires_in.unwrap_or(3600) * 1000;
+        let expires_at_ms = now_ms + expires_in.unwrap_or(3600) * 1000;
 
         // Update in-memory config.
         let new_cfg = {
             let mut cfg = config.write().map_err(|e| format!("config write: {e}"))?;
             if let Some(prov) = cfg.providers.iter_mut().find(|p| p.name == name) {
-                prov.auth = AuthConfig::AnthropicOAuth {
-                    access_token: tokens.access_token.clone(),
-                    refresh_token: tokens.refresh_token.clone().unwrap_or(old_rt),
-                    expires_at_ms,
+                prov.auth = match kind {
+                    OAuthKind::Anthropic => AuthConfig::AnthropicOAuth {
+                        access_token,
+                        refresh_token: refresh_token.clone().unwrap_or(old_rt),
+                        expires_at_ms,
+                    },
+                    OAuthKind::OpenAi => AuthConfig::OpenAiOAuth {
+                        access_token,
+                        refresh_token: refresh_token.clone().unwrap_or(old_rt),
+                        expires_at_ms,
+                    },
                 };
             }
             cfg.clone()

@@ -326,6 +326,148 @@ pub struct CompleteAnthropicOAuth {
     live: Arc<crate::adapters::providers::LiveProvider>,
 }
 
+// ---- OAuth (OpenAI / Codex) ----
+
+pub struct StartOpenAiOAuth {
+    #[allow(dead_code)]
+    sessions: Arc<crate::adapters::oauth::openai::OAuthSessionStore>,
+}
+
+impl StartOpenAiOAuth {
+    pub fn new(sessions: Arc<crate::adapters::oauth::openai::OAuthSessionStore>) -> Self {
+        Self { sessions }
+    }
+
+    pub fn execute(&self) -> proxy_admin_api::StartOAuthResponse {
+        // For OpenAI Codex, tokens come from `~/.codex/auth.json` (written
+        // by `codex login`). The user doesn't need a browser redirect —
+        // they just need to run `codex login` once, then press Enter in
+        // the TUI to read the cached tokens.
+        let msg = match crate::adapters::oauth::openai::read_auth_json() {
+            Ok(_) => "Found ~/.codex/auth.json — press Enter to use cached Codex token.",
+            Err(_) => "No ~/.codex/auth.json found. Run `codex login` in your terminal first.",
+        };
+        proxy_admin_api::StartOAuthResponse {
+            authorization_url: msg.to_string(),
+            state_id: String::new(),
+        }
+    }
+}
+
+pub struct CompleteOpenAiOAuth {
+    #[allow(dead_code)]
+    sessions: Arc<crate::adapters::oauth::openai::OAuthSessionStore>,
+    http: reqwest::Client,
+    config: Arc<RwLock<Config>>,
+    config_path: PathBuf,
+    live: Arc<crate::adapters::providers::LiveProvider>,
+}
+
+impl CompleteOpenAiOAuth {
+    pub fn new(
+        sessions: Arc<crate::adapters::oauth::openai::OAuthSessionStore>,
+        http: reqwest::Client,
+        config: Arc<RwLock<Config>>,
+        config_path: PathBuf,
+        live: Arc<crate::adapters::providers::LiveProvider>,
+    ) -> Self {
+        Self {
+            sessions,
+            http,
+            config,
+            config_path,
+            live,
+        }
+    }
+
+    pub async fn execute(
+        &self,
+        req: proxy_admin_api::CompleteOAuthRequest,
+    ) -> proxy_admin_api::CompleteOAuthResponse {
+        // Read tokens directly from `~/.codex/auth.json` (cached by `codex login`).
+        let tokens = match crate::adapters::oauth::openai::read_auth_json() {
+            Ok(t) => t,
+            Err(e) => {
+                return proxy_admin_api::CompleteOAuthResponse {
+                    success: false,
+                    error: Some(format!("{e}")),
+                    config: None,
+                };
+            }
+        };
+
+        let (new_payload, new_cfg_clone) = {
+            let mut cur = self.config.write().expect("config rwlock poisoned");
+            let prov = match cur
+                .providers
+                .iter_mut()
+                .find(|p| p.name == req.provider_name)
+            {
+                Some(p) => p,
+                None => {
+                    return proxy_admin_api::CompleteOAuthResponse {
+                        success: false,
+                        error: Some(format!(
+                            "provider '{}' not in current config",
+                            req.provider_name
+                        )),
+                        config: None,
+                    };
+                }
+            };
+            let expires_at_ms = {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                let expires_in_ms = tokens.expires_in.unwrap_or(3600) * 1000;
+                now_ms + expires_in_ms
+            };
+            prov.auth = AuthConfig::OpenAiOAuth {
+                access_token: tokens.access_token.clone(),
+                refresh_token: tokens.refresh_token.clone().unwrap_or_default(),
+                expires_at_ms,
+            };
+            (config_to_payload(&cur), cur.clone())
+        };
+
+        // Write back to disk.
+        let toml_str = match toml::to_string_pretty(&new_cfg_clone) {
+            Ok(s) => s,
+            Err(e) => {
+                return proxy_admin_api::CompleteOAuthResponse {
+                    success: false,
+                    error: Some(format!("config serialize: {e}")),
+                    config: None,
+                };
+            }
+        };
+        if let Some(parent) = self.config_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = std::fs::write(&self.config_path, toml_str) {
+            return proxy_admin_api::CompleteOAuthResponse {
+                success: false,
+                error: Some(format!("write config: {e}")),
+                config: None,
+            };
+        }
+        // Hot reload providers so the new token is used immediately.
+        if let Err(e) = self.live.reload(&new_cfg_clone, self.http.clone()) {
+            return proxy_admin_api::CompleteOAuthResponse {
+                success: false,
+                error: Some(format!("provider rebuild: {e}")),
+                config: None,
+            };
+        }
+        proxy_admin_api::CompleteOAuthResponse {
+            success: true,
+            error: None,
+            config: Some(new_payload),
+        }
+    }
+}
+
 impl CompleteAnthropicOAuth {
     pub fn new(
         sessions: Arc<crate::adapters::oauth::OAuthSessionStore>,
@@ -693,11 +835,13 @@ fn kind_to_str(k: ProviderKind) -> &'static str {
         ProviderKind::Anthropic => "anthropic",
         ProviderKind::Zai => "zai",
         ProviderKind::DeepSeek => "deepseek",
+        ProviderKind::OpenAi => "openai",
     }
 }
 
 fn str_to_kind(s: &str) -> Result<ProviderKind, ProxyError> {
     match s.trim().to_ascii_lowercase().as_str() {
+        "openai" | "open_ai" => Ok(ProviderKind::OpenAi),
         "anthropic" => Ok(ProviderKind::Anthropic),
         "zai" => Ok(ProviderKind::Zai),
         "deepseek" => Ok(ProviderKind::DeepSeek),
@@ -725,6 +869,15 @@ fn auth_to_payload(a: &AuthConfig) -> AuthPayload {
             refresh_token: refresh_token.clone(),
             expires_at_ms: *expires_at_ms,
         },
+        AuthConfig::OpenAiOAuth {
+            access_token,
+            refresh_token,
+            expires_at_ms,
+        } => AuthPayload::OpenAiOAuth {
+            access_token: access_token.clone(),
+            refresh_token: refresh_token.clone(),
+            expires_at_ms: *expires_at_ms,
+        },
     }
 }
 
@@ -738,6 +891,15 @@ fn payload_to_auth(a: AuthPayload) -> AuthConfig {
             refresh_token,
             expires_at_ms,
         } => AuthConfig::AnthropicOAuth {
+            access_token,
+            refresh_token,
+            expires_at_ms,
+        },
+        AuthPayload::OpenAiOAuth {
+            access_token,
+            refresh_token,
+            expires_at_ms,
+        } => AuthConfig::OpenAiOAuth {
             access_token,
             refresh_token,
             expires_at_ms,

@@ -139,6 +139,12 @@ pub enum AuthPayload {
         refresh_token: String,
         expires_at_ms: u64,
     },
+    #[serde(rename = "openai_oauth")]
+    OpenAiOAuth {
+        access_token: String,
+        refresh_token: String,
+        expires_at_ms: u64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -529,6 +535,19 @@ mod account_usage_tests {
 #[cfg(test)]
 mod config_payload_toml_tests {
     use super::*;
+
+    #[test]
+    fn openai_oauth_payload_round_trips() {
+        let auth = AuthPayload::OpenAiOAuth {
+            access_token: "at".into(),
+            refresh_token: "rt".into(),
+            expires_at_ms: 999,
+        };
+        let json = serde_json::to_string(&auth).unwrap();
+        assert!(json.contains("\"type\":\"openai_oauth\""));
+        let back: AuthPayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(auth, back);
+    }
 
     #[test]
     fn config_payload_round_trips_through_toml() {

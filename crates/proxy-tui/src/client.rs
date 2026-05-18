@@ -102,6 +102,39 @@ impl AdminClient {
             .map_err(|e| ClientError::Decode(e.to_string()))
     }
 
+    pub fn oauth_start_openai(&self, provider_name: &str) -> Result<StartOAuthResponse, ClientError> {
+        let url = format!("{}/admin/oauth/openai/start", self.base_url);
+        let body = StartOAuthRequest {
+            provider_name: provider_name.into(),
+        };
+        let resp = ureq::post(&url)
+            .set("content-type", "application/json")
+            .send_json(&body)
+            .map_err(map_ureq_err)?;
+        resp.into_json::<StartOAuthResponse>()
+            .map_err(|e| ClientError::Decode(e.to_string()))
+    }
+
+    pub fn oauth_complete_openai(
+        &self,
+        state_id: &str,
+        code: &str,
+        provider_name: &str,
+    ) -> Result<CompleteOAuthResponse, ClientError> {
+        let url = format!("{}/admin/oauth/openai/complete", self.base_url);
+        let body = CompleteOAuthRequest {
+            state_id: state_id.into(),
+            code: code.into(),
+            provider_name: provider_name.into(),
+        };
+        let resp = ureq::post(&url)
+            .set("content-type", "application/json")
+            .send_json(&body)
+            .map_err(map_ureq_err)?;
+        resp.into_json::<CompleteOAuthResponse>()
+            .map_err(|e| ClientError::Decode(e.to_string()))
+    }
+
     pub fn get_quota_status(&self) -> Result<QuotaStatusListDto, ClientError> {
         get_json(&format!("{}/admin/quota/status", self.base_url))
     }

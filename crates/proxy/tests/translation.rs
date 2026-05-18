@@ -100,8 +100,9 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
     use proxy::adapters::providers::LiveProvider;
     use proxy::application::ports::{Provider, RequestLogReadPort};
     use proxy::application::use_cases::{
-        CompleteAnthropicOAuth, GetConfig, GetQuotaStatus, GetRecentRequests, GetStatus,
-        GetUsageSummary, StartAnthropicOAuth, TestProvider, UpdateConfig,
+        CompleteAnthropicOAuth, CompleteOpenAiOAuth, GetConfig, GetQuotaStatus, GetRecentRequests,
+        GetStatus, GetUsageSummary, StartAnthropicOAuth, StartOpenAiOAuth, TestProvider,
+        UpdateConfig,
     };
     use proxy::config::Config;
     use std::path::PathBuf;
@@ -139,11 +140,25 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
         start_oauth: Arc::new(StartAnthropicOAuth::new(oauth_sessions.clone())),
         complete_oauth: Arc::new(CompleteAnthropicOAuth::new(
             oauth_sessions,
-            http,
-            cfg,
-            config_path,
-            live,
+            http.clone(),
+            cfg.clone(),
+            config_path.clone(),
+            live.clone(),
         )),
+        start_openai_oauth: {
+            use proxy::adapters::oauth::openai::OAuthSessionStore as OpenAiSessionStore;
+            Arc::new(StartOpenAiOAuth::new(Arc::new(OpenAiSessionStore::new())))
+        },
+        complete_openai_oauth: {
+            use proxy::adapters::oauth::openai::OAuthSessionStore as OpenAiSessionStore;
+            Arc::new(CompleteOpenAiOAuth::new(
+                Arc::new(OpenAiSessionStore::new()),
+                http,
+                cfg,
+                config_path,
+                live,
+            ))
+        },
         usage_summary: Arc::new(GetUsageSummary::new(read.clone())),
         quota_status: Arc::new(GetQuotaStatus::new(Arc::new(
             proxy::adapters::quota::InMemoryQuota::new(vec![]),

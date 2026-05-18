@@ -3,13 +3,15 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use proxy::adapters::oauth::OAuthSessionStore;
+use proxy::adapters::oauth::openai::OAuthSessionStore as OpenAiOAuthSessionStore;
 use proxy::adapters::providers::{LiveProvider, build_leaves, build_routing_provider};
 use proxy::adapters::quota::InMemoryQuota;
 use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
 use proxy::application::ports::{Provider, QuotaPort, RequestLogPort, RequestLogReadPort};
 use proxy::application::use_cases::{
-    CompleteAnthropicOAuth, GetConfig, GetQuotaStatus, GetRecentRequests, GetStatus,
-    GetUsageSummary, HandleMessages, StartAnthropicOAuth, TestProvider, UpdateConfig,
+    CompleteAnthropicOAuth, CompleteOpenAiOAuth, GetConfig, GetQuotaStatus, GetRecentRequests,
+    GetStatus, GetUsageSummary, HandleMessages, StartAnthropicOAuth, StartOpenAiOAuth,
+    TestProvider, UpdateConfig,
 };
 use proxy::config::Config;
 use proxy::frameworks::AdminState;
@@ -137,6 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
+    let openai_oauth_sessions = Arc::new(OpenAiOAuthSessionStore::new());
 
     // Spawn background OAuth token refresh (checks every 60s, persists to disk).
     proxy::adapters::providers::token_refresh::spawn(
@@ -172,6 +175,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         start_oauth: Arc::new(StartAnthropicOAuth::new(oauth_sessions.clone())),
         complete_oauth: Arc::new(CompleteAnthropicOAuth::new(
             oauth_sessions,
+            http.clone(),
+            cfg_lock.clone(),
+            config_path.clone(),
+            live.clone(),
+        )),
+        start_openai_oauth: Arc::new(StartOpenAiOAuth::new(openai_oauth_sessions.clone())),
+        complete_openai_oauth: Arc::new(CompleteOpenAiOAuth::new(
+            openai_oauth_sessions,
             http,
             cfg_lock,
             config_path,

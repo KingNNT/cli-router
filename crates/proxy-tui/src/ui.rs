@@ -872,6 +872,7 @@ fn auth_summary(a: &AuthPayload) -> String {
         AuthPayload::ApiKey { value } => format!("api_key: {}", redact(value)),
         AuthPayload::Bearer { value } => format!("bearer: {}", redact(value)),
         AuthPayload::AnthropicOAuth { .. } => "anthropic_oauth".into(),
+        AuthPayload::OpenAiOAuth { .. } => "openai_oauth".into(),
     }
 }
 

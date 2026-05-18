@@ -3,7 +3,7 @@
 //! (`LiveProvider::reload`) call the same code.
 
 use super::account_usage::{AnthropicAccountUsage, DeepSeekAccountUsage, ZaiAccountUsage};
-use super::{AnthropicProvider, AuthHeader, DeepSeekProvider, RoutingProvider, ZaiProvider};
+use super::{AnthropicProvider, AuthHeader, DeepSeekProvider, OpenAiProvider, RoutingProvider, ZaiProvider};
 use crate::application::ports::{AccountUsagePort, Provider, QuotaPort};
 use crate::config::{AuthConfig, Config, ProviderConfig, ProviderKind};
 use std::collections::HashMap;
@@ -32,6 +32,15 @@ pub fn build_leaf(p: &ProviderConfig, http: reqwest::Client) -> Arc<dyn Provider
             refresh_token: refresh_token.clone(),
             expires_at_ms: *expires_at_ms,
         },
+        AuthConfig::OpenAiOAuth {
+            access_token,
+            refresh_token,
+            expires_at_ms,
+        } => AuthHeader::OAuth {
+            access_token: access_token.clone(),
+            refresh_token: refresh_token.clone(),
+            expires_at_ms: *expires_at_ms,
+        },
     };
     match p.kind {
         ProviderKind::Anthropic => {
@@ -44,6 +53,11 @@ pub fn build_leaf(p: &ProviderConfig, http: reqwest::Client) -> Arc<dyn Provider
             auth,
         )),
         ProviderKind::DeepSeek => Arc::new(DeepSeekProvider::configure(
+            http,
+            p.base_url.clone(),
+            auth,
+        )),
+        ProviderKind::OpenAi => Arc::new(OpenAiProvider::configure(
             http,
             p.base_url.clone(),
             auth,
@@ -155,6 +169,9 @@ pub fn build_account_usage(
                     let token = resolve_auth_token(&p.auth);
                     Arc::new(DeepSeekAccountUsage::new(p.name.clone(), token))
                 }
+                ProviderKind::OpenAi => {
+                    Arc::new(super::account_usage::noop::NoopAccountUsage)
+                }
             };
             (p.name.clone(), adapter)
         })
@@ -168,6 +185,7 @@ fn resolve_auth_token(auth: &AuthConfig) -> String {
         AuthConfig::ApiKey { value } => value.clone(),
         AuthConfig::Bearer { value } => value.clone(),
         AuthConfig::AnthropicOAuth { access_token, .. } => access_token.clone(),
+        AuthConfig::OpenAiOAuth { access_token, .. } => access_token.clone(),
         AuthConfig::Passthrough => String::new(),
     }
 }

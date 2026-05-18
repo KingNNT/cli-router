@@ -7,8 +7,9 @@
 
 use crate::application::errors::ProxyError;
 use crate::application::use_cases::{
-    CompleteAnthropicOAuth, GetAccountUsage, GetConfig, GetQuotaStatus, GetRecentRequests,
-    GetStatus, GetUsageSummary, StartAnthropicOAuth, TestProvider, UpdateConfig,
+    CompleteAnthropicOAuth, CompleteOpenAiOAuth, GetAccountUsage, GetConfig, GetQuotaStatus,
+    GetRecentRequests, GetStatus, GetUsageSummary, StartAnthropicOAuth, StartOpenAiOAuth,
+    TestProvider, UpdateConfig,
 };
 use axum::extract::{FromRef, Path, Query, State};
 use axum::routing::{get, post};
@@ -30,6 +31,8 @@ pub struct AdminState {
     pub test_provider: Arc<TestProvider>,
     pub start_oauth: Arc<StartAnthropicOAuth>,
     pub complete_oauth: Arc<CompleteAnthropicOAuth>,
+    pub start_openai_oauth: Arc<StartOpenAiOAuth>,
+    pub complete_openai_oauth: Arc<CompleteOpenAiOAuth>,
     pub usage_summary: Arc<GetUsageSummary>,
     pub quota_status: Arc<GetQuotaStatus>,
     pub account_usage: Arc<GetAccountUsage>,
@@ -63,6 +66,11 @@ pub fn build_admin_router(state: AdminState) -> Router {
         .route(
             "/admin/oauth/anthropic/complete",
             post(oauth_complete_handler),
+        )
+        .route("/admin/oauth/openai/start", post(openai_oauth_start_handler))
+        .route(
+            "/admin/oauth/openai/complete",
+            post(openai_oauth_complete_handler),
         )
         .with_state(state)
 }
@@ -131,6 +139,20 @@ async fn oauth_complete_handler(
     Json(req): Json<CompleteOAuthRequest>,
 ) -> Json<CompleteOAuthResponse> {
     Json(s.complete_oauth.execute(req).await)
+}
+
+async fn openai_oauth_start_handler(
+    State(s): State<AdminState>,
+    Json(_req): Json<StartOAuthRequest>,
+) -> Json<StartOAuthResponse> {
+    Json(s.start_openai_oauth.execute())
+}
+
+async fn openai_oauth_complete_handler(
+    State(s): State<AdminState>,
+    Json(req): Json<CompleteOAuthRequest>,
+) -> Json<CompleteOAuthResponse> {
+    Json(s.complete_openai_oauth.execute(req).await)
 }
 
 async fn quota_status_handler(State(s): State<AdminState>) -> Json<QuotaStatusListDto> {

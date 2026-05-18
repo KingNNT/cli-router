@@ -867,6 +867,7 @@ fn open_test_modal(state: &mut AppState) {
         "anthropic" => "claude-3-5-haiku-latest",
         "zai" => "glm-4.5-air",
         "deepseek" => "deepseek-chat",
+        "openai" => "gpt-4o-mini",
         _ => "",
     };
     state.modal = Modal::TestProvider(TestProviderModal {
@@ -996,7 +997,9 @@ fn handle_form_key(
             Modal::ProviderForm(m)
         }
         (FormState::Editing, KeyCode::Enter) if m.focused == FormField::Save => {
-            if m.auth_kind == AuthInputKind::OAuthAnthropic {
+            if m.auth_kind == AuthInputKind::OAuthAnthropic
+                || m.auth_kind == AuthInputKind::OAuthOpenAi
+            {
                 return match m.mode {
                     FormMode::Add => submit_oauth_add(client, state, m), // Task 8
                     FormMode::Edit { .. } => submit_oauth_edit(client, state, m),
@@ -1033,7 +1036,12 @@ fn handle_form_key(
                 return Modal::ProviderForm(m);
             }
             m.state = FormState::OAuthExchanging;
-            match client.oauth_complete(&state_id, code.trim(), &provider_name) {
+            let auth_kind = m.auth_kind;
+            let result = match auth_kind {
+                AuthInputKind::OAuthOpenAi => client.oauth_complete_openai(&state_id, code.trim(), &provider_name),
+                _ => client.oauth_complete(&state_id, code.trim(), &provider_name),
+            };
+            match result {
                 Ok(resp) if resp.success => {
                     if let Some(updated) = resp.config {
                         state.set_config(Ok(updated));
@@ -1096,7 +1104,9 @@ fn submit_non_oauth_save(
         AuthInputKind::Passthrough => AuthPayload::Passthrough,
         AuthInputKind::ApiKey => AuthPayload::ApiKey { value: auth_value },
         AuthInputKind::Bearer => AuthPayload::Bearer { value: auth_value },
-        AuthInputKind::OAuthAnthropic => unreachable!("OAuth handled separately"),
+        AuthInputKind::OAuthAnthropic | AuthInputKind::OAuthOpenAi => {
+            unreachable!("OAuth handled separately")
+        }
     };
 
     let (editing_index, original_name) = match &m.mode {
@@ -1167,16 +1177,18 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
         }
         FormField::AuthKind => {
             // AuthInputKind only has cycle(); use it for both directions
-            // (4 variants → cycling 3 times == reverse). Fine for a TUI.
+            // (5 variants → cycling 4 times == reverse). Fine for a TUI.
             m.auth_kind = if forward {
                 m.auth_kind.cycle()
             } else {
-                m.auth_kind.cycle().cycle().cycle()
+                m.auth_kind.cycle().cycle().cycle().cycle()
             };
             // If switching to a kind without AuthValue, move focus off it.
             if matches!(
                 m.auth_kind,
-                AuthInputKind::Passthrough | AuthInputKind::OAuthAnthropic
+                AuthInputKind::Passthrough
+                    | AuthInputKind::OAuthAnthropic
+                    | AuthInputKind::OAuthOpenAi
             ) && m.focused == FormField::AuthValue
             {
                 m.focused = FormField::AuthKind;
@@ -1254,7 +1266,11 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
 
     // Provider exists in daemon config. Run OAuth dance.
     m.state = FormState::Saving;
-    match client.oauth_start(&new_provider_name) {
+    let start_result = match m.auth_kind {
+        AuthInputKind::OAuthOpenAi => client.oauth_start_openai(&new_provider_name),
+        _ => client.oauth_start(&new_provider_name),
+    };
+    match start_result {
         Ok(resp) => {
             let auth_url = resp.authorization_url.clone();
             m.state = FormState::OAuthAwaitingCode {
@@ -1262,11 +1278,15 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
                 state_id: resp.state_id,
                 code_input: String::new(),
             };
-            match open_url(&auth_url) {
-                Ok(()) => state.flash("opening authorization URL in your browser…"),
-                Err(e) => state.flash(format!(
-                    "could not auto-open browser ({e}); copy the URL above"
-                )),
+            if auth_url.starts_with("http") {
+                match open_url(&auth_url) {
+                    Ok(()) => state.flash("opening authorization URL in your browser…"),
+                    Err(e) => state.flash(format!(
+                        "could not auto-open browser ({e}); copy the URL above"
+                    )),
+                }
+            } else {
+                state.flash(&auth_url);
             }
         }
         Err(e) => {
@@ -1290,7 +1310,6 @@ fn handle_wizard_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         // Ctrl+C always quits
         _ if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') => {
             state.should_quit = true;
-            return;
         }
         // Welcome step
         (WizardStep::Welcome, KeyCode::Enter) => {
@@ -1374,7 +1393,9 @@ fn handle_wizard_form_key(
         KeyCode::Right => cycle_field_value(&mut m, true),
         KeyCode::Enter if m.focused == FormField::Save => {
             // Submit: build config and write to file
-            if m.auth_kind == AuthInputKind::OAuthAnthropic {
+            if m.auth_kind == AuthInputKind::OAuthAnthropic
+                || m.auth_kind == AuthInputKind::OAuthOpenAi
+            {
                 // OAuth not supported in wizard — skip
                 m.error = Some("OAuth not supported in wizard. Use passthrough or api_key.".into());
                 return Some(Modal::ProviderForm(m));
@@ -1838,7 +1859,11 @@ fn submit_oauth_edit(
 
     // Now kick off the OAuth dance. Daemon will look up by `new_provider_name`.
     m.state = FormState::Saving;
-    match client.oauth_start(&new_provider_name) {
+    let start_result = match m.auth_kind {
+        AuthInputKind::OAuthOpenAi => client.oauth_start_openai(&new_provider_name),
+        _ => client.oauth_start(&new_provider_name),
+    };
+    match start_result {
         Ok(resp) => {
             let auth_url = resp.authorization_url.clone();
             m.state = FormState::OAuthAwaitingCode {
@@ -1846,11 +1871,15 @@ fn submit_oauth_edit(
                 state_id: resp.state_id,
                 code_input: String::new(),
             };
-            match open_url(&auth_url) {
-                Ok(()) => state.flash("opening authorization URL in your browser…"),
-                Err(e) => state.flash(format!(
-                    "could not auto-open browser ({e}); copy the URL above"
-                )),
+            if auth_url.starts_with("http") {
+                match open_url(&auth_url) {
+                    Ok(()) => state.flash("opening authorization URL in your browser…"),
+                    Err(e) => state.flash(format!(
+                        "could not auto-open browser ({e}); copy the URL above"
+                    )),
+                }
+            } else {
+                state.flash(&auth_url);
             }
         }
         Err(e) => {

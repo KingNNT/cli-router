@@ -56,6 +56,8 @@ pub enum ProviderKind {
     Zai,
     #[serde(alias = "deepseek")]
     DeepSeek,
+    #[serde(alias = "openai")]
+    OpenAi,
 }
 
 /// How the proxy authenticates *to* the upstream when forwarding a request.
@@ -83,6 +85,14 @@ pub enum AuthConfig {
         /// Unix epoch millis when the access token expires.
         expires_at_ms: u64,
     },
+    /// OpenAI OAuth session. Same refresh semantics as AnthropicOAuth.
+    #[serde(rename = "openai_oauth")]
+    OpenAiOAuth {
+        access_token: String,
+        refresh_token: String,
+        /// Unix epoch millis when the access token expires.
+        expires_at_ms: u64,
+    },
 }
 
 // Manual Debug to keep secrets out of logs. The derived Debug would print
@@ -103,6 +113,12 @@ impl std::fmt::Debug for AuthConfig {
                 .finish(),
             AuthConfig::AnthropicOAuth { expires_at_ms, .. } => f
                 .debug_struct("AnthropicOAuth")
+                .field("access_token", &REDACTED)
+                .field("refresh_token", &REDACTED)
+                .field("expires_at_ms", expires_at_ms)
+                .finish(),
+            AuthConfig::OpenAiOAuth { expires_at_ms, .. } => f
+                .debug_struct("OpenAiOAuth")
                 .field("access_token", &REDACTED)
                 .field("refresh_token", &REDACTED)
                 .field("expires_at_ms", expires_at_ms)
@@ -269,6 +285,7 @@ impl Config {
             ProviderKind::Anthropic => ("anthropic", "ANTHROPIC_API_KEY"),
             ProviderKind::Zai => ("zai", "ZAI_API_KEY"),
             ProviderKind::DeepSeek => ("deepseek", "DEEPSEEK_API_KEY"),
+            ProviderKind::OpenAi => ("openai", "OPENAI_API_KEY"),
         };
 
         let auth = match std::env::var(env_key).ok() {
@@ -314,6 +331,9 @@ impl Config {
                 }
                 AuthConfig::Passthrough => {}
                 AuthConfig::AnthropicOAuth { .. } => {
+                    // OAuth tokens are set by the daemon, not env vars.
+                }
+                AuthConfig::OpenAiOAuth { .. } => {
                     // OAuth tokens are set by the daemon, not env vars.
                 }
             }
@@ -362,6 +382,7 @@ fn parse_kind(s: &str) -> Option<ProviderKind> {
         "anthropic" => Some(ProviderKind::Anthropic),
         "zai" | "z.ai" | "z-ai" => Some(ProviderKind::Zai),
         "deepseek" | "deep-seek" => Some(ProviderKind::DeepSeek),
+        "openai" | "open_ai" => Some(ProviderKind::OpenAi),
         _ => None,
     }
 }
@@ -500,6 +521,11 @@ mod tests {
                 refresh_token: "sk-leak-refresh".into(),
                 expires_at_ms: 1_700_000_000_000,
             },
+            AuthConfig::OpenAiOAuth {
+                access_token: "sk-leak-oai-access".into(),
+                refresh_token: "sk-leak-oai-refresh".into(),
+                expires_at_ms: 1_700_000_000_000,
+            },
         ];
         for auth in &cases {
             let s = format!("{auth:?}");
@@ -544,7 +570,7 @@ mod tests {
         assert_eq!(parse_kind("zai"), Some(ProviderKind::Zai));
         assert_eq!(parse_kind("Z.AI"), Some(ProviderKind::Zai));
         assert_eq!(parse_kind("z-ai"), Some(ProviderKind::Zai));
-        assert_eq!(parse_kind("openai"), None);
+        assert_eq!(parse_kind("openai"), Some(ProviderKind::OpenAi));
     }
 
     #[test]
@@ -829,5 +855,59 @@ mod tests {
         "#;
         let cfg2: Config = toml::from_str(toml2).unwrap();
         assert_eq!(cfg2.providers[0].kind, ProviderKind::DeepSeek);
+    }
+
+    #[test]
+    fn parse_kind_accepts_openai_aliases() {
+        assert_eq!(parse_kind("openai"), Some(ProviderKind::OpenAi));
+        assert_eq!(parse_kind("open_ai"), Some(ProviderKind::OpenAi));
+        assert_eq!(parse_kind("OpenAI"), Some(ProviderKind::OpenAi));
+    }
+
+    #[test]
+    fn toml_parses_openai_provider() {
+        let toml_str = r#"
+            [[providers]]
+            name = "openai"
+            kind = "openai"
+            auth = { type = "bearer", value = "sk-openai-test" }
+
+            [[routing]]
+            match = { model = "*" }
+            provider = "openai"
+        "#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.providers[0].kind, ProviderKind::OpenAi);
+        assert_eq!(cfg.providers[0].name, "openai");
+        assert!(matches!(cfg.providers[0].auth, AuthConfig::Bearer { .. }));
+    }
+
+    #[test]
+    fn toml_parses_openai_oauth_auth() {
+        let toml_str = r#"
+            [[providers]]
+            name = "openai"
+            kind = "openai"
+            auth = { type = "openai_oauth", access_token = "oa-at-abc", refresh_token = "oa-rt-xyz", expires_at_ms = 1746300000000 }
+
+            [[routing]]
+            match = { model = "*" }
+            provider = "openai"
+        "#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert!(matches!(
+            cfg.providers[0].auth,
+            AuthConfig::OpenAiOAuth { .. }
+        ));
+        if let AuthConfig::OpenAiOAuth {
+            access_token,
+            refresh_token,
+            expires_at_ms,
+        } = &cfg.providers[0].auth
+        {
+            assert_eq!(access_token, "oa-at-abc");
+            assert_eq!(refresh_token, "oa-rt-xyz");
+            assert_eq!(*expires_at_ms, 1746300000000);
+        }
     }
 }
