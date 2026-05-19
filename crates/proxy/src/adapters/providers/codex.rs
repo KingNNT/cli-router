@@ -550,7 +550,7 @@ fn translate_buffered_response(responses_body: &Value) -> Result<Value, String> 
 type BoxedByteStream =
     Pin<Box<dyn Stream<Item = Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> + Send>>;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 struct ResponsesSseTranslator {
     inner: BoxedByteStream,
@@ -566,6 +566,11 @@ struct ResponsesSseTranslator {
     // with finish_reason=tool_calls so AI SDK clients execute the tool instead
     // of treating the assistant turn as silent.
     tool_call_started: bool,
+    // Responses argument deltas are keyed by output item id, while Chat
+    // Completions chunks must use call_id. Keep the mapping from
+    // response.output_item.added/done so later argument deltas can be emitted
+    // with the correct Chat Completions tool_call id.
+    tool_call_item_to_call_id: HashMap<String, String>,
     deferred_tool_call_id: String,
     deferred_tool_arguments: String,
 }
@@ -580,6 +585,7 @@ impl ResponsesSseTranslator {
             model: String::new(),
             first_content_sent: false,
             tool_call_started: false,
+            tool_call_item_to_call_id: HashMap::new(),
             deferred_tool_call_id: String::new(),
             deferred_tool_arguments: String::new(),
         }
@@ -648,28 +654,47 @@ impl ResponsesSseTranslator {
                     }
                 }
                 "response.function_call_arguments.delta" => {
-                    if let (Some(call_id), Some(args_delta)) = (
-                        event.get("call_id").and_then(|c| c.as_str()),
-                        event.get("delta").and_then(|d| d.as_str()),
-                    ) {
-                        if !self.tool_call_started {
-                            self.deferred_tool_call_id = call_id.to_string();
-                            self.deferred_tool_arguments.push_str(args_delta);
-                            continue;
+                    if let Some(args_delta) = event.get("delta").and_then(|d| d.as_str()) {
+                        let call_id = event
+                            .get("call_id")
+                            .and_then(|c| c.as_str())
+                            .map(str::to_string)
+                            .or_else(|| {
+                                event
+                                    .get("item_id")
+                                    .and_then(|i| i.as_str())
+                                    .and_then(|item_id| self.tool_call_item_to_call_id.get(item_id))
+                                    .cloned()
+                            });
+
+                        if let Some(call_id) = call_id {
+                            if !self.tool_call_started {
+                                self.deferred_tool_call_id = call_id.clone();
+                                self.deferred_tool_arguments.push_str(args_delta);
+                                continue;
+                            }
+                            self.emit_tool_call_arguments(&call_id, args_delta);
                         }
-                        self.emit_tool_call_arguments(call_id, args_delta);
                     }
                 }
                 "response.output_item.added" | "response.output_item.done" => {
                     if let Some(item) = event.get("item")
                         && item.get("type").and_then(|t| t.as_str()) == Some("function_call")
-                        && !self.tool_call_started
                     {
                         let call_id = item
                             .get("call_id")
                             .or_else(|| item.get("id"))
                             .and_then(|v| v.as_str())
                             .unwrap_or("call_codex");
+                        if let Some(item_id) = item.get("id").and_then(|v| v.as_str()) {
+                            self.tool_call_item_to_call_id
+                                .insert(item_id.to_string(), call_id.to_string());
+                        }
+
+                        if self.tool_call_started {
+                            continue;
+                        }
+
                         let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
                         if !name.is_empty() {
                             self.emit_tool_call_start(call_id, name);
@@ -1445,6 +1470,36 @@ mod tests {
         assert!(
             !combined.contains("\"name\":\"\""),
             "must not emit nameless tool-call start chunk, got: {combined}"
+        );
+    }
+
+    #[test]
+    fn sse_uses_item_id_to_forward_streamed_function_call_arguments() {
+        // Responses API argument deltas identify the function call by item_id,
+        // not call_id. The preceding output_item.added event contains both ids;
+        // the translator must map item_id back to call_id so Chat Completions
+        // clients receive the required JSON arguments instead of "" / {}.
+        let events = &[
+            "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_tool\",\"model\":\"gpt-5.5\"}}\n\n",
+            "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"fc_123\",\"call_id\":\"call_123\",\"name\":\"skill\",\"arguments\":\"\"}}\n\n",
+            "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_123\",\"output_index\":0,\"delta\":\"{\\\"\"}\n\n",
+            "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_123\",\"output_index\":0,\"delta\":\"name\\\":\\\"systematic-debugging\\\"}\"}\n\n",
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.5\"}}\n\n",
+        ];
+        let output = translate_sse_chunks(events);
+        let combined = output.join("");
+
+        assert!(
+            combined.contains("\"name\":\"skill\""),
+            "tool call name should be emitted, got: {combined}"
+        );
+        assert!(
+            combined.contains("\"arguments\":\"{\\\"\""),
+            "first item_id-keyed argument delta should be forwarded using call_id, got: {combined}"
+        );
+        assert!(
+            combined.contains("\"arguments\":\"name\\\":\\\"systematic-debugging\\\"}\""),
+            "second item_id-keyed argument delta should be forwarded using call_id, got: {combined}"
         );
     }
 }
