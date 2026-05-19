@@ -52,9 +52,7 @@ impl PricingRepository for NullPricing {
 }
 
 /// Start a proxy with a CodexProvider leaf pointed at the given mock upstream.
-async fn start_codex_proxy(
-    upstream_url: String,
-) -> (SocketAddr, Arc<SqliteRequestLogRepository>) {
+async fn start_codex_proxy(upstream_url: String) -> (SocketAddr, Arc<SqliteRequestLogRepository>) {
     let conn = Connection::open_in_memory().unwrap();
     ensure_current(&conn).unwrap();
     let local_user_id: i64 = conn
@@ -128,15 +126,16 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
     }));
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
     let http = reqwest::Client::new();
-    let stub_provider: Arc<dyn Provider> = Arc::new(
-        CodexProvider::configure(http.clone(), None, AuthHeader::Passthrough),
-    );
+    let stub_provider: Arc<dyn Provider> = Arc::new(CodexProvider::configure(
+        http.clone(),
+        None,
+        AuthHeader::Passthrough,
+    ));
 
     let config_conn = rusqlite::Connection::open_in_memory().unwrap();
     proxy::adapters::storage::ensure_current(&config_conn).unwrap();
-    let config_repo: Arc<dyn ConfigRepository> = Arc::new(
-        DbConfigRepository::new(config_conn, ":memory:".to_string()),
-    );
+    let config_repo: Arc<dyn ConfigRepository> =
+        Arc::new(DbConfigRepository::new(config_conn, ":memory:".to_string()));
 
     let live = Arc::new(LiveProvider::new(
         stub_provider,
@@ -250,7 +249,9 @@ async fn codex_buffered_translates_chat_completions_to_responses_and_back() {
         "response object must be 'chat.completion', got: {body}"
     );
 
-    let choices = body["choices"].as_array().expect("choices must be an array");
+    let choices = body["choices"]
+        .as_array()
+        .expect("choices must be an array");
     assert_eq!(choices.len(), 1, "should have exactly one choice");
     assert_eq!(choices[0]["message"]["role"], "assistant");
     assert_eq!(choices[0]["message"]["content"], "Hello from Codex!");
@@ -263,7 +264,11 @@ async fn codex_buffered_translates_chat_completions_to_responses_and_back() {
 
     // Verify the upstream received a Responses API shaped request.
     let upstream_reqs = upstream.received_requests().await.unwrap();
-    assert_eq!(upstream_reqs.len(), 1, "upstream should receive exactly one request");
+    assert_eq!(
+        upstream_reqs.len(),
+        1,
+        "upstream should receive exactly one request"
+    );
 
     let sent_body: serde_json::Value = serde_json::from_slice(&upstream_reqs[0].body).unwrap();
     // Responses API format has 'input' not 'messages'.
@@ -276,7 +281,10 @@ async fn codex_buffered_translates_chat_completions_to_responses_and_back() {
         "upstream body must have 'instructions' (required by Codex)"
     );
     assert_eq!(sent_body["store"], false, "store must be false");
-    assert_eq!(sent_body["stream"], true, "stream must always be true for Codex backend");
+    assert_eq!(
+        sent_body["stream"], true,
+        "stream must always be true for Codex backend"
+    );
     // max_output_tokens must NOT be sent (Codex backend rejects it).
     assert!(
         sent_body.get("max_output_tokens").is_none(),
@@ -364,10 +372,7 @@ async fn codex_streaming_translates_responses_sse_to_chat_completions_sse() {
     );
 
     // Should end with [DONE].
-    assert!(
-        text.contains("[DONE]"),
-        "SSE output should end with [DONE]"
-    );
+    assert!(text.contains("[DONE]"), "SSE output should end with [DONE]");
 }
 
 // ── Test 3: System message is extracted into instructions ─────────────────────
@@ -442,5 +447,8 @@ fn codex_provider_properties() {
         AuthHeader::Bearer("test-key".into()),
     );
     assert_eq!(provider.name(), "codex");
-    assert_eq!(provider.native_format(), proxy::application::ports::ApiFormat::OpenAI);
+    assert_eq!(
+        provider.native_format(),
+        proxy::application::ports::ApiFormat::OpenAI
+    );
 }

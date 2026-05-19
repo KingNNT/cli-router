@@ -13,9 +13,9 @@ mod views;
 mod wizard;
 
 use crate::app::{
-    AppMode, ConfigSection, QuotaField, QuotaFormModal, RoutingField, RoutingFormModal, ALL_VIEWS,
-    AppState, AuthInputKind, DeleteConfirmModal, FormField, FormMode, FormState, Modal,
-    PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderAction, ProviderFormModal, RangePreset,
+    ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal, FormField,
+    FormMode, FormState, Modal, PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderAction,
+    ProviderFormModal, QuotaField, QuotaFormModal, RangePreset, RoutingField, RoutingFormModal,
     TestProviderModal, TestState, View, WizardStep,
 };
 use crate::client::AdminClient;
@@ -119,9 +119,7 @@ fn refresh_view(client: &AdminClient, state: &mut AppState) {
             state.set_status(client.get_status().map_err(|e| e.to_string()));
             state.quota = Some(client.get_quota_status().map_err(|e| e.to_string()));
         }
-        View::Config => {
-            state.set_config(client.get_config().map_err(|e| e.to_string()))
-        }
+        View::Config => state.set_config(client.get_config().map_err(|e| e.to_string())),
         View::Requests => state.set_recent(client.get_recent(50, 0).map_err(|e| e.to_string())),
         // Usage refreshes on demand from `handle_key`'s Usage-tab branch
         // (`fetch_usage`); no auto-refresh tick should hit this arm.
@@ -244,7 +242,9 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState, term_area
                 if state.requests.selected + 1 < state.requests.items.len() {
                     state.requests.selected += 1;
                     let max_scroll = state.requests.items.len().saturating_sub(visible_height);
-                    if state.requests.selected > state.requests.scroll_offset + visible_height.saturating_sub(1) {
+                    if state.requests.selected
+                        > state.requests.scroll_offset + visible_height.saturating_sub(1)
+                    {
                         state.requests.scroll_offset = (state.requests.selected + 1)
                             .saturating_sub(visible_height)
                             .min(max_scroll);
@@ -265,7 +265,8 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState, term_area
             }
             KeyCode::PageDown => {
                 let jump = visible_height.max(1);
-                let target = (state.requests.selected + jump).min(state.requests.items.len().saturating_sub(1));
+                let target = (state.requests.selected + jump)
+                    .min(state.requests.items.len().saturating_sub(1));
                 state.requests.selected = target;
                 let max_scroll = state.requests.items.len().saturating_sub(visible_height);
                 state.requests.scroll_offset = (state.requests.selected + 1)
@@ -354,43 +355,37 @@ fn handle_config_key(k: KeyEvent, _client: &AdminClient, state: &mut AppState) {
 
     // Section-specific actions
     match state.config_section {
-        ConfigSection::Providers => {
-            match k.code {
-                KeyCode::Char('a') => open_add_modal(state),
-                KeyCode::Char('e') => open_edit_modal(state),
-                KeyCode::Char('d') => open_delete_modal(state),
-                KeyCode::Char('t') => open_test_modal(state),
-                _ => {}
+        ConfigSection::Providers => match k.code {
+            KeyCode::Char('a') => open_add_modal(state),
+            KeyCode::Char('e') => open_edit_modal(state),
+            KeyCode::Char('d') => open_delete_modal(state),
+            KeyCode::Char('t') => open_test_modal(state),
+            _ => {}
+        },
+        ConfigSection::Routing => match k.code {
+            KeyCode::Char('a') => {
+                state.modal = Modal::RoutingForm(RoutingFormModal::new_for_add());
             }
-        }
-        ConfigSection::Routing => {
-            match k.code {
-                KeyCode::Char('a') => {
-                    state.modal = Modal::RoutingForm(RoutingFormModal::new_for_add());
-                }
-                KeyCode::Char('e') => {
-                    open_routing_edit_modal(state);
-                }
-                KeyCode::Char('d') => {
-                    delete_routing_rule(state);
-                }
-                _ => {}
+            KeyCode::Char('e') => {
+                open_routing_edit_modal(state);
             }
-        }
-        ConfigSection::Quotas => {
-            match k.code {
-                KeyCode::Char('a') => {
-                    state.modal = Modal::QuotaForm(QuotaFormModal::new_for_add());
-                }
-                KeyCode::Char('e') => {
-                    open_quota_edit_modal(state);
-                }
-                KeyCode::Char('d') => {
-                    delete_quota_rule(state);
-                }
-                _ => {}
+            KeyCode::Char('d') => {
+                delete_routing_rule(state);
             }
-        }
+            _ => {}
+        },
+        ConfigSection::Quotas => match k.code {
+            KeyCode::Char('a') => {
+                state.modal = Modal::QuotaForm(QuotaFormModal::new_for_add());
+            }
+            KeyCode::Char('e') => {
+                open_quota_edit_modal(state);
+            }
+            KeyCode::Char('d') => {
+                delete_quota_rule(state);
+            }
+            _ => {}
+        },
         ConfigSection::Settings => {
             if k.code == KeyCode::Char('e') {
                 toggle_affinity(state);
@@ -670,7 +665,9 @@ fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mu
                     state.requests.selected += 1;
                     let visible_height = requests_visible_height(term_area, state);
                     let max_scroll = state.requests.items.len().saturating_sub(visible_height);
-                    if state.requests.selected > state.requests.scroll_offset + visible_height.saturating_sub(1) {
+                    if state.requests.selected
+                        > state.requests.scroll_offset + visible_height.saturating_sub(1)
+                    {
                         state.requests.scroll_offset = (state.requests.selected + 1)
                             .saturating_sub(visible_height)
                             .min(max_scroll);
@@ -691,8 +688,7 @@ fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mu
                 state.set_view(v);
                 match v {
                     View::Usage
-                        if state.usage.summary.is_none()
-                            && state.usage.last_error.is_none() =>
+                        if state.usage.summary.is_none() && state.usage.last_error.is_none() =>
                     {
                         fetch_usage(client, state);
                     }
@@ -1038,7 +1034,9 @@ fn handle_form_key(
             m.state = FormState::OAuthExchanging;
             let auth_kind = m.auth_kind;
             let result = match auth_kind {
-                AuthInputKind::OAuthOpenAi => client.oauth_complete_openai(&state_id, code.trim(), &provider_name),
+                AuthInputKind::OAuthOpenAi => {
+                    client.oauth_complete_openai(&state_id, code.trim(), &provider_name)
+                }
                 _ => client.oauth_complete(&state_id, code.trim(), &provider_name),
             };
             match result {
@@ -1532,11 +1530,7 @@ fn toggle_affinity(state: &mut AppState) {
         Ok(updated) => {
             let enabled = updated.affinity.enabled;
             state.set_config(Ok(updated));
-            let status = if enabled {
-                "enabled"
-            } else {
-                "disabled"
-            };
+            let status = if enabled { "enabled" } else { "disabled" };
             state.flash(format!("affinity {status}"));
         }
         Err(e) => state.flash(format!("toggle failed: {e}")),
@@ -1625,7 +1619,9 @@ fn handle_routing_form_key(
             }
         }
         KeyCode::Backspace => {
-            edit_routing_text(&mut m, |s| { s.pop(); });
+            edit_routing_text(&mut m, |s| {
+                s.pop();
+            });
             Modal::RoutingForm(m)
         }
         KeyCode::Char(c) => {
@@ -1722,7 +1718,9 @@ fn handle_quota_form_key(
             }
         }
         KeyCode::Backspace => {
-            edit_quota_text(&mut m, |s| { s.pop(); });
+            edit_quota_text(&mut m, |s| {
+                s.pop();
+            });
             Modal::QuotaForm(m)
         }
         KeyCode::Char(c) => {
@@ -1751,7 +1749,10 @@ fn edit_quota_text(m: &mut QuotaFormModal, f: impl FnOnce(&mut String)) {
 // ---- Dual-mode save helpers ----
 
 /// Save config: connected → API, offline → file.
-fn save_config_state(cfg: &proxy_admin_api::ConfigPayload, state: &AppState) -> Result<proxy_admin_api::ConfigPayload, String> {
+fn save_config_state(
+    cfg: &proxy_admin_api::ConfigPayload,
+    state: &AppState,
+) -> Result<proxy_admin_api::ConfigPayload, String> {
     if state.mode == AppMode::Connected {
         // For offline operations that already have client context,
         // use the direct file path instead

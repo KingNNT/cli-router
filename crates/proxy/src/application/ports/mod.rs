@@ -14,6 +14,8 @@ pub use config::ConfigRepository;
 pub use provider::{ApiFormat, Direction, Provider};
 pub use quota::QuotaPort;
 pub use request_log::RequestLogPort;
-pub use request_log_read::{ModelBreakdownRow, QuotaSeedRow, RequestLogReadPort, TranslationCounts};
+pub use request_log_read::{
+    ModelBreakdownRow, QuotaSeedRow, RequestLogReadPort, TranslationCounts,
+};
 pub use upstream::{BoxedByteStream, BoxedError, UpstreamResponse};
 pub use usage_parser::UsageParser;

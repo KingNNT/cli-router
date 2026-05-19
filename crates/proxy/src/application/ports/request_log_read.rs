@@ -24,7 +24,6 @@ pub struct TranslationCounts {
     pub by_direction: BTreeMap<String, u64>,
 }
 
-
 /// One row of per-model usage breakdown.
 #[derive(Debug, Clone)]
 pub struct ModelBreakdownRow {

@@ -51,7 +51,11 @@ impl AdminClient {
             .map_err(|e| ClientError::Decode(e.to_string()))
     }
 
-    pub fn get_recent(&self, limit: u32, offset: u32) -> Result<RecentRequestsResponse, ClientError> {
+    pub fn get_recent(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<RecentRequestsResponse, ClientError> {
         get_json(&format!(
             "{}/admin/requests/recent?limit={limit}&offset={offset}",
             self.base_url
@@ -102,7 +106,10 @@ impl AdminClient {
             .map_err(|e| ClientError::Decode(e.to_string()))
     }
 
-    pub fn oauth_start_openai(&self, provider_name: &str) -> Result<StartOAuthResponse, ClientError> {
+    pub fn oauth_start_openai(
+        &self,
+        provider_name: &str,
+    ) -> Result<StartOAuthResponse, ClientError> {
         let url = format!("{}/admin/oauth/openai/start", self.base_url);
         let body = StartOAuthRequest {
             provider_name: provider_name.into(),

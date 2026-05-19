@@ -130,7 +130,10 @@ fn render_provider(
 
     // Separator: data below comes from proxy request log (estimated).
     let has_proxy_data = p.monthly_cost_usd.is_some()
-        || p.model_usage.as_ref().map(|m| !m.model_breakdown.is_empty() || m.total_tokens > 0).unwrap_or(false);
+        || p.model_usage
+            .as_ref()
+            .map(|m| !m.model_breakdown.is_empty() || m.total_tokens > 0)
+            .unwrap_or(false);
     if !p.windows.is_empty() && has_proxy_data {
         lines.push(ratatui::text::Line::styled(
             "│  ── proxy log (estimated) ──",

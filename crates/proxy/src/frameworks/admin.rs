@@ -67,7 +67,10 @@ pub fn build_admin_router(state: AdminState) -> Router {
             "/admin/oauth/anthropic/complete",
             post(oauth_complete_handler),
         )
-        .route("/admin/oauth/openai/start", post(openai_oauth_start_handler))
+        .route(
+            "/admin/oauth/openai/start",
+            post(openai_oauth_start_handler),
+        )
         .route(
             "/admin/oauth/openai/complete",
             post(openai_oauth_complete_handler),

@@ -32,7 +32,10 @@ impl DbConfigRepository {
 
 impl ConfigRepository for DbConfigRepository {
     fn load(&self) -> Result<Config, ConfigError> {
-        let conn = self.conn.lock().map_err(|e| ConfigError::Validation(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ConfigError::Validation(e.to_string()))?;
 
         let port = load_setting(&conn, "port")
             .and_then(|s| s.parse::<u16>().ok())
@@ -71,7 +74,10 @@ impl ConfigRepository for DbConfigRepository {
     }
 
     fn save(&self, config: &Config) -> Result<(), ConfigError> {
-        let conn = self.conn.lock().map_err(|e| ConfigError::Validation(e.to_string()))?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|e| ConfigError::Validation(e.to_string()))?;
 
         let tx = conn.unchecked_transaction().map_err(db_err)?;
 
@@ -97,8 +103,7 @@ impl ConfigRepository for DbConfigRepository {
 
         // Save providers
         {
-            tx.execute("DELETE FROM providers", [])
-                .map_err(db_err)?;
+            tx.execute("DELETE FROM providers", []).map_err(db_err)?;
             let mut stmt = tx
                 .prepare(
                     "INSERT INTO providers (name, kind, base_url, openai_base_url, auth_type,
@@ -151,8 +156,7 @@ impl ConfigRepository for DbConfigRepository {
 
         // Save quota rules
         {
-            tx.execute("DELETE FROM quota_rules", [])
-                .map_err(db_err)?;
+            tx.execute("DELETE FROM quota_rules", []).map_err(db_err)?;
             let mut stmt = tx
                 .prepare(
                     "INSERT INTO quota_rules (provider, window, max_requests, max_input_tokens, max_output_tokens, warn_pct)
@@ -180,8 +184,10 @@ impl ConfigRepository for DbConfigRepository {
 // -- Helpers --
 
 fn load_setting(conn: &Connection, key: &str) -> Option<String> {
-    conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
-        .ok()
+    conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
+        r.get(0)
+    })
+    .ok()
 }
 
 fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError> {
@@ -228,7 +234,11 @@ fn load_routing(conn: &Connection) -> Result<Vec<RoutingRule>, ConfigError> {
             let fallback_str: String = row.get(3)?;
             Ok(RoutingRule {
                 match_spec: MatchSpec {
-                    model: if model_glob == "*" { None } else { Some(model_glob) },
+                    model: if model_glob == "*" {
+                        None
+                    } else {
+                        Some(model_glob)
+                    },
                 },
                 provider: row.get(0)?,
                 fallback: if fallback_str.is_empty() {
@@ -309,8 +319,12 @@ fn columns_to_auth(
     expires_at_ms: Option<u64>,
 ) -> AuthConfig {
     match auth_type {
-        "api_key" => AuthConfig::ApiKey { value: api_key.unwrap_or_default() },
-        "bearer" => AuthConfig::Bearer { value: bearer.unwrap_or_default() },
+        "api_key" => AuthConfig::ApiKey {
+            value: api_key.unwrap_or_default(),
+        },
+        "bearer" => AuthConfig::Bearer {
+            value: bearer.unwrap_or_default(),
+        },
         "anthropic_oauth" => AuthConfig::AnthropicOAuth {
             access_token: access_token.unwrap_or_default(),
             refresh_token: refresh_token.unwrap_or_default(),
@@ -327,15 +341,53 @@ fn columns_to_auth(
 }
 
 #[allow(clippy::type_complexity)]
-fn auth_to_columns(auth: &AuthConfig) -> (String, Option<String>, Option<String>, Option<String>, Option<String>, Option<u64>) {
+fn auth_to_columns(
+    auth: &AuthConfig,
+) -> (
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<u64>,
+) {
     match auth {
         AuthConfig::Passthrough => ("passthrough".into(), None, None, None, None, None),
-        AuthConfig::ApiKey { value } => ("api_key".into(), Some(value.clone()), None, None, None, None),
-        AuthConfig::Bearer { value } => ("bearer".into(), None, Some(value.clone()), None, None, None),
-        AuthConfig::AnthropicOAuth { access_token, refresh_token, expires_at_ms } =>
-            ("anthropic_oauth".into(), None, None, Some(access_token.clone()), Some(refresh_token.clone()), Some(*expires_at_ms)),
-        AuthConfig::OpenAiOAuth { access_token, refresh_token, expires_at_ms } =>
-            ("openai_oauth".into(), None, None, Some(access_token.clone()), Some(refresh_token.clone()), Some(*expires_at_ms)),
+        AuthConfig::ApiKey { value } => (
+            "api_key".into(),
+            Some(value.clone()),
+            None,
+            None,
+            None,
+            None,
+        ),
+        AuthConfig::Bearer { value } => {
+            ("bearer".into(), None, Some(value.clone()), None, None, None)
+        }
+        AuthConfig::AnthropicOAuth {
+            access_token,
+            refresh_token,
+            expires_at_ms,
+        } => (
+            "anthropic_oauth".into(),
+            None,
+            None,
+            Some(access_token.clone()),
+            Some(refresh_token.clone()),
+            Some(*expires_at_ms),
+        ),
+        AuthConfig::OpenAiOAuth {
+            access_token,
+            refresh_token,
+            expires_at_ms,
+        } => (
+            "openai_oauth".into(),
+            None,
+            None,
+            Some(access_token.clone()),
+            Some(refresh_token.clone()),
+            Some(*expires_at_ms),
+        ),
         AuthConfig::CodexAuto => ("codex_auto".into(), None, None, None, None, None),
     }
 }
@@ -348,7 +400,10 @@ fn default_pricing_db() -> std::path::PathBuf {
 }
 
 fn default_affinity_headers() -> Vec<String> {
-    vec!["x-session-id".to_string(), "anthropic-session-id".to_string()]
+    vec![
+        "x-session-id".to_string(),
+        "anthropic-session-id".to_string(),
+    ]
 }
 
 #[cfg(test)]
@@ -381,12 +436,16 @@ mod tests {
         cfg.providers.push(ProviderConfig {
             name: "test".into(),
             kind: ProviderKind::Zai,
-            auth: AuthConfig::Bearer { value: "secret".into() },
+            auth: AuthConfig::Bearer {
+                value: "secret".into(),
+            },
             base_url: Some("https://example.com".into()),
             openai_base_url: Some("https://example.com/v1".into()),
         });
         cfg.routing.push(RoutingRule {
-            match_spec: MatchSpec { model: Some("glm-*".into()) },
+            match_spec: MatchSpec {
+                model: Some("glm-*".into()),
+            },
             provider: "test".into(),
             fallback: vec!["fallback".into()],
             strategy: RoutingStrategy::Failover,
@@ -408,7 +467,10 @@ mod tests {
         assert_eq!(loaded.providers.len(), 1);
         assert_eq!(loaded.providers[0].name, "test");
         assert_eq!(loaded.providers[0].kind, ProviderKind::Zai);
-        assert!(matches!(loaded.providers[0].auth, AuthConfig::Bearer { .. }));
+        assert!(matches!(
+            loaded.providers[0].auth,
+            AuthConfig::Bearer { .. }
+        ));
         assert_eq!(loaded.routing.len(), 1);
         assert_eq!(loaded.routing[0].provider, "test");
         assert_eq!(loaded.routing[0].fallback, vec!["fallback"]);
@@ -435,10 +497,22 @@ mod tests {
         let repo = test_repo();
         let auth_types: Vec<AuthConfig> = vec![
             AuthConfig::Passthrough,
-            AuthConfig::ApiKey { value: "sk-test".into() },
-            AuthConfig::Bearer { value: "bearer-test".into() },
-            AuthConfig::AnthropicOAuth { access_token: "at".into(), refresh_token: "rt".into(), expires_at_ms: 123 },
-            AuthConfig::OpenAiOAuth { access_token: "oat".into(), refresh_token: "ort".into(), expires_at_ms: 456 },
+            AuthConfig::ApiKey {
+                value: "sk-test".into(),
+            },
+            AuthConfig::Bearer {
+                value: "bearer-test".into(),
+            },
+            AuthConfig::AnthropicOAuth {
+                access_token: "at".into(),
+                refresh_token: "rt".into(),
+                expires_at_ms: 123,
+            },
+            AuthConfig::OpenAiOAuth {
+                access_token: "oat".into(),
+                refresh_token: "ort".into(),
+                expires_at_ms: 456,
+            },
             AuthConfig::CodexAuto,
         ];
 
@@ -453,23 +527,42 @@ mod tests {
             });
             repo.save(&cfg).unwrap();
             let loaded = repo.load().unwrap();
-            let loaded_auth = &loaded.providers.iter().find(|p| p.name == format!("p{i}")).unwrap().auth;
+            let loaded_auth = &loaded
+                .providers
+                .iter()
+                .find(|p| p.name == format!("p{i}"))
+                .unwrap()
+                .auth;
             match auth {
                 AuthConfig::Passthrough => assert!(matches!(loaded_auth, AuthConfig::Passthrough)),
                 AuthConfig::ApiKey { value } => {
-                    let AuthConfig::ApiKey { value: v } = loaded_auth else { panic!("wrong type") };
+                    let AuthConfig::ApiKey { value: v } = loaded_auth else {
+                        panic!("wrong type")
+                    };
                     assert_eq!(v, value);
                 }
                 AuthConfig::Bearer { value } => {
-                    let AuthConfig::Bearer { value: v } = loaded_auth else { panic!("wrong type") };
+                    let AuthConfig::Bearer { value: v } = loaded_auth else {
+                        panic!("wrong type")
+                    };
                     assert_eq!(v, value);
                 }
                 AuthConfig::AnthropicOAuth { access_token, .. } => {
-                    let AuthConfig::AnthropicOAuth { access_token: at, .. } = loaded_auth else { panic!("wrong type") };
+                    let AuthConfig::AnthropicOAuth {
+                        access_token: at, ..
+                    } = loaded_auth
+                    else {
+                        panic!("wrong type")
+                    };
                     assert_eq!(at, access_token);
                 }
                 AuthConfig::OpenAiOAuth { access_token, .. } => {
-                    let AuthConfig::OpenAiOAuth { access_token: at, .. } = loaded_auth else { panic!("wrong type") };
+                    let AuthConfig::OpenAiOAuth {
+                        access_token: at, ..
+                    } = loaded_auth
+                    else {
+                        panic!("wrong type")
+                    };
                     assert_eq!(at, access_token);
                 }
                 AuthConfig::CodexAuto => assert!(matches!(loaded_auth, AuthConfig::CodexAuto)),

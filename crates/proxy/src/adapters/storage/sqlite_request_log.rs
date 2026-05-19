@@ -114,7 +114,11 @@ impl crate::application::ports::RequestLogReadPort for SqliteRequestLogRepositor
         count_grouped(&self.conn, "status")
     }
 
-    fn recent(&self, limit: u32, offset: u32) -> Result<Vec<crate::domain::RequestRow>, ProxyError> {
+    fn recent(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<crate::domain::RequestRow>, ProxyError> {
         let c = self.conn.lock().expect("repo mutex poisoned");
         let mut stmt = c.prepare(
             "SELECT id, started_at, finished_at, provider, model, status,

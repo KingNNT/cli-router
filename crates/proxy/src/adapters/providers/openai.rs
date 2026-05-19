@@ -32,11 +32,7 @@ impl OpenAiProvider {
         Self::build(http, DEFAULT_BASE_URL.into(), auth)
     }
 
-    pub fn configure(
-        http: reqwest::Client,
-        base_url: Option<String>,
-        auth: AuthHeader,
-    ) -> Self {
+    pub fn configure(http: reqwest::Client, base_url: Option<String>, auth: AuthHeader) -> Self {
         Self::build(
             http,
             base_url.unwrap_or_else(|| DEFAULT_BASE_URL.into()),
@@ -45,7 +41,11 @@ impl OpenAiProvider {
     }
 
     fn build(http: reqwest::Client, base_url: String, auth: AuthHeader) -> Self {
-        Self { base_url, http, auth }
+        Self {
+            base_url,
+            http,
+            auth,
+        }
     }
 }
 
@@ -168,7 +168,9 @@ mod tests {
     fn parses_model_from_body() {
         let body = br#"{"model":"gpt-4o","messages":[]}"#;
         assert_eq!(
-            OpenAiProvider::new(reqwest::Client::new()).parse_model(body).unwrap(),
+            OpenAiProvider::new(reqwest::Client::new())
+                .parse_model(body)
+                .unwrap(),
             "gpt-4o"
         );
     }

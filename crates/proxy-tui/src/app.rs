@@ -360,14 +360,16 @@ impl FormField {
 /// need a typed value.
 fn field_order(auth_kind: AuthInputKind) -> &'static [FormField] {
     match auth_kind {
-        AuthInputKind::Passthrough | AuthInputKind::OAuthAnthropic | AuthInputKind::OAuthOpenAi => &[
-            FormField::Name,
-            FormField::Kind,
-            FormField::BaseUrl,
-            FormField::OpenaiBaseUrl,
-            FormField::AuthKind,
-            FormField::Save,
-        ],
+        AuthInputKind::Passthrough | AuthInputKind::OAuthAnthropic | AuthInputKind::OAuthOpenAi => {
+            &[
+                FormField::Name,
+                FormField::Kind,
+                FormField::BaseUrl,
+                FormField::OpenaiBaseUrl,
+                FormField::AuthKind,
+                FormField::Save,
+            ]
+        }
         AuthInputKind::ApiKey | AuthInputKind::Bearer => &[
             FormField::Name,
             FormField::Kind,
@@ -611,9 +613,18 @@ impl QuotaFormModal {
             focused: QuotaField::Provider,
             provider: quota.provider.clone(),
             window: quota.window.clone(),
-            max_requests: quota.max_requests.map(|v| v.to_string()).unwrap_or_default(),
-            max_input_tokens: quota.max_input_tokens.map(|v| v.to_string()).unwrap_or_default(),
-            max_output_tokens: quota.max_output_tokens.map(|v| v.to_string()).unwrap_or_default(),
+            max_requests: quota
+                .max_requests
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            max_input_tokens: quota
+                .max_input_tokens
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
+            max_output_tokens: quota
+                .max_output_tokens
+                .map(|v| v.to_string())
+                .unwrap_or_default(),
             warn_pct: quota.warn_pct.to_string(),
             error: None,
         }
@@ -652,7 +663,8 @@ pub struct AppState {
     pub account: AccountPaneState,
     /// Background-thread channel for in-flight Account fetches.
     /// `None` = no fetch in progress; `Some(rx)` = waiting on a result.
-    pub account_rx: Option<std::sync::mpsc::Receiver<Result<proxy_admin_api::AccountUsageResponse, String>>>,
+    pub account_rx:
+        Option<std::sync::mpsc::Receiver<Result<proxy_admin_api::AccountUsageResponse, String>>>,
     pub flash: Option<String>,
     pub should_quit: bool,
 }
@@ -728,56 +740,51 @@ impl AppState {
 
     pub fn move_selection_down(&mut self) {
         match self.view {
-            View::Config => {
-                match self.config_section {
-                    ConfigSection::Providers => {
-                        if let Some(Ok(cfg)) = &self.config
-                            && self.providers_selected + 1 < cfg.providers.len()
-                        {
-                            self.providers_selected += 1;
-                        }
+            View::Config => match self.config_section {
+                ConfigSection::Providers => {
+                    if let Some(Ok(cfg)) = &self.config
+                        && self.providers_selected + 1 < cfg.providers.len()
+                    {
+                        self.providers_selected += 1;
                     }
-                    ConfigSection::Routing => {
-                        if let Some(Ok(cfg)) = &self.config
-                            && self.routing_selected + 1 < cfg.routing.len()
-                        {
-                            self.routing_selected += 1;
-                        }
-                    }
-                    ConfigSection::Quotas => {
-                        if let Some(Ok(cfg)) = &self.config
-                            && self.quota_selected + 1 < cfg.quota.len()
-                        {
-                            self.quota_selected += 1;
-                        }
-                    }
-                    ConfigSection::Settings => {}
                 }
+                ConfigSection::Routing => {
+                    if let Some(Ok(cfg)) = &self.config
+                        && self.routing_selected + 1 < cfg.routing.len()
+                    {
+                        self.routing_selected += 1;
+                    }
+                }
+                ConfigSection::Quotas => {
+                    if let Some(Ok(cfg)) = &self.config
+                        && self.quota_selected + 1 < cfg.quota.len()
+                    {
+                        self.quota_selected += 1;
+                    }
+                }
+                ConfigSection::Settings => {}
+            },
+            View::Requests if self.requests.selected + 1 < self.requests.items.len() => {
+                self.requests.selected += 1;
             }
-            View::Requests
-                if self.requests.selected + 1 < self.requests.items.len() => {
-                    self.requests.selected += 1;
-                }
             _ => {}
         }
     }
 
     pub fn move_selection_up(&mut self) {
         match self.view {
-            View::Config => {
-                match self.config_section {
-                    ConfigSection::Providers => {
-                        self.providers_selected = self.providers_selected.saturating_sub(1);
-                    }
-                    ConfigSection::Routing => {
-                        self.routing_selected = self.routing_selected.saturating_sub(1);
-                    }
-                    ConfigSection::Quotas => {
-                        self.quota_selected = self.quota_selected.saturating_sub(1);
-                    }
-                    ConfigSection::Settings => {}
+            View::Config => match self.config_section {
+                ConfigSection::Providers => {
+                    self.providers_selected = self.providers_selected.saturating_sub(1);
                 }
-            }
+                ConfigSection::Routing => {
+                    self.routing_selected = self.routing_selected.saturating_sub(1);
+                }
+                ConfigSection::Quotas => {
+                    self.quota_selected = self.quota_selected.saturating_sub(1);
+                }
+                ConfigSection::Settings => {}
+            },
             View::Requests => {
                 self.requests.selected = self.requests.selected.saturating_sub(1);
             }

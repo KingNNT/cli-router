@@ -19,9 +19,7 @@ use serde::Deserialize;
 use crate::application::errors::ProxyError;
 use crate::application::ports::AccountUsagePort;
 use crate::config::{AuthConfig, Config};
-use crate::domain::account_usage::{
-    AccountUsageStatus, ProviderAccountUsage, UsageWindow,
-};
+use crate::domain::account_usage::{AccountUsageStatus, ProviderAccountUsage, UsageWindow};
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const PROFILE_URL: &str = "https://api.anthropic.com/api/oauth/profile";
@@ -70,7 +68,10 @@ impl AnthropicAccountUsage {
     /// Returns `None` if the provider isn't configured with OAuth auth.
     fn current_token(&self) -> Option<String> {
         let cfg = self.config.read().ok()?;
-        let prov = cfg.providers.iter().find(|p| p.name == self.provider_name)?;
+        let prov = cfg
+            .providers
+            .iter()
+            .find(|p| p.name == self.provider_name)?;
         match &prov.auth {
             AuthConfig::AnthropicOAuth { access_token, .. } => Some(access_token.clone()),
             _ => None,
@@ -204,9 +205,7 @@ impl AccountUsagePort for AnthropicAccountUsage {
                 // even if stale, rather than surfacing an error. This matches
                 // the soft-failure guidance in the research notes.
                 let is_429 = matches!(&e, ureq::Error::Status(429, _));
-                if is_429
-                    && let Some(mut stale) = self.cached_any()
-                {
+                if is_429 && let Some(mut stale) = self.cached_any() {
                     if stale.plan.is_none() {
                         stale.plan = profile_plan;
                     }
@@ -275,12 +274,12 @@ fn payload_to_usage(provider: String, p: UsagePayload) -> ProviderAccountUsage {
     {
         // Prefer Anthropic's pre-computed utilization if present;
         // fall back to dividing used by limit.
-        let pct = eu.utilization.unwrap_or_else(|| {
-            match (eu.used_credits, eu.monthly_limit) {
+        let pct = eu
+            .utilization
+            .unwrap_or_else(|| match (eu.used_credits, eu.monthly_limit) {
                 (Some(used), Some(limit)) if limit > 0.0 => (used / limit) * 100.0,
                 _ => 0.0,
-            }
-        });
+            });
         windows.push(UsageWindow {
             label: format!(
                 "Extra Usage ({})",
@@ -435,7 +434,11 @@ mod tests {
         // Re-parse to get a fresh payload (we consumed extra_usage above).
         let p: UsagePayload = serde_json::from_str(json).unwrap();
         let usage = payload_to_usage("Anthropic".into(), p);
-        let extra = usage.windows.iter().find(|w| w.label.starts_with("Extra Usage")).unwrap();
+        let extra = usage
+            .windows
+            .iter()
+            .find(|w| w.label.starts_with("Extra Usage"))
+            .unwrap();
         assert!((extra.used_pct - 59.28).abs() < 0.01);
         assert_eq!(extra.used, Some(5928));
         assert_eq!(extra.limit, Some(10000));
@@ -535,11 +538,23 @@ mod tests {
 
     #[test]
     fn humanize_plan_maps_known_tiers() {
-        assert_eq!(humanize_plan(Some("default_claude_pro")).as_deref(), Some("Pro"));
-        assert_eq!(humanize_plan(Some("default_claude_max_5x")).as_deref(), Some("Max (5x)"));
-        assert_eq!(humanize_plan(Some("default_claude_max_20x")).as_deref(), Some("Max (20x)"));
+        assert_eq!(
+            humanize_plan(Some("default_claude_pro")).as_deref(),
+            Some("Pro")
+        );
+        assert_eq!(
+            humanize_plan(Some("default_claude_max_5x")).as_deref(),
+            Some("Max (5x)")
+        );
+        assert_eq!(
+            humanize_plan(Some("default_claude_max_20x")).as_deref(),
+            Some("Max (20x)")
+        );
         // Unknown tier falls through as-is rather than being dropped.
-        assert_eq!(humanize_plan(Some("future_tier_xyz")).as_deref(), Some("future_tier_xyz"));
+        assert_eq!(
+            humanize_plan(Some("future_tier_xyz")).as_deref(),
+            Some("future_tier_xyz")
+        );
         assert!(humanize_plan(None).is_none());
     }
 
@@ -557,7 +572,10 @@ mod tests {
             "application": { "uuid": "...", "name": "Claude Code" }
         }"#;
         let p: ProfilePayload = serde_json::from_str(json).unwrap();
-        assert_eq!(p.organization.rate_limit_tier.as_deref(), Some("default_claude_max_5x"));
+        assert_eq!(
+            p.organization.rate_limit_tier.as_deref(),
+            Some("default_claude_max_5x")
+        );
     }
 
     #[test]
@@ -596,10 +614,7 @@ mod tests {
             affinity: AffinityConfig::default(),
             quota: vec![],
         };
-        let adapter = AnthropicAccountUsage::new(
-            "anthropic".into(),
-            Arc::new(RwLock::new(cfg)),
-        );
+        let adapter = AnthropicAccountUsage::new("anthropic".into(), Arc::new(RwLock::new(cfg)));
         assert!(adapter.current_token().is_none());
     }
 
@@ -625,11 +640,11 @@ mod tests {
             affinity: AffinityConfig::default(),
             quota: vec![],
         };
-        let adapter = AnthropicAccountUsage::new(
-            "Anthropic".into(),
-            Arc::new(RwLock::new(cfg)),
+        let adapter = AnthropicAccountUsage::new("Anthropic".into(), Arc::new(RwLock::new(cfg)));
+        assert_eq!(
+            adapter.current_token().as_deref(),
+            Some("sk-ant-oat01-fresh")
         );
-        assert_eq!(adapter.current_token().as_deref(), Some("sk-ant-oat01-fresh"));
     }
 
     #[test]
@@ -652,10 +667,7 @@ mod tests {
             affinity: AffinityConfig::default(),
             quota: vec![],
         };
-        let adapter = AnthropicAccountUsage::new(
-            "anthropic".into(),
-            Arc::new(RwLock::new(cfg)),
-        );
+        let adapter = AnthropicAccountUsage::new("anthropic".into(), Arc::new(RwLock::new(cfg)));
         assert!(adapter.fetch_usage().is_none());
     }
 }

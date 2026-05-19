@@ -6,7 +6,9 @@
 //! - `/v1/chat/completions` → OpenAI Chat Completions API
 
 use crate::application::ports::ApiFormat;
-use crate::application::use_cases::{CountTokensInput, HandleMessages, HandleMessagesInput, HandleMessagesOutput};
+use crate::application::use_cases::{
+    CountTokensInput, HandleMessages, HandleMessagesInput, HandleMessagesOutput,
+};
 use crate::frameworks::error::ProxyError;
 use crate::frameworks::stream::TeedStream;
 use axum::body::Body;
@@ -85,7 +87,11 @@ pub async fn count_tokens(
         })
         .await?;
 
-    Ok(build_response(output.status, output.headers, Body::from(output.body)))
+    Ok(build_response(
+        output.status,
+        output.headers,
+        Body::from(output.body),
+    ))
 }
 
 pub async fn chat_completions(

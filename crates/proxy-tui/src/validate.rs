@@ -141,7 +141,9 @@ pub fn rules_referencing(provider_name: &str, cfg: &ConfigPayload) -> Vec<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proxy_admin_api::{AffinityPayload, MatchPayload, RoutingRulePayload, RoutingStrategyPayload};
+    use proxy_admin_api::{
+        AffinityPayload, MatchPayload, RoutingRulePayload, RoutingStrategyPayload,
+    };
 
     fn empty_cfg() -> ConfigPayload {
         ConfigPayload {

@@ -183,10 +183,9 @@ mod tests {
     #[test]
     fn decode_exp_from_valid_jwt() {
         // A JWT with exp=2000000000 (roughly May 2033)
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(br#"{"alg":"RS256"}"#);
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(br#"{"exp":2000000000}"#);
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256"}"#);
+        let payload =
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"exp":2000000000}"#);
         let jwt = format!("{}.{}.sig", header, payload);
         let result = decode_jwt_exp(&jwt);
         assert!(result.is_ok());
@@ -201,10 +200,8 @@ mod tests {
 
     #[test]
     fn decode_exp_no_exp_claim() {
-        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(br#"{"alg":"RS256"}"#);
-        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .encode(br#"{"sub":"user"}"#);
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256"}"#);
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(br#"{"sub":"user"}"#);
         let jwt = format!("{}.{}.sig", header, payload);
         let result = decode_jwt_exp(&jwt);
         assert!(result.is_err());

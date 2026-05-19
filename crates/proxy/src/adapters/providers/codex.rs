@@ -41,11 +41,7 @@ impl CodexProvider {
         Self::build(http, DEFAULT_BASE_URL.into(), auth)
     }
 
-    pub fn configure(
-        http: reqwest::Client,
-        base_url: Option<String>,
-        auth: AuthHeader,
-    ) -> Self {
+    pub fn configure(http: reqwest::Client, base_url: Option<String>, auth: AuthHeader) -> Self {
         Self::build(
             http,
             base_url.unwrap_or_else(|| DEFAULT_BASE_URL.into()),
@@ -117,9 +113,8 @@ impl Provider for CodexProvider {
         streaming: bool,
     ) -> Result<UpstreamResponse, ProxyError> {
         // Parse incoming Chat Completions body
-        let chat_body: Value = serde_json::from_slice(&body).map_err(|e| {
-            ProxyError::BadRequest(format!("invalid JSON body: {e}"))
-        })?;
+        let chat_body: Value = serde_json::from_slice(&body)
+            .map_err(|e| ProxyError::BadRequest(format!("invalid JSON body: {e}")))?;
 
         // Translate to Responses API payload (always sets stream:true)
         let responses_body = translate_request(&chat_body).map_err(|e| {
@@ -216,9 +211,8 @@ impl Provider for CodexProvider {
 
             let mut stream = translated;
             while let Some(chunk) = stream.next().await {
-                let bytes = chunk.map_err(|e| {
-                    ProxyError::BadRequest(format!("codex stream error: {e}"))
-                })?;
+                let bytes = chunk
+                    .map_err(|e| ProxyError::BadRequest(format!("codex stream error: {e}")))?;
                 let text = String::from_utf8_lossy(&bytes);
                 // Parse SSE data lines
                 for line in text.lines() {
@@ -294,7 +288,10 @@ impl Provider for CodexProvider {
 /// Chat Completions: `{"type":"function","function":{"name":"...","description":"...","parameters":{...}}}`
 /// Responses API:    `{"type":"function","name":"...","description":"...","parameters":{...}}`
 fn translate_tool(tool: &Value) -> Value {
-    let tool_type = tool.get("type").and_then(|t| t.as_str()).unwrap_or("function");
+    let tool_type = tool
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("function");
 
     match tool_type {
         "function" => {
@@ -312,6 +309,7 @@ fn translate_tool(tool: &Value) -> Value {
                 "name": name,
                 "description": description,
                 "parameters": parameters,
+                "strict": func.get("strict").cloned().unwrap_or(json!(false)),
             })
         }
         _ => tool.clone(), // Pass through unknown tool types unchanged.
@@ -341,6 +339,54 @@ fn translate_request(chat: &Value) -> Result<Value, String> {
                     .unwrap_or_default();
                 instructions = Value::String(content);
                 continue;
+            }
+
+            if role == "tool" {
+                let output = msg
+                    .get("content")
+                    .map(|c| c.as_str().unwrap_or("").to_string())
+                    .unwrap_or_default();
+                input_messages.push(json!({
+                    "type": "function_call_output",
+                    "call_id": msg
+                        .get("tool_call_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                    "output": output
+                }));
+                continue;
+            }
+
+            if role == "assistant"
+                && let Some(tool_calls) = msg.get("tool_calls").and_then(|v| v.as_array())
+            {
+                for tool_call in tool_calls {
+                    let function = tool_call.get("function").unwrap_or(&Value::Null);
+                    input_messages.push(json!({
+                        "type": "function_call",
+                        "call_id": tool_call
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                        "name": function
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(""),
+                        "arguments": function
+                            .get("arguments")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                    }));
+                }
+
+                let has_text_content = msg
+                    .get("content")
+                    .and_then(|c| c.as_str())
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false);
+                if !has_text_content {
+                    continue;
+                }
             }
 
             // Codex backend accepts plain string content for simple text messages.
@@ -379,10 +425,7 @@ fn translate_request(chat: &Value) -> Result<Value, String> {
     // but the Responses API expects {"type":"function","name":"...","parameters":{...}}
     // (flat structure without the nested "function" envelope).
     if let Some(tools) = chat.get("tools").and_then(|t| t.as_array()) {
-        let translated_tools: Vec<Value> = tools
-            .iter()
-            .map(|tool| translate_tool(tool))
-            .collect();
+        let translated_tools: Vec<Value> = tools.iter().map(|tool| translate_tool(tool)).collect();
         out.insert("tools".into(), Value::Array(translated_tools));
     }
     if let Some(tool_choice) = chat.get("tool_choice") {
@@ -504,7 +547,8 @@ fn translate_buffered_response(responses_body: &Value) -> Result<Value, String> 
 // SSE events into Chat Completions SSE chunks in real time.
 // ---------------------------------------------------------------------------
 
-type BoxedByteStream = Pin<Box<dyn Stream<Item = Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> + Send>>;
+type BoxedByteStream =
+    Pin<Box<dyn Stream<Item = Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> + Send>>;
 
 use std::collections::VecDeque;
 
@@ -517,6 +561,13 @@ struct ResponsesSseTranslator {
     model: String,
     // Track whether the first content chunk was emitted (to inject role).
     first_content_sent: bool,
+    // Track whether any tool-call delta was emitted. Codex can answer OpenCode
+    // requests by calling a tool without emitting text; those streams must end
+    // with finish_reason=tool_calls so AI SDK clients execute the tool instead
+    // of treating the assistant turn as silent.
+    tool_call_started: bool,
+    deferred_tool_call_id: String,
+    deferred_tool_arguments: String,
 }
 
 impl ResponsesSseTranslator {
@@ -528,6 +579,9 @@ impl ResponsesSseTranslator {
             response_id: String::new(),
             model: String::new(),
             first_content_sent: false,
+            tool_call_started: false,
+            deferred_tool_call_id: String::new(),
+            deferred_tool_arguments: String::new(),
         }
     }
 
@@ -565,6 +619,14 @@ impl ResponsesSseTranslator {
 
             let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
 
+            // Debug-log every non-trivial event so silent/empty responses are
+            // visible in proxy logs without external packet capture.
+            tracing::debug!(
+                target: "codex::sse",
+                event_type = %event_type,
+                "codex upstream SSE event"
+            );
+
             match event_type {
                 "response.created" | "response.in_progress" => {
                     // Capture response_id and model from the initial events.
@@ -577,26 +639,12 @@ impl ResponsesSseTranslator {
                         }
                     }
                 }
-                "response.output_text.delta" => {
+                // Primary text delta event (Responses API standard).
+                "response.output_text.delta" |
+                // Fallback: some Codex backends / versions use this name instead.
+                "response.text.delta" => {
                     if let Some(delta) = event.get("delta").and_then(|d| d.as_str()) {
-                        // Emit a separate role-only chunk first (standard OpenAI format).
-                        if !self.first_content_sent {
-                            let mut role_chunk = self.base_chunk();
-                            role_chunk["choices"] = json!([{
-                                "index": 0,
-                                "delta": {"role": "assistant"},
-                                "finish_reason": null
-                            }]);
-                            self.pending.push_back(format!("data: {}\n\n", role_chunk));
-                            self.first_content_sent = true;
-                        }
-                        let mut chunk = self.base_chunk();
-                        chunk["choices"] = json!([{
-                            "index": 0,
-                            "delta": {"content": delta},
-                            "finish_reason": null
-                        }]);
-                        self.pending.push_back(format!("data: {}\n\n", chunk));
+                        self.emit_text_delta(delta);
                     }
                 }
                 "response.function_call_arguments.delta" => {
@@ -604,36 +652,102 @@ impl ResponsesSseTranslator {
                         event.get("call_id").and_then(|c| c.as_str()),
                         event.get("delta").and_then(|d| d.as_str()),
                     ) {
-                        let mut chunk = self.base_chunk();
-                        chunk["choices"] = json!([{
-                            "index": 0,
-                            "delta": {
-                                "tool_calls": [{
-                                    "index": 0,
-                                    "id": call_id,
-                                    "type": "function",
-                                    "function": {
-                                        "arguments": args_delta
-                                    }
-                                }]
-                            },
-                            "finish_reason": null
-                        }]);
-                        self.pending.push_back(format!("data: {}\n\n", chunk));
+                        if !self.tool_call_started {
+                            self.deferred_tool_call_id = call_id.to_string();
+                            self.deferred_tool_arguments.push_str(args_delta);
+                            continue;
+                        }
+                        self.emit_tool_call_arguments(call_id, args_delta);
+                    }
+                }
+                "response.output_item.added" | "response.output_item.done" => {
+                    if let Some(item) = event.get("item")
+                        && item.get("type").and_then(|t| t.as_str()) == Some("function_call")
+                        && !self.tool_call_started
+                    {
+                        let call_id = item
+                            .get("call_id")
+                            .or_else(|| item.get("id"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("call_codex");
+                        let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                        if !name.is_empty() {
+                            self.emit_tool_call_start(call_id, name);
+                            if let Some(arguments) = item
+                                .get("arguments")
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.is_empty())
+                            {
+                                self.emit_tool_call_arguments(call_id, arguments);
+                            } else if !self.deferred_tool_arguments.is_empty() {
+                                let args = std::mem::take(&mut self.deferred_tool_arguments);
+                                self.emit_tool_call_arguments(call_id, &args);
+                            }
+                        }
                     }
                 }
                 "response.completed" => {
-                    let mut chunk = self.base_chunk();
-                    chunk["choices"] = json!([{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop"
-                    }]);
                     // Also capture model from completed event in case created didn't have it.
                     if let Some(resp) = event.get("response") {
                         if let Some(m) = resp.get("model").and_then(|v| v.as_str()) {
                             self.model = m.to_string();
                         }
+
+                        // Fallback: if no text deltas were streamed, extract the
+                        // full text from the completed response's output array.
+                        // The Codex backend can return 200 OK with content only
+                        // in the completed event (no individual deltas), especially
+                        // with reasoning models like GPT-5.5.
+                        if !self.first_content_sent {
+                            if let Some(output) = resp.get("output").and_then(|o| o.as_array()) {
+                                let mut collected = String::new();
+                                for item in output {
+                                    let item_type = item
+                                        .get("type")
+                                        .and_then(|t| t.as_str())
+                                        .unwrap_or("");
+                                    match item_type {
+                                        "message" => {
+                                            if let Some(content) =
+                                                item.get("content").and_then(|c| c.as_array())
+                                            {
+                                                for c in content {
+                                                    if c.get("type").and_then(|t| t.as_str())
+                                                        == Some("output_text")
+                                                    {
+                                                        if let Some(text) =
+                                                            c.get("text").and_then(|t| t.as_str())
+                                                        {
+                                                            collected.push_str(text);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        "function_call" => {
+                                            // Tool calls in completed output are handled
+                                            // by the function_call_arguments.delta path.
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                if !collected.is_empty() {
+                                    tracing::debug!(
+                                        target: "codex::sse",
+                                        len = collected.len(),
+                                        "extracted text from response.completed fallback (no deltas received)"
+                                    );
+                                    self.emit_text_delta(&collected);
+                                }
+                            }
+                        }
+
+                        let mut chunk = self.base_chunk();
+                        chunk["choices"] = json!([{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": if self.tool_call_started { "tool_calls" } else { "stop" }
+                        }]);
                         if let Some(usage) = resp.get("usage") {
                             chunk["usage"] = json!({
                                 "prompt_tokens": usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
@@ -641,11 +755,20 @@ impl ResponsesSseTranslator {
                                 "total_tokens": usage.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                             });
                         }
+                        // Re-build with updated model.
+                        chunk["id"] = json!(if self.response_id.is_empty() { "chatcmpl-codex" } else { &self.response_id });
+                        chunk["model"] = json!(if self.model.is_empty() { "unknown" } else { &self.model });
+                        self.pending.push_back(format!("data: {}\n\n", chunk));
+                    } else {
+                        // No response object in completed event — emit bare stop chunk.
+                        let mut chunk = self.base_chunk();
+                        chunk["choices"] = json!([{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": if self.tool_call_started { "tool_calls" } else { "stop" }
+                        }]);
+                        self.pending.push_back(format!("data: {}\n\n", chunk));
                     }
-                    // Re-build with updated model.
-                    chunk["id"] = json!(if self.response_id.is_empty() { "chatcmpl-codex" } else { &self.response_id });
-                    chunk["model"] = json!(if self.model.is_empty() { "unknown" } else { &self.model });
-                    self.pending.push_back(format!("data: {}\n\n", chunk));
                     // The Codex backend may not always send response.done, so emit
                     // [DONE] here as well to ensure the stream terminates properly.
                     self.pending.push_back("data: [DONE]\n\n".to_string());
@@ -658,6 +781,71 @@ impl ResponsesSseTranslator {
                 }
             }
         }
+    }
+
+    /// Emit a text content delta as a Chat Completions SSE chunk. Inserts the
+    /// standard `{"role":"assistant"}` preamble on the first call.
+    fn emit_text_delta(&mut self, delta: &str) {
+        if !self.first_content_sent {
+            let mut role_chunk = self.base_chunk();
+            role_chunk["choices"] = json!([{
+                "index": 0,
+                "delta": {"role": "assistant"},
+                "finish_reason": null
+            }]);
+            self.pending.push_back(format!("data: {}\n\n", role_chunk));
+            self.first_content_sent = true;
+        }
+        let mut chunk = self.base_chunk();
+        chunk["choices"] = json!([{
+            "index": 0,
+            "delta": {"content": delta},
+            "finish_reason": null
+        }]);
+        self.pending.push_back(format!("data: {}\n\n", chunk));
+    }
+
+    /// Emit the initial OpenAI Chat Completions tool-call delta containing the
+    /// call id, type, function name, and an empty arguments string. Later
+    /// `response.function_call_arguments.delta` events append the arguments.
+    fn emit_tool_call_start(&mut self, call_id: &str, name: &str) {
+        let mut chunk = self.base_chunk();
+        chunk["choices"] = json!([{
+            "index": 0,
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": ""
+                    }
+                }]
+            },
+            "finish_reason": null
+        }]);
+        self.pending.push_back(format!("data: {}\n\n", chunk));
+        self.tool_call_started = true;
+    }
+
+    fn emit_tool_call_arguments(&mut self, call_id: &str, arguments: &str) {
+        let mut chunk = self.base_chunk();
+        chunk["choices"] = json!([{
+            "index": 0,
+            "delta": {
+                "tool_calls": [{
+                    "index": 0,
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "arguments": arguments
+                    }
+                }]
+            },
+            "finish_reason": null
+        }]);
+        self.pending.push_back(format!("data: {}\n\n", chunk));
     }
 }
 
@@ -696,6 +884,18 @@ impl Stream for ResponsesSseTranslator {
                         if let Some(chunk) = self.pending.pop_front() {
                             return Poll::Ready(Some(Ok(Bytes::from(chunk))));
                         }
+                    }
+                    // Warn if the stream completed without producing any content.
+                    // This helps diagnose the "silent response" bug where the
+                    // Codex backend returns 200 OK but emits no text deltas.
+                    if !self.first_content_sent {
+                        tracing::warn!(
+                            target: "codex::sse",
+                            response_id = %self.response_id,
+                            model = %self.model,
+                            "codex stream ended with zero content — \
+                             upstream may have returned a degraded/empty response"
+                        );
                     }
                     return Poll::Ready(None);
                 }
@@ -954,11 +1154,80 @@ mod tests {
         assert_eq!(tools[0]["description"], "Run a shell command");
         assert!(tools[0]["parameters"]["properties"]["command"].is_object());
         // Must NOT have nested "function" key.
-        assert!(tools[0].get("function").is_none(), "tools must be unwrapped from function envelope");
+        assert!(
+            tools[0].get("function").is_none(),
+            "tools must be unwrapped from function envelope"
+        );
 
         // Second tool.
         assert_eq!(tools[1]["name"], "read_file");
         assert!(tools[1].get("function").is_none());
+    }
+
+    #[test]
+    fn translate_tools_preserves_strict_schema_flag() {
+        let chat = json!({
+            "model": "codex-mini",
+            "messages": [],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "skill",
+                    "description": "Load a skill by name",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "required": ["name"],
+                        "additionalProperties": false
+                    },
+                    "strict": true
+                }
+            }]
+        });
+
+        let result = translate_request(&chat).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+
+        assert_eq!(tools[0]["name"], "skill");
+        assert_eq!(tools[0]["strict"], true);
+        assert_eq!(tools[0]["parameters"]["required"], json!(["name"]));
+    }
+
+    #[test]
+    fn translate_tool_call_messages_to_responses_function_items() {
+        let chat = json!({
+            "model": "codex-mini",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {"name": "initial_instructions", "arguments": "{}"}
+                    }]
+                },
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_123",
+                    "content": "Instructions loaded"
+                },
+                {"role": "user", "content": "Continue"}
+            ]
+        });
+
+        let result = translate_request(&chat).unwrap();
+        let input = result["input"].as_array().unwrap();
+
+        assert_eq!(input[0]["type"], "function_call");
+        assert_eq!(input[0]["call_id"], "call_123");
+        assert_eq!(input[0]["name"], "initial_instructions");
+        assert_eq!(input[0]["arguments"], "{}");
+        assert_eq!(input[1]["type"], "function_call_output");
+        assert_eq!(input[1]["call_id"], "call_123");
+        assert_eq!(input[1]["output"], "Instructions loaded");
+        assert_eq!(input[2]["type"], "message");
+        assert_eq!(input[2]["role"], "user");
     }
 
     // -- Task 4: Response translation tests --
@@ -1010,5 +1279,172 @@ mod tests {
         assert_eq!(tc["id"], "call_abc");
         assert_eq!(tc["function"]["name"], "get_weather");
         assert_eq!(tc["function"]["arguments"], "{\"city\":\"SF\"}");
+    }
+
+    // -- SSE translator tests (streaming) --
+
+    use futures::stream::{self, StreamExt};
+
+    /// Helper: feed SSE events through the translator and collect all output chunks.
+    fn translate_sse_chunks(events: &[&str]) -> Vec<String> {
+        let chunks: Vec<Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> = events
+            .iter()
+            .map(|e| Ok(Bytes::from(e.to_string())))
+            .collect();
+        let inner: BoxedByteStream = Box::pin(stream::iter(chunks));
+        let mut translator = ResponsesSseTranslator::new(inner);
+        let mut output = Vec::new();
+        while let Some(item) = futures::executor::block_on(translator.next()) {
+            if let Ok(bytes) = item {
+                output.push(String::from_utf8_lossy(&bytes).to_string());
+            }
+        }
+        output
+    }
+
+    #[test]
+    fn sse_fallback_extracts_text_from_response_completed_when_no_deltas() {
+        // Simulate the Codex backend returning content only in the
+        // response.completed event (no response.output_text.delta events).
+        let events = &[
+            "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_123\",\"model\":\"gpt-5.5\"}}\n\n",
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_123\",\"model\":\"gpt-5.5\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello from completed fallback!\"}]}],\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}\n\n",
+        ];
+        let output = translate_sse_chunks(events);
+        let combined = output.join("");
+
+        // Should contain the text extracted from response.completed
+        assert!(
+            combined.contains("Hello from completed fallback!"),
+            "should extract text from response.completed when no deltas, got: {combined}"
+        );
+        // Should contain usage
+        assert!(
+            combined.contains("\"prompt_tokens\":10"),
+            "should contain usage from completed, got: {combined}"
+        );
+        // Should end with [DONE]
+        assert!(
+            combined.contains("[DONE]"),
+            "should end with [DONE], got: {combined}"
+        );
+    }
+
+    #[test]
+    fn sse_handles_response_text_delta_alias() {
+        // Some Codex backends use "response.text.delta" instead of
+        // "response.output_text.delta".
+        let events = &[
+            "event: response.text.delta\ndata: {\"type\":\"response.text.delta\",\"delta\":\"Hello!\"}\n\n",
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.5\"}}\n\n",
+        ];
+        let output = translate_sse_chunks(events);
+        let combined = output.join("");
+
+        assert!(
+            combined.contains("\"content\":\"Hello!\""),
+            "response.text.delta should be translated like response.output_text.delta, got: {combined}"
+        );
+    }
+
+    #[test]
+    fn sse_normal_deltas_still_work() {
+        // Verify the existing delta path still works after refactor.
+        let events = &[
+            "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"Hi \"}\n\n",
+            "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"there!\"}\n\n",
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.4\",\"usage\":{\"input_tokens\":5,\"output_tokens\":3,\"total_tokens\":8}}}\n\n",
+        ];
+        let output = translate_sse_chunks(events);
+        let combined = output.join("");
+
+        assert!(
+            combined.contains("\"content\":\"Hi \""),
+            "first delta should appear, got: {combined}"
+        );
+        assert!(
+            combined.contains("\"content\":\"there!\""),
+            "second delta should appear, got: {combined}"
+        );
+        assert!(
+            combined.contains("\"prompt_tokens\":5"),
+            "usage should appear, got: {combined}"
+        );
+        assert!(
+            combined.contains("[DONE]"),
+            "should end with [DONE], got: {combined}"
+        );
+    }
+
+    #[test]
+    fn sse_completed_fallback_does_not_double_emit_when_deltas_exist() {
+        // If deltas were received, response.completed should NOT re-emit text.
+        let events = &[
+            "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"Only once\"}\n\n",
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.5\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"Only once\"}]}]}}\n\n",
+        ];
+        let output = translate_sse_chunks(events);
+        let combined = output.join("");
+
+        // Count occurrences of the content string
+        let count = combined.matches("\"content\":\"Only once\"").count();
+        assert_eq!(
+            count, 1,
+            "text should appear exactly once (not doubled), but found {count} times in: {combined}"
+        );
+    }
+
+    #[test]
+    fn sse_translates_function_call_item_metadata_and_finishes_with_tool_calls() {
+        // OpenCode receives Codex tool calls via Responses API output item events.
+        // Without forwarding the tool call name and a tool_calls finish reason,
+        // the AI SDK sees an empty assistant turn even though the model emitted
+        // a valid function call.
+        let events = &[
+            "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_tool\",\"model\":\"gpt-5.5\"}}\n\n",
+            "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"call_id\":\"call_123\",\"name\":\"initial_instructions\",\"arguments\":\"\"}}\n\n",
+            "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"call_id\":\"call_123\",\"delta\":\"{}\"}\n\n",
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.5\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}\n\n",
+        ];
+        let output = translate_sse_chunks(events);
+        let combined = output.join("");
+
+        assert!(
+            combined.contains("\"tool_calls\":[{\"function\":{\"arguments\":\"\",\"name\":\"initial_instructions\"},\"id\":\"call_123\",\"index\":0,\"type\":\"function\"}]"),
+            "tool call metadata must include id, type, function name, and empty arguments, got: {combined}"
+        );
+        assert!(
+            combined.contains("\"arguments\":\"{}\""),
+            "tool call argument delta should be forwarded, got: {combined}"
+        );
+        assert!(
+            combined.contains("\"finish_reason\":\"tool_calls\""),
+            "tool call streams must finish with finish_reason=tool_calls, got: {combined}"
+        );
+    }
+
+    #[test]
+    fn sse_waits_for_function_call_name_when_added_event_has_only_type() {
+        let events = &[
+            "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_tool\",\"model\":\"gpt-5.5\"}}\n\n",
+            "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\"}}\n\n",
+            "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"call_id\":\"call_123\",\"name\":\"initial_instructions\",\"arguments\":\"{\\\"name\\\":\\\"x\\\"}\"}}\n\n",
+            "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5.5\"}}\n\n",
+        ];
+        let output = translate_sse_chunks(events);
+        let combined = output.join("");
+
+        assert!(
+            combined.contains("\"name\":\"initial_instructions\""),
+            "tool name from output_item.done should be emitted, got: {combined}"
+        );
+        assert!(
+            combined.contains("\"arguments\":\"{\\\"name\\\":\\\"x\\\"}\""),
+            "full tool arguments from output_item.done should be emitted, got: {combined}"
+        );
+        assert!(
+            !combined.contains("\"name\":\"\""),
+            "must not emit nameless tool-call start chunk, got: {combined}"
+        );
     }
 }

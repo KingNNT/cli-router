@@ -34,11 +34,7 @@ impl DeepSeekProvider {
         Self::build(http, DEFAULT_BASE_URL.into(), auth)
     }
 
-    pub fn configure(
-        http: reqwest::Client,
-        base_url: Option<String>,
-        auth: AuthHeader,
-    ) -> Self {
+    pub fn configure(http: reqwest::Client, base_url: Option<String>, auth: AuthHeader) -> Self {
         Self::build(
             http,
             base_url.unwrap_or_else(|| DEFAULT_BASE_URL.into()),
@@ -174,7 +170,9 @@ mod tests {
     fn parses_model_from_body() {
         let body = br#"{"model":"deepseek-chat","messages":[]}"#;
         assert_eq!(
-            DeepSeekProvider::new(reqwest::Client::new()).parse_model(body).unwrap(),
+            DeepSeekProvider::new(reqwest::Client::new())
+                .parse_model(body)
+                .unwrap(),
             "deepseek-chat"
         );
     }

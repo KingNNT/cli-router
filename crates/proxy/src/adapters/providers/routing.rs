@@ -272,7 +272,11 @@ impl Provider for RoutingProvider {
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&rewritten_body, direction)?;
             let raw_resp = match provider.native_format() {
-                ApiFormat::Anthropic => provider.forward(native_path, headers, send_body, streaming).await,
+                ApiFormat::Anthropic => {
+                    provider
+                        .forward(native_path, headers, send_body, streaming)
+                        .await
+                }
                 ApiFormat::OpenAI => {
                     provider
                         .forward_openai(native_path, headers, send_body, streaming)
@@ -337,7 +341,11 @@ impl Provider for RoutingProvider {
                         .forward_openai(native_path, headers, send_body, streaming)
                         .await
                 }
-                ApiFormat::Anthropic => provider.forward(native_path, headers, send_body, streaming).await,
+                ApiFormat::Anthropic => {
+                    provider
+                        .forward(native_path, headers, send_body, streaming)
+                        .await
+                }
             }?;
             return Self::translate_upstream_response(raw_resp, direction);
         }

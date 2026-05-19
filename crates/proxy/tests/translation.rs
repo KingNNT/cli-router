@@ -126,9 +126,8 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
     // In-memory DB for config storage in tests
     let config_conn = rusqlite::Connection::open_in_memory().unwrap();
     proxy::adapters::storage::ensure_current(&config_conn).unwrap();
-    let config_repo: Arc<dyn ConfigRepository> = Arc::new(
-        DbConfigRepository::new(config_conn, ":memory:".to_string())
-    );
+    let config_repo: Arc<dyn ConfigRepository> =
+        Arc::new(DbConfigRepository::new(config_conn, ":memory:".to_string()));
 
     let live = Arc::new(LiveProvider::new(
         stub_provider,

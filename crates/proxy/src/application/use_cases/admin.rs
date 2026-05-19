@@ -4,15 +4,20 @@
 //! transport.
 
 use crate::application::errors::ProxyError;
-use crate::application::ports::{ConfigRepository, QuotaPort, RequestLogReadPort, UpstreamResponse};
-use crate::config::{AffinityConfig, AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, QuotaRule, RoutingRule};
+use crate::application::ports::{
+    ConfigRepository, QuotaPort, RequestLogReadPort, UpstreamResponse,
+};
+use crate::config::{
+    AffinityConfig, AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, QuotaRule,
+    RoutingRule,
+};
 use crate::domain::RequestRow;
 use axum::http::HeaderMap;
 use bytes::Bytes;
 use proxy_admin_api::{
     AffinityPayload, AuthPayload, ConfigPayload, MatchPayload, ModelBreakdownItemDto,
-    ProviderPayload, QuotaPayload, RecentRequestItem, RecentRequestsResponse,
-    RoutingRulePayload, StatusResponse, TestProviderResponse,
+    ProviderPayload, QuotaPayload, RecentRequestItem, RecentRequestsResponse, RoutingRulePayload,
+    StatusResponse, TestProviderResponse,
 };
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -96,7 +101,11 @@ impl GetRecentRequests {
         }
     }
 
-    pub fn execute(&self, limit: Option<u32>, offset: Option<u32>) -> Result<RecentRequestsResponse, ProxyError> {
+    pub fn execute(
+        &self,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<RecentRequestsResponse, ProxyError> {
         let n = limit.unwrap_or(self.default_limit).clamp(1, 500);
         let o = offset.unwrap_or(0);
         let rows = self.read.recent(n, o)?;
@@ -209,7 +218,8 @@ impl UpdateConfig {
             .validate()
             .map_err(|e| ProxyError::BadRequest(format!("{e}")))?;
 
-        self.config_repo.save(&new_cfg)
+        self.config_repo
+            .save(&new_cfg)
             .map_err(|e| ProxyError::BadRequest(format!("{e}")))?;
 
         // Hot reload: build a fresh provider tree, swap atomically. If the
@@ -1040,14 +1050,16 @@ fn account_usage_to_dto(u: ProviderAccountUsage) -> ProviderAccountUsageDto {
             total_calls: m.total_calls,
             period_start_ms: m.period_start_ms,
             period_end_ms: m.period_end_ms,
-            model_breakdown: m.model_breakdown.into_iter().map(|item| {
-                ModelBreakdownItemDto {
+            model_breakdown: m
+                .model_breakdown
+                .into_iter()
+                .map(|item| ModelBreakdownItemDto {
                     model: item.model,
                     tokens: item.tokens,
                     calls: item.calls,
                     cost_usd: item.cost_usd,
-                }
-            }).collect(),
+                })
+                .collect(),
         }),
     }
 }
@@ -1133,10 +1145,7 @@ mod tests {
         ) -> Result<Vec<ModelBreakdownRow>, ProxyError> {
             Ok(vec![])
         }
-        fn monthly_cost(
-            &self,
-            _provider: &str,
-        ) -> Result<f64, ProxyError> {
+        fn monthly_cost(&self, _provider: &str) -> Result<f64, ProxyError> {
             Ok(0.0)
         }
     }

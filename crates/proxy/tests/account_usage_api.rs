@@ -35,19 +35,48 @@ impl AccountUsagePort for StubUsage {
 
 struct StubRead;
 impl RequestLogReadPort for StubRead {
-    fn total_count(&self) -> Result<u64, ProxyError> { Ok(0) }
-    fn count_by_provider(&self) -> Result<std::collections::BTreeMap<String, u64>, ProxyError> { Ok(std::collections::BTreeMap::new()) }
-    fn count_by_status(&self) -> Result<std::collections::BTreeMap<String, u64>, ProxyError> { Ok(std::collections::BTreeMap::new()) }
-    fn recent(&self, _: u32, _: u32) -> Result<Vec<proxy::domain::RequestRow>, ProxyError> { Ok(vec![]) }
-    fn summarize(&self, _: i64, _: i64) -> Result<proxy::domain::UsageSummary, ProxyError> {
-        Ok(proxy::domain::UsageSummary { from_ms: 0, to_ms: 0, daily: vec![], models: vec![] })
+    fn total_count(&self) -> Result<u64, ProxyError> {
+        Ok(0)
     }
-    fn quota_seed(&self, _: i64) -> Result<Vec<proxy::application::ports::QuotaSeedRow>, ProxyError> { Ok(vec![]) }
-    fn count_translations(&self) -> Result<proxy::application::ports::TranslationCounts, ProxyError> {
+    fn count_by_provider(&self) -> Result<std::collections::BTreeMap<String, u64>, ProxyError> {
+        Ok(std::collections::BTreeMap::new())
+    }
+    fn count_by_status(&self) -> Result<std::collections::BTreeMap<String, u64>, ProxyError> {
+        Ok(std::collections::BTreeMap::new())
+    }
+    fn recent(&self, _: u32, _: u32) -> Result<Vec<proxy::domain::RequestRow>, ProxyError> {
+        Ok(vec![])
+    }
+    fn summarize(&self, _: i64, _: i64) -> Result<proxy::domain::UsageSummary, ProxyError> {
+        Ok(proxy::domain::UsageSummary {
+            from_ms: 0,
+            to_ms: 0,
+            daily: vec![],
+            models: vec![],
+        })
+    }
+    fn quota_seed(
+        &self,
+        _: i64,
+    ) -> Result<Vec<proxy::application::ports::QuotaSeedRow>, ProxyError> {
+        Ok(vec![])
+    }
+    fn count_translations(
+        &self,
+    ) -> Result<proxy::application::ports::TranslationCounts, ProxyError> {
         Ok(proxy::application::ports::TranslationCounts::default())
     }
-    fn model_breakdown(&self, _: &str, _: i64, _: i64) -> Result<Vec<ModelBreakdownRow>, ProxyError> { Ok(vec![]) }
-    fn monthly_cost(&self, _: &str) -> Result<f64, ProxyError> { Ok(0.0) }
+    fn model_breakdown(
+        &self,
+        _: &str,
+        _: i64,
+        _: i64,
+    ) -> Result<Vec<ModelBreakdownRow>, ProxyError> {
+        Ok(vec![])
+    }
+    fn monthly_cost(&self, _: &str) -> Result<f64, ProxyError> {
+        Ok(0.0)
+    }
 }
 
 async fn handler(State(uc): State<Arc<GetAccountUsage>>) -> Json<AccountUsageResponse> {

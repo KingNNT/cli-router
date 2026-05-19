@@ -18,9 +18,9 @@ pub use builder::{
     BuildError, build_from_config, build_leaf, build_leaves, build_routing_provider,
 };
 pub use codex::CodexProvider;
+pub use deepseek::DeepSeekProvider;
 pub use live::LiveProvider;
 pub use messages_protocol::AuthHeader;
-pub use routing::RoutingProvider;
-pub use deepseek::DeepSeekProvider;
 pub use openai::OpenAiProvider;
+pub use routing::RoutingProvider;
 pub use zai::ZaiProvider;

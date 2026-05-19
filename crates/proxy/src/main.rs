@@ -7,9 +7,11 @@ use proxy::adapters::oauth::OAuthSessionStore;
 use proxy::adapters::oauth::openai::OAuthSessionStore as OpenAiOAuthSessionStore;
 use proxy::adapters::providers::{LiveProvider, build_leaves, build_routing_provider};
 use proxy::adapters::quota::InMemoryQuota;
-use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
 use proxy::adapters::storage::db_config::DbConfigRepository;
-use proxy::application::ports::{ConfigRepository, Provider, QuotaPort, RequestLogPort, RequestLogReadPort};
+use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
+use proxy::application::ports::{
+    ConfigRepository, Provider, QuotaPort, RequestLogPort, RequestLogReadPort,
+};
 use proxy::application::use_cases::{
     CompleteAnthropicOAuth, CompleteOpenAiOAuth, GetConfig, GetQuotaStatus, GetRecentRequests,
     GetStatus, GetUsageSummary, HandleMessages, StartAnthropicOAuth, StartOpenAiOAuth,
@@ -66,16 +68,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ensure_current(&proxy_conn)?;
 
     // Config repository — DB is the single source of truth
-    let config_repo: Arc<dyn ConfigRepository> = Arc::new(
-        DbConfigRepository::new(proxy_conn, args.db)
-    );
+    let config_repo: Arc<dyn ConfigRepository> =
+        Arc::new(DbConfigRepository::new(proxy_conn, args.db));
     // Import legacy config.toml into DB, then exit
     if let Some(ref config_path) = args.import_config {
         let raw = std::fs::read_to_string(config_path)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
         let legacy_cfg: proxy::config::Config = toml::from_str(&raw)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        config_repo.save(&legacy_cfg)
+        config_repo
+            .save(&legacy_cfg)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
         tracing::info!("Imported config from {} to DB", config_path);
         return Ok(());

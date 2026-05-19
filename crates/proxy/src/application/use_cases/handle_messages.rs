@@ -87,7 +87,12 @@ impl HandleMessages {
     ) -> Result<CountTokensOutput, ProxyError> {
         let upstream = self
             .provider
-            .forward("/v1/messages/count_tokens", &input.headers, input.body.clone(), false)
+            .forward(
+                "/v1/messages/count_tokens",
+                &input.headers,
+                input.body.clone(),
+                false,
+            )
             .await;
 
         match upstream {
@@ -98,7 +103,11 @@ impl HandleMessages {
                 ..
             }) => {
                 if (200..300).contains(&status) {
-                    Ok(CountTokensOutput { status, headers, body })
+                    Ok(CountTokensOutput {
+                        status,
+                        headers,
+                        body,
+                    })
                 } else {
                     // Upstream returned an error — fall back to local estimation.
                     tracing::debug!(

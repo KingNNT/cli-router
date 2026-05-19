@@ -157,7 +157,9 @@ async fn refresh_expiring(
         // Persist to DB and rebuild provider tree — skip for CodexAuto
         // (CodexAuto never writes tokens to config).
         if !matches!(kind, OAuthKind::CodexAuto) {
-            config_repo.save(&new_cfg).map_err(|e| format!("save config: {e}"))?;
+            config_repo
+                .save(&new_cfg)
+                .map_err(|e| format!("save config: {e}"))?;
         }
 
         live.reload(&new_cfg, http.clone())

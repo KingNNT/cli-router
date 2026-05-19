@@ -2,15 +2,14 @@
 //! layout: tab bar, body for the active view, status line, optional modal.
 
 use crate::app::{
-    AppMode, ConfigSection, QuotaField, QuotaFormModal, RoutingField, RoutingFormModal, ALL_VIEWS,
-    AppState, AuthInputKind, DeleteConfirmModal, FormField, FormMode, FormState, Modal,
-    PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderFormModal, TestProviderModal, TestState, View,
+    ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal, FormField,
+    FormMode, FormState, Modal, PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderFormModal,
+    QuotaField, QuotaFormModal, RoutingField, RoutingFormModal, TestProviderModal, TestState, View,
     WizardStep,
 };
 use chrono::{Local, TimeZone};
 use proxy_admin_api::{
-    AuthPayload, QuotaMetricDto, QuotaMetricState, QuotaStatusListDto,
-    StatusResponse,
+    AuthPayload, QuotaMetricDto, QuotaMetricState, QuotaStatusListDto, StatusResponse,
 };
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -289,15 +288,16 @@ fn draw_config_section_tabs(f: &mut Frame, area: Rect, active: ConfigSection) {
         .iter()
         .map(|s| Line::from(format!(" {} ", s.label())))
         .collect();
-    let active_idx = ConfigSection::ALL.iter().position(|&s| s == active).unwrap_or(0);
-    let tabs = Tabs::new(titles)
-        .select(active_idx)
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        );
+    let active_idx = ConfigSection::ALL
+        .iter()
+        .position(|&s| s == active)
+        .unwrap_or(0);
+    let tabs = Tabs::new(titles).select(active_idx).highlight_style(
+        Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    );
     f.render_widget(tabs, area);
 }
 
@@ -499,7 +499,11 @@ fn draw_quotas_content(f: &mut Frame, area: Rect, state: &AppState) {
                 Cell::from(format!("{}", i + 1)),
                 Cell::from(q.provider.clone()),
                 Cell::from(q.window.clone()),
-                Cell::from(q.max_requests.map(|v| v.to_string()).unwrap_or_else(|| "—".into())),
+                Cell::from(
+                    q.max_requests
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "—".into()),
+                ),
                 Cell::from(
                     q.max_input_tokens
                         .map(|v| v.to_string())
@@ -556,25 +560,41 @@ fn draw_settings_content(f: &mut Frame, area: Rect, state: &AppState) {
         Some(Ok(c)) => c,
     };
 
-    let affinity_str = if cfg.affinity.enabled { "enabled" } else { "disabled" };
+    let affinity_str = if cfg.affinity.enabled {
+        "enabled"
+    } else {
+        "disabled"
+    };
     let proxy_db_str = cfg.proxy_db.as_deref().unwrap_or("(default)");
     let pricing_db_str = cfg.pricing_db.as_deref().unwrap_or("(default)");
 
     let lines = vec![
         Line::from(vec![
-            Span::styled("port:       ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "port:       ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             Span::raw(cfg.port.to_string()),
         ]),
         Line::from(vec![
-            Span::styled("proxy_db:   ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "proxy_db:   ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             Span::raw(proxy_db_str),
         ]),
         Line::from(vec![
-            Span::styled("pricing_db: ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "pricing_db: ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             Span::raw(pricing_db_str),
         ]),
         Line::from(vec![
-            Span::styled("affinity:   ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "affinity:   ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             Span::raw(affinity_str),
             Span::raw("  "),
             Span::styled(
@@ -586,7 +606,10 @@ fn draw_settings_content(f: &mut Frame, area: Rect, state: &AppState) {
             ),
         ]),
         Line::from(vec![
-            Span::styled("headers:    ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "headers:    ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             Span::raw(cfg.affinity.headers.join(", ")),
         ]),
     ];
@@ -651,11 +674,7 @@ fn draw_requests(f: &mut Frame, area: Rect, state: &AppState) {
     draw_requests_footer(f, footer_area, reqs);
 }
 
-fn draw_requests_table(
-    f: &mut Frame,
-    area: Rect,
-    reqs: &crate::app::RequestsPaneState,
-) {
+fn draw_requests_table(f: &mut Frame, area: Rect, reqs: &crate::app::RequestsPaneState) {
     let header = Row::new(vec![
         Cell::from("started"),
         Cell::from("provider"),
@@ -722,16 +741,16 @@ fn draw_requests_table(
     f.render_widget(table, area);
 }
 
-fn draw_requests_footer(
-    f: &mut Frame,
-    area: Rect,
-    reqs: &crate::app::RequestsPaneState,
-) {
+fn draw_requests_footer(f: &mut Frame, area: Rect, reqs: &crate::app::RequestsPaneState) {
     let loaded = reqs.items.len();
     let total = reqs.total_count as usize;
     let from = if loaded == 0 { 0 } else { 1 };
     let to = loaded;
-    let more = if reqs.has_more() { " │ ↓/PgDn=more" } else { "" };
+    let more = if reqs.has_more() {
+        " │ ↓/PgDn=more"
+    } else {
+        ""
+    };
     let label = if total == 0 {
         "no requests".to_string()
     } else {
@@ -1136,7 +1155,9 @@ fn draw_help_modal(f: &mut Frame) {
         Line::from("  q / Ctrl+C            quit"),
         Line::from(""),
         Line::from(Span::styled("Providers tab", bold)),
-        Line::from("  ← / → / Tab          switch section (Providers / Routing / Quotas / Settings)"),
+        Line::from(
+            "  ← / → / Tab          switch section (Providers / Routing / Quotas / Settings)",
+        ),
         Line::from("  ↑ / ↓ / j / k         move selection"),
         Line::from("  a                     add provider"),
         Line::from("  e                     edit selected"),
@@ -1207,7 +1228,10 @@ fn draw_wizard_welcome(f: &mut Frame) {
         Line::from("  \u{2022} Add your first LLM provider"),
         Line::from("  \u{2022} Configure API authentication"),
         Line::from(""),
-        Line::from(Span::styled("Config will be saved to:", Style::default().fg(Color::DarkGray))),
+        Line::from(Span::styled(
+            "Config will be saved to:",
+            Style::default().fg(Color::DarkGray),
+        )),
         Line::from(Span::styled(
             format!("  {config_path}"),
             Style::default().fg(Color::Yellow),
@@ -1236,7 +1260,9 @@ fn draw_wizard_add_provider(f: &mut Frame, form: &ProviderFormModal) {
 
 fn draw_wizard_done(f: &mut Frame, saved_path: &Option<std::path::PathBuf>) {
     let area = centered_rect(65, 50, f.area());
-    let block = Block::default().borders(Borders::ALL).title(" Setup complete ");
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Setup complete ");
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -1299,7 +1325,11 @@ fn draw_routing_form_modal(f: &mut Frame, m: &RoutingFormModal) {
     }
 
     let row = |field: RoutingField, label: &str, value: String| {
-        let marker = if m.focused == field { "\u{25b6} " } else { "  " };
+        let marker = if m.focused == field {
+            "\u{25b6} "
+        } else {
+            "  "
+        };
         let style = if m.focused == field {
             Style::default()
                 .fg(Color::Yellow)
@@ -1371,7 +1401,11 @@ fn draw_quota_form_modal(f: &mut Frame, m: &QuotaFormModal) {
     }
 
     let row = |field: QuotaField, label: &str, value: String| {
-        let marker = if m.focused == field { "\u{25b6} " } else { "  " };
+        let marker = if m.focused == field {
+            "\u{25b6} "
+        } else {
+            "  "
+        };
         let style = if m.focused == field {
             Style::default()
                 .fg(Color::Yellow)

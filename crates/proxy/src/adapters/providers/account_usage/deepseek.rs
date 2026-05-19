@@ -9,9 +9,7 @@ use serde::Deserialize;
 
 use crate::application::errors::ProxyError;
 use crate::application::ports::AccountUsagePort;
-use crate::domain::account_usage::{
-    AccountUsageStatus, ProviderAccountUsage, UsageWindow,
-};
+use crate::domain::account_usage::{AccountUsageStatus, ProviderAccountUsage, UsageWindow};
 
 /// DeepSeek account usage adapter. Queries balance API.
 pub struct DeepSeekAccountUsage {

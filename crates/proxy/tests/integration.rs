@@ -116,9 +116,8 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
     // In-memory DB for config storage in tests
     let config_conn = rusqlite::Connection::open_in_memory().unwrap();
     proxy::adapters::storage::ensure_current(&config_conn).unwrap();
-    let config_repo: Arc<dyn ConfigRepository> = Arc::new(
-        DbConfigRepository::new(config_conn, ":memory:".to_string())
-    );
+    let config_repo: Arc<dyn ConfigRepository> =
+        Arc::new(DbConfigRepository::new(config_conn, ":memory:".to_string()));
 
     proxy::frameworks::AdminState {
         get_status: Arc::new(GetStatus::new(read.clone(), 0, cfg.clone())),
@@ -474,9 +473,8 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
     // In-memory DB for config storage in tests
     let config_conn = Connection::open_in_memory().unwrap();
     ensure_current(&config_conn).unwrap();
-    let config_repo: Arc<dyn ConfigRepository> = Arc::new(
-        DbConfigRepository::new(config_conn, ":memory:".to_string())
-    );
+    let config_repo: Arc<dyn ConfigRepository> =
+        Arc::new(DbConfigRepository::new(config_conn, ":memory:".to_string()));
 
     let admin = proxy::frameworks::AdminState {
         get_status: Arc::new(GetStatus::new(read.clone(), 0, cfg_lock.clone())),

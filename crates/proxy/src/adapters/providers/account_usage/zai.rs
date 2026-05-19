@@ -176,7 +176,8 @@ impl AccountUsagePort for ZaiAccountUsage {
                                     }
                                 }
                                 mcp = Some(UsageWindow {
-                                    label: "Total Monthly Web Search / Reader / Zread Quota".to_string(),
+                                    label: "Total Monthly Web Search / Reader / Zread Quota"
+                                        .to_string(),
                                     used_pct: limit.percentage.unwrap_or(0.0),
                                     used: limit.current_value,
                                     limit: limit.usage,
@@ -225,7 +226,9 @@ impl AccountUsagePort for ZaiAccountUsage {
         //    if the MCP window exists but has no sub_items.
         if let Ok(data) = tool_result
             && let Some(total) = data.total_usage
-            && let Some(mcp) = windows.iter_mut().find(|w| w.label == "Total Monthly Web Search / Reader / Zread Quota")
+            && let Some(mcp) = windows
+                .iter_mut()
+                .find(|w| w.label == "Total Monthly Web Search / Reader / Zread Quota")
             && mcp.sub_items.is_empty()
         {
             if total.total_network_search_count > 0 {

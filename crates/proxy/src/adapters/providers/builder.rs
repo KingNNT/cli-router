@@ -3,7 +3,10 @@
 //! (`LiveProvider::reload`) call the same code.
 
 use super::account_usage::{AnthropicAccountUsage, DeepSeekAccountUsage, ZaiAccountUsage};
-use super::{AnthropicProvider, AuthHeader, CodexProvider, DeepSeekProvider, OpenAiProvider, RoutingProvider, ZaiProvider};
+use super::{
+    AnthropicProvider, AuthHeader, CodexProvider, DeepSeekProvider, OpenAiProvider,
+    RoutingProvider, ZaiProvider,
+};
 use crate::application::ports::{AccountUsagePort, Provider, QuotaPort};
 use crate::config::{AuthConfig, Config, ProviderConfig, ProviderKind};
 use std::collections::HashMap;
@@ -20,7 +23,10 @@ pub enum BuildError {
 }
 
 /// Build a single leaf provider from one `ProviderConfig` row.
-pub fn build_leaf(p: &ProviderConfig, http: reqwest::Client) -> Result<Arc<dyn Provider>, BuildError> {
+pub fn build_leaf(
+    p: &ProviderConfig,
+    http: reqwest::Client,
+) -> Result<Arc<dyn Provider>, BuildError> {
     let auth = match &p.auth {
         AuthConfig::Passthrough => AuthHeader::Passthrough,
         AuthConfig::ApiKey { value } => AuthHeader::ApiKey(value.clone()),
@@ -71,21 +77,11 @@ pub fn build_leaf(p: &ProviderConfig, http: reqwest::Client) -> Result<Arc<dyn P
             p.openai_base_url.clone(),
             auth,
         )),
-        ProviderKind::DeepSeek => Arc::new(DeepSeekProvider::configure(
-            http,
-            p.base_url.clone(),
-            auth,
-        )),
-        ProviderKind::OpenAi => Arc::new(OpenAiProvider::configure(
-            http,
-            p.base_url.clone(),
-            auth,
-        )),
-        ProviderKind::Codex => Arc::new(CodexProvider::configure(
-            http,
-            p.base_url.clone(),
-            auth,
-        )),
+        ProviderKind::DeepSeek => {
+            Arc::new(DeepSeekProvider::configure(http, p.base_url.clone(), auth))
+        }
+        ProviderKind::OpenAi => Arc::new(OpenAiProvider::configure(http, p.base_url.clone(), auth)),
+        ProviderKind::Codex => Arc::new(CodexProvider::configure(http, p.base_url.clone(), auth)),
     })
 }
 
@@ -193,12 +189,8 @@ pub fn build_account_usage(
                     let token = resolve_auth_token(&p.auth);
                     Arc::new(DeepSeekAccountUsage::new(p.name.clone(), token))
                 }
-                ProviderKind::OpenAi => {
-                    Arc::new(super::account_usage::noop::NoopAccountUsage)
-                }
-                ProviderKind::Codex => {
-                    Arc::new(super::account_usage::noop::NoopAccountUsage)
-                }
+                ProviderKind::OpenAi => Arc::new(super::account_usage::noop::NoopAccountUsage),
+                ProviderKind::Codex => Arc::new(super::account_usage::noop::NoopAccountUsage),
             };
             (p.name.clone(), adapter)
         })
@@ -235,7 +227,6 @@ fn derive_monitor_base_url(p: &ProviderConfig) -> String {
         .unwrap_or_else(|| "https://api.z.ai".to_string())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,10 +244,7 @@ mod tests {
 
     #[test]
     fn derive_monitor_base_url_strips_path_from_openai_url() {
-        let url = derive_monitor_base_url(&cfg(
-            Some("https://api.z.ai/api/coding/paas/v4"),
-            None,
-        ));
+        let url = derive_monitor_base_url(&cfg(Some("https://api.z.ai/api/coding/paas/v4"), None));
         assert_eq!(url, "https://api.z.ai");
     }
 

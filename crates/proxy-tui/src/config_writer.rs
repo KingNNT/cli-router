@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 
 /// Read a TOML file and deserialize into [`ConfigPayload`].
 pub fn read_from_file(path: &Path) -> Result<ConfigPayload, String> {
-    let contents =
-        std::fs::read_to_string(path).map_err(|e| format!("failed to read {}: {e}", path.display()))?;
+    let contents = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read {}: {e}", path.display()))?;
     toml::from_str(&contents).map_err(|e| format!("failed to parse TOML: {e}"))
 }
 
@@ -132,15 +132,15 @@ mod tests {
 
     #[test]
     fn write_creates_parent_dirs() {
-        let dir = std::env::temp_dir().join("cli-router-test-mkdirs").join("nested");
+        let dir = std::env::temp_dir()
+            .join("cli-router-test-mkdirs")
+            .join("nested");
         let path = dir.join("config.toml");
 
         let payload = sample_payload();
         write_to_file(&payload, &path).unwrap();
         assert!(path.exists());
 
-        let _ = std::fs::remove_dir_all(
-            std::env::temp_dir().join("cli-router-test-mkdirs"),
-        );
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("cli-router-test-mkdirs"));
     }
 }

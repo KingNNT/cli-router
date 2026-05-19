@@ -96,14 +96,12 @@ impl std::fmt::Debug for AuthConfig {
         const REDACTED: &str = "<redacted>";
         match self {
             AuthConfig::Passthrough => f.debug_tuple("Passthrough").finish(),
-            AuthConfig::ApiKey { .. } => f
-                .debug_struct("ApiKey")
-                .field("value", &REDACTED)
-                .finish(),
-            AuthConfig::Bearer { .. } => f
-                .debug_struct("Bearer")
-                .field("value", &REDACTED)
-                .finish(),
+            AuthConfig::ApiKey { .. } => {
+                f.debug_struct("ApiKey").field("value", &REDACTED).finish()
+            }
+            AuthConfig::Bearer { .. } => {
+                f.debug_struct("Bearer").field("value", &REDACTED).finish()
+            }
             AuthConfig::AnthropicOAuth { expires_at_ms, .. } => f
                 .debug_struct("AnthropicOAuth")
                 .field("access_token", &REDACTED)
@@ -403,7 +401,9 @@ mod tests {
                 openai_base_url: None,
             }],
             routing: vec![RoutingRule {
-                match_spec: MatchSpec { model: Some("*".into()) },
+                match_spec: MatchSpec {
+                    model: Some("*".into()),
+                },
                 provider: "nonexistent".into(),
                 fallback: vec![],
                 strategy: Default::default(),
@@ -439,7 +439,9 @@ mod tests {
                 },
             ],
             routing: vec![RoutingRule {
-                match_spec: MatchSpec { model: Some("*".into()) },
+                match_spec: MatchSpec {
+                    model: Some("*".into()),
+                },
                 provider: "x".into(),
                 fallback: vec![],
                 strategy: Default::default(),
@@ -465,7 +467,9 @@ mod tests {
                 openai_base_url: None,
             }],
             routing: vec![RoutingRule {
-                match_spec: MatchSpec { model: Some("*".into()) },
+                match_spec: MatchSpec {
+                    model: Some("*".into()),
+                },
                 provider: "anthropic".into(),
                 fallback: vec!["ghost".into()],
                 strategy: Default::default(),

@@ -31,7 +31,9 @@ pub fn build_config_from_form(form: &ProviderFormModal) -> ConfigPayload {
         crate::app::AuthInputKind::Bearer => AuthPayload::Bearer {
             value: form.auth_value.clone(),
         },
-        crate::app::AuthInputKind::OAuthAnthropic | crate::app::AuthInputKind::OAuthOpenAi => AuthPayload::Passthrough,
+        crate::app::AuthInputKind::OAuthAnthropic | crate::app::AuthInputKind::OAuthOpenAi => {
+            AuthPayload::Passthrough
+        }
     };
 
     let provider = if form.name.trim().is_empty() {
@@ -157,7 +159,13 @@ mod tests {
 
     #[test]
     fn strategy_label_matches() {
-        assert_eq!(strategy_label(&RoutingStrategyPayload::Failover), "failover");
-        assert_eq!(strategy_label(&RoutingStrategyPayload::RoundRobin), "round_robin");
+        assert_eq!(
+            strategy_label(&RoutingStrategyPayload::Failover),
+            "failover"
+        );
+        assert_eq!(
+            strategy_label(&RoutingStrategyPayload::RoundRobin),
+            "round_robin"
+        );
     }
 }
