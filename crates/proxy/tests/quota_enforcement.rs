@@ -155,6 +155,8 @@ fn hot_reload_preserves_quota_enforcement() {
         }],
         affinity: Default::default(),
         quota: Vec::new(),
+        docs_port: 8788,
+        docs_enabled: true,
     };
 
     let http = reqwest::Client::new();

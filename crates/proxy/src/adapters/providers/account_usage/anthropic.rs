@@ -613,6 +613,8 @@ mod tests {
             routing: vec![],
             affinity: AffinityConfig::default(),
             quota: vec![],
+            docs_port: 8788,
+            docs_enabled: true,
         };
         let adapter = AnthropicAccountUsage::new("anthropic".into(), Arc::new(RwLock::new(cfg)));
         assert!(adapter.current_token().is_none());
@@ -639,6 +641,8 @@ mod tests {
             routing: vec![],
             affinity: AffinityConfig::default(),
             quota: vec![],
+            docs_port: 8788,
+            docs_enabled: true,
         };
         let adapter = AnthropicAccountUsage::new("Anthropic".into(), Arc::new(RwLock::new(cfg)));
         assert_eq!(
@@ -666,6 +670,8 @@ mod tests {
             routing: vec![],
             affinity: AffinityConfig::default(),
             quota: vec![],
+            docs_port: 8788,
+            docs_enabled: true,
         };
         let adapter = AnthropicAccountUsage::new("anthropic".into(), Arc::new(RwLock::new(cfg)));
         assert!(adapter.fetch_usage().is_none());

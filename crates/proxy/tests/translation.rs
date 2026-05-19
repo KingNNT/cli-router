@@ -118,6 +118,8 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
         routing: vec![],
         affinity: Default::default(),
         quota: Vec::new(),
+        docs_port: 8788,
+        docs_enabled: true,
     }));
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
     let http = reqwest::Client::new();

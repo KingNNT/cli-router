@@ -104,6 +104,8 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
         routing: vec![],
         affinity: Default::default(),
         quota: Vec::new(),
+        docs_port: 8788,
+        docs_enabled: true,
     }));
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
     let http = reqwest::Client::new();
@@ -438,6 +440,8 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
         }],
         affinity: Default::default(),
         quota: Vec::new(),
+        docs_port: 8788,
+        docs_enabled: true,
     };
 
     let nanos = std::time::SystemTime::now()

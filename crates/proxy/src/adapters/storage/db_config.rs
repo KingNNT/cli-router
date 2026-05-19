@@ -62,6 +62,14 @@ impl ConfigRepository for DbConfigRepository {
         let routing = load_routing(&conn)?;
         let quota = load_quota(&conn)?;
 
+        let docs_port = load_setting(&conn, "docs_port")
+            .and_then(|s| s.parse::<u16>().ok())
+            .unwrap_or(8788);
+
+        let docs_enabled = load_setting(&conn, "docs_enabled")
+            .and_then(|s| s.parse::<bool>().ok())
+            .unwrap_or(true);
+
         Ok(Config {
             port,
             proxy_db,
@@ -70,6 +78,8 @@ impl ConfigRepository for DbConfigRepository {
             routing,
             affinity,
             quota,
+            docs_port,
+            docs_enabled,
         })
     }
 
@@ -98,6 +108,10 @@ impl ConfigRepository for DbConfigRepository {
             let headers_json = serde_json::to_string(&config.affinity.headers)
                 .map_err(|e| ConfigError::Validation(e.to_string()))?;
             stmt.execute(["affinity_headers", &headers_json])
+                .map_err(db_err)?;
+            stmt.execute(["docs_port", &config.docs_port.to_string()])
+                .map_err(db_err)?;
+            stmt.execute(["docs_enabled", &config.docs_enabled.to_string()])
                 .map_err(db_err)?;
         }
 

@@ -791,6 +791,8 @@ fn payload_to_config(
             headers: p.affinity.headers,
         },
         quota,
+        docs_port: 8788,
+        docs_enabled: true,
     })
 }
 
@@ -1169,6 +1171,8 @@ mod tests {
             routing: vec![],
             affinity: Default::default(),
             quota: Vec::new(),
+            docs_port: 8788,
+            docs_enabled: true,
         }));
         let uc = GetStatus::new(stub(), 1_000, cfg);
         let s = uc.execute().unwrap();
@@ -1214,6 +1218,8 @@ mod tests {
             }],
             affinity: Default::default(),
             quota: Vec::new(),
+            docs_port: 8788,
+            docs_enabled: true,
         };
         let payload = config_to_payload(&cfg);
         assert_eq!(payload.port, 8787);
@@ -1272,6 +1278,8 @@ mod tests {
             routing: vec![],
             affinity: Default::default(),
             quota: Vec::new(),
+            docs_port: 8788,
+            docs_enabled: true,
         };
         let err = payload_to_config(p, PathBuf::new(), PathBuf::new(), &existing).unwrap_err();
         assert!(format!("{err}").contains("bogus"));
@@ -1296,6 +1304,8 @@ mod tests {
                 max_output_tokens: None,
                 warn_pct: 80,
             }],
+            docs_port: 8788,
+            docs_enabled: true,
         };
         let payload = config_to_payload(&original);
         let roundtripped = payload_to_config(

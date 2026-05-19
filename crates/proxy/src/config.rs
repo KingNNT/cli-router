@@ -22,6 +22,12 @@ pub struct Config {
     pub affinity: AffinityConfig,
     #[serde(default)]
     pub quota: Vec<QuotaRule>,
+    /// Port for the Swagger UI / ReDoc docs server. Default: 8788.
+    #[serde(default = "default_docs_port")]
+    pub docs_port: u16,
+    /// Whether to start the docs server. Default: true.
+    #[serde(default = "default_true")]
+    pub docs_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,6 +294,10 @@ fn default_port() -> u16 {
     8787
 }
 
+fn default_docs_port() -> u16 {
+    8788
+}
+
 fn default_proxy_db() -> PathBuf {
     home().join(".local/share/cli-router/proxy.db")
 }
@@ -383,6 +393,8 @@ mod tests {
             routing: vec![],
             affinity: AffinityConfig::default(),
             quota: Vec::new(),
+            docs_port: 8788,
+            docs_enabled: true,
         };
         assert!(cfg.validate().is_err());
     }
@@ -411,6 +423,8 @@ mod tests {
             }],
             affinity: AffinityConfig::default(),
             quota: Vec::new(),
+            docs_port: 8788,
+            docs_enabled: true,
         };
         let err = cfg.validate().unwrap_err();
         assert!(format!("{err}").contains("nonexistent"));
@@ -449,6 +463,8 @@ mod tests {
             }],
             affinity: AffinityConfig::default(),
             quota: Vec::new(),
+            docs_port: 8788,
+            docs_enabled: true,
         };
         assert!(format!("{}", cfg.validate().unwrap_err()).contains("duplicate"));
     }
@@ -477,6 +493,8 @@ mod tests {
             }],
             affinity: AffinityConfig::default(),
             quota: Vec::new(),
+            docs_port: 8788,
+            docs_enabled: true,
         };
         assert!(format!("{}", cfg.validate().unwrap_err()).contains("ghost"));
     }

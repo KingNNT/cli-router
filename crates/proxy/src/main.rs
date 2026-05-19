@@ -123,6 +123,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http = reqwest::Client::builder().build()?;
 
     let port = cfg.port;
+    let docs_port_setting = if cfg.docs_enabled {
+        Some(cfg.docs_port)
+    } else {
+        None
+    };
 
     // Build quota adapter from config, then seed from historical request log.
     let now_ms_u64 = std::time::SystemTime::now()
@@ -240,7 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;
-    proxy::serve(addr, use_case, admin).await?;
+    proxy::serve(addr, use_case, admin, docs_port_setting).await?;
     Ok(())
 }
 
