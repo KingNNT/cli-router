@@ -58,7 +58,7 @@ dev-paths: ## Print resolved dev paths and ports
 	@echo "dev data dir:   $(DEV_DATA_DIR)"
 	@echo "dev port:       $(DEV_PORT)"
 	@echo "prod config:    $(PROD_CONFIG)"
-	@echo "prod port:      8787 (managed by launchd via make install-service)"
+	@echo "prod port:      8787 (managed by launchd via make service-install)"
 
 DEV_DB := $(DEV_DATA_DIR)/proxy.db
 

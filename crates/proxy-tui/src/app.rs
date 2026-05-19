@@ -290,6 +290,7 @@ pub enum ProviderKind {
     Zai,
     DeepSeek,
     OpenAi,
+    Codex,
 }
 
 impl ProviderKind {
@@ -299,6 +300,7 @@ impl ProviderKind {
             ProviderKind::Zai => "zai",
             ProviderKind::DeepSeek => "deepseek",
             ProviderKind::OpenAi => "openai",
+            ProviderKind::Codex => "codex",
         }
     }
     pub fn cycle_next(self) -> Self {
@@ -306,15 +308,17 @@ impl ProviderKind {
             ProviderKind::Anthropic => ProviderKind::Zai,
             ProviderKind::Zai => ProviderKind::DeepSeek,
             ProviderKind::DeepSeek => ProviderKind::OpenAi,
-            ProviderKind::OpenAi => ProviderKind::Anthropic,
+            ProviderKind::OpenAi => ProviderKind::Codex,
+            ProviderKind::Codex => ProviderKind::Anthropic,
         }
     }
     pub fn cycle_prev(self) -> Self {
         match self {
-            ProviderKind::Anthropic => ProviderKind::OpenAi,
+            ProviderKind::Anthropic => ProviderKind::Codex,
             ProviderKind::Zai => ProviderKind::Anthropic,
             ProviderKind::DeepSeek => ProviderKind::Zai,
             ProviderKind::OpenAi => ProviderKind::DeepSeek,
+            ProviderKind::Codex => ProviderKind::OpenAi,
         }
     }
     pub fn from_str_or_default(s: &str) -> Self {
@@ -322,6 +326,7 @@ impl ProviderKind {
             "zai" => ProviderKind::Zai,
             "deepseek" => ProviderKind::DeepSeek,
             "openai" => ProviderKind::OpenAi,
+            "codex" => ProviderKind::Codex,
             _ => ProviderKind::Anthropic,
         }
     }
@@ -821,9 +826,11 @@ mod form_field_tests {
         assert_eq!(ProviderKind::Anthropic.cycle_next(), ProviderKind::Zai);
         assert_eq!(ProviderKind::Zai.cycle_next(), ProviderKind::DeepSeek);
         assert_eq!(ProviderKind::DeepSeek.cycle_next(), ProviderKind::OpenAi);
-        assert_eq!(ProviderKind::OpenAi.cycle_next(), ProviderKind::Anthropic);
+        assert_eq!(ProviderKind::OpenAi.cycle_next(), ProviderKind::Codex);
+        assert_eq!(ProviderKind::Codex.cycle_next(), ProviderKind::Anthropic);
         // prev direction
-        assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::OpenAi);
+        assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::Codex);
+        assert_eq!(ProviderKind::Codex.cycle_prev(), ProviderKind::OpenAi);
         assert_eq!(ProviderKind::OpenAi.cycle_prev(), ProviderKind::DeepSeek);
         assert_eq!(ProviderKind::DeepSeek.cycle_prev(), ProviderKind::Zai);
         assert_eq!(ProviderKind::Zai.cycle_prev(), ProviderKind::Anthropic);

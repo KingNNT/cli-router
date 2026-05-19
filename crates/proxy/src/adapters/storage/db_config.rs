@@ -271,6 +271,7 @@ fn parse_kind(s: &str) -> ProviderKind {
         "zai" | "z.ai" | "z-ai" => ProviderKind::Zai,
         "deepseek" | "deep_seek" => ProviderKind::DeepSeek,
         "openai" | "open_ai" => ProviderKind::OpenAi,
+        "codex" => ProviderKind::Codex,
         _ => ProviderKind::Anthropic,
     }
 }
@@ -281,6 +282,7 @@ fn kind_to_str(k: ProviderKind) -> &'static str {
         ProviderKind::Zai => "zai",
         ProviderKind::DeepSeek => "deepseek",
         ProviderKind::OpenAi => "openai",
+        ProviderKind::Codex => "codex",
     }
 }
 

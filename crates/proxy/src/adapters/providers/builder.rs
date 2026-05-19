@@ -3,7 +3,7 @@
 //! (`LiveProvider::reload`) call the same code.
 
 use super::account_usage::{AnthropicAccountUsage, DeepSeekAccountUsage, ZaiAccountUsage};
-use super::{AnthropicProvider, AuthHeader, DeepSeekProvider, OpenAiProvider, RoutingProvider, ZaiProvider};
+use super::{AnthropicProvider, AuthHeader, CodexProvider, DeepSeekProvider, OpenAiProvider, RoutingProvider, ZaiProvider};
 use crate::application::ports::{AccountUsagePort, Provider, QuotaPort};
 use crate::config::{AuthConfig, Config, ProviderConfig, ProviderKind};
 use std::collections::HashMap;
@@ -77,6 +77,11 @@ pub fn build_leaf(p: &ProviderConfig, http: reqwest::Client) -> Result<Arc<dyn P
             auth,
         )),
         ProviderKind::OpenAi => Arc::new(OpenAiProvider::configure(
+            http,
+            p.base_url.clone(),
+            auth,
+        )),
+        ProviderKind::Codex => Arc::new(CodexProvider::configure(
             http,
             p.base_url.clone(),
             auth,
@@ -189,6 +194,9 @@ pub fn build_account_usage(
                     Arc::new(DeepSeekAccountUsage::new(p.name.clone(), token))
                 }
                 ProviderKind::OpenAi => {
+                    Arc::new(super::account_usage::noop::NoopAccountUsage)
+                }
+                ProviderKind::Codex => {
                     Arc::new(super::account_usage::noop::NoopAccountUsage)
                 }
             };

@@ -1,4 +1,4 @@
-.PHONY: install-service uninstall-service service-status service-restart service-logs
+.PHONY: service-install service-uninstall service-status service-restart service-logs
 
 LAUNCH_AGENT_DIR := $(HOME)/Library/LaunchAgents
 SERVICE_LABEL    := com.cli-router.proxy
@@ -22,7 +22,7 @@ SERVICE_ENV_FILE := $(HOME)/.config/cli-router/.env
 
 ## Service (macOS launchd) ────────────────────────────
 
-install-service: _install-proxy-bin ## Build proxy, install it, and run it as a LaunchAgent (one-shot deploy)
+service-install: _install-proxy-bin ## Build proxy, install it, and run it as a LaunchAgent (one-shot deploy)
 	@mkdir -p $(LAUNCH_AGENT_DIR) $(SERVICE_LOG_DIR)
 	@# Resolve env vars: scan config.toml for ${VAR}, resolve from .env
 	@# file first, then machine environment. Build entire plist in one shot.
@@ -88,7 +88,7 @@ install-service: _install-proxy-bin ## Build proxy, install it, and run it as a 
 	@echo "logs: $(SERVICE_LOG_OUT)"
 	@echo "      $(SERVICE_LOG_ERR)"
 
-uninstall-service: ## Stop and remove the proxy LaunchAgent
+service-uninstall: ## Stop and remove the proxy LaunchAgent
 	@if [ -f "$(SERVICE_PLIST)" ]; then \
 		launchctl bootout $(SERVICE_TARGET) 2>/dev/null || true; \
 		rm -f $(SERVICE_PLIST); \
@@ -99,7 +99,7 @@ uninstall-service: ## Stop and remove the proxy LaunchAgent
 
 service-restart: ## Restart the proxy service (atomic kickstart — picks up new binary at the same path)
 	@if [ ! -f "$(SERVICE_PLIST)" ]; then \
-		echo "error: service not installed. Run 'make install-service' first."; \
+		echo "error: service not installed. Run 'make service-install' first."; \
 		exit 1; \
 	fi
 	@if launchctl print $(SERVICE_TARGET) >/dev/null 2>&1; then \

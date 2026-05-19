@@ -45,6 +45,7 @@ pub enum ProviderKind {
     DeepSeek,
     #[serde(alias = "openai")]
     OpenAi,
+    Codex,
 }
 
 /// How the proxy authenticates *to* the upstream when forwarding a request.
@@ -280,6 +281,7 @@ fn parse_kind(s: &str) -> Option<ProviderKind> {
         "zai" | "z.ai" | "z-ai" => Some(ProviderKind::Zai),
         "deepseek" | "deep-seek" => Some(ProviderKind::DeepSeek),
         "openai" | "open_ai" => Some(ProviderKind::OpenAi),
+        "codex" => Some(ProviderKind::Codex),
         _ => None,
     }
 }
@@ -364,6 +366,13 @@ mod tests {
         assert_eq!(parse_kind("openai"), Some(ProviderKind::OpenAi));
         assert_eq!(parse_kind("open_ai"), Some(ProviderKind::OpenAi));
         assert_eq!(parse_kind("OpenAI"), Some(ProviderKind::OpenAi));
+    }
+
+    #[test]
+    fn parse_kind_accepts_codex() {
+        assert_eq!(parse_kind("codex"), Some(ProviderKind::Codex));
+        assert_eq!(parse_kind("CODEX"), Some(ProviderKind::Codex));
+        assert_eq!(parse_kind("Codex"), Some(ProviderKind::Codex));
     }
 
     #[test]

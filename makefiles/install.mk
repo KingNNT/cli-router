@@ -9,7 +9,7 @@ ANALYSIS_CRATE  := crates/analysis
 
 ## Production ─────────────────────────────────────────
 
-prod: install install-service ## Ship to production: build all binaries, install globally, register and start service
+prod: install service-install ## Ship to production: build all binaries, install globally, register and start service
 
 ## Install ────────────────────────────────────────────
 
@@ -22,7 +22,7 @@ install-proxy: _install-proxy-bin ## Install the proxy binary into ~/.cargo/bin 
 	fi
 
 # Internal: just builds + installs the binary. Used by both install-proxy
-# (which adds the auto-restart hook) and install-service (which does its
+# (which adds the auto-restart hook) and service-install (which does its
 # own load and shouldn't trigger a redundant restart).
 _install-proxy-bin:
 	$(CARGO_INSTALL) --path $(PROXY_CRATE)
@@ -42,4 +42,4 @@ uninstall-proxy-tui: ## Uninstall the proxy-tui binary
 	$(CARGO) uninstall proxy-tui
 
 uninstall-analysis: ## Uninstall the cli-router-analysis binary
-	$(CARGO) uninstall cli-router-analysis
+	-$(CARGO) uninstall cli-router-analysis
