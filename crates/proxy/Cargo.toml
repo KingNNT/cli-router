@@ -37,6 +37,9 @@ base64 = { workspace = true }
 siphasher = { workspace = true }
 ureq = { workspace = true }
 toml = { workspace = true }
+utoipa = { workspace = true }
+utoipa-swagger-ui = { workspace = true }
+utoipa-redoc = { workspace = true }
 clap = { version = "4.6.1", features = ["derive"] }
 
 [dev-dependencies]

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// `GET /admin/status`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StatusResponse {
     /// Epoch milliseconds when the daemon started.
     pub started_at_ms: i64,
@@ -30,14 +30,14 @@ pub struct StatusResponse {
 }
 
 /// Affinity (sticky-auth) status reported by `GET /admin/status`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 pub struct AffinityStatus {
     pub enabled: bool,
     pub headers: Vec<String>,
 }
 
 /// Affinity config for conversation-affinity hashing (editable via `ConfigPayload`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct AffinityPayload {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -67,7 +67,7 @@ fn default_affinity_headers() -> Vec<String> {
 }
 
 /// A single quota rule (editable via `ConfigPayload`).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, utoipa::ToSchema)]
 pub struct QuotaPayload {
     pub provider: String,
     pub window: String,
@@ -93,7 +93,7 @@ fn default_warn_pct() -> u8 {
 /// Auth secrets are NOT redacted — the admin API is bound to `127.0.0.1` and
 /// presumed trusted. If you expose it beyond loopback, add a bearer token in
 /// front (Phase 2 does not).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ConfigPayload {
     pub port: u16,
     #[serde(default)]
@@ -110,7 +110,7 @@ pub struct ConfigPayload {
     pub pricing_db: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ProviderPayload {
     pub name: String,
     pub kind: String,
@@ -122,7 +122,7 @@ pub struct ProviderPayload {
     pub openai_base_url: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AuthPayload {
     #[default]
@@ -149,7 +149,7 @@ pub enum AuthPayload {
     CodexAuto,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutingStrategyPayload {
     #[default]
@@ -157,7 +157,7 @@ pub enum RoutingStrategyPayload {
     RoundRobin,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RoutingRulePayload {
     pub r#match: MatchPayload,
     pub provider: String,
@@ -169,20 +169,20 @@ pub struct RoutingRulePayload {
     pub priority: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MatchPayload {
     #[serde(default)]
     pub model: Option<String>,
 }
 
 /// `GET /admin/requests/recent?limit=N&offset=M`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RecentRequestsResponse {
     pub items: Vec<RecentRequestItem>,
     pub total_count: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RecentRequestItem {
     pub id: String,
     pub started_at_ms: i64,
@@ -203,7 +203,7 @@ pub struct RecentRequestItem {
 }
 
 /// `POST /admin/providers/:name/test` request body.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct TestProviderRequest {
     /// Model id to ping with. The TUI reads this from the provider config
     /// (e.g. `"claude-3-5-haiku-latest"` for an Anthropic provider, `"glm-4.5-air"`
@@ -212,7 +212,7 @@ pub struct TestProviderRequest {
 }
 
 /// `POST /admin/providers/:name/test`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct TestProviderResponse {
     pub success: bool,
     pub status_code: Option<u16>,
@@ -230,13 +230,13 @@ pub struct ApiError {
 
 /// `POST /admin/oauth/anthropic/start` request body — names the provider
 /// whose auth will be replaced once the flow completes.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StartOAuthRequest {
     pub provider_name: String,
 }
 
 /// `POST /admin/oauth/anthropic/start` response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct StartOAuthResponse {
     /// Open this in a browser. Anthropic redirects to a manual-callback
     /// page that displays `code#state` for the user to copy.
@@ -247,7 +247,7 @@ pub struct StartOAuthResponse {
 }
 
 /// `POST /admin/oauth/anthropic/complete` request body.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CompleteOAuthRequest {
     pub state_id: String,
     /// The `code` value from the redirect URL (everything before `#`).
@@ -256,7 +256,7 @@ pub struct CompleteOAuthRequest {
 }
 
 /// `POST /admin/oauth/anthropic/complete` response.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CompleteOAuthResponse {
     pub success: bool,
     pub error: Option<String>,
@@ -269,7 +269,7 @@ pub struct CompleteOAuthResponse {
 ///
 /// Server-side aggregated view of the proxy's request log. `from`/`to` are
 /// inclusive epoch milliseconds. Both arrays are empty when no rows match.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UsageSummaryResponse {
     pub from_ms: i64,
     pub to_ms: i64,
@@ -279,7 +279,7 @@ pub struct UsageSummaryResponse {
     pub models: Vec<ModelUsageRow>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DailyUsageRow {
     /// Local-tz date as `YYYY-MM-DD`.
     pub date: String,
@@ -291,7 +291,7 @@ pub struct DailyUsageRow {
     pub cost_usd: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ModelUsageRow {
     pub model: String,
     /// Value from `requests.provider` as logged — may be `"anthropic"`,
@@ -308,12 +308,12 @@ pub struct ModelUsageRow {
 // ---- Quota status ----
 
 /// `GET /admin/quota/status`
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct QuotaStatusListDto {
     pub quotas: Vec<QuotaStatusDto>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct QuotaStatusDto {
     pub provider: String,
     pub window: String,
@@ -323,7 +323,7 @@ pub struct QuotaStatusDto {
     pub output_tokens: QuotaMetricDto,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct QuotaMetricDto {
     pub used: u64,
     pub max: Option<u64>,
@@ -331,7 +331,7 @@ pub struct QuotaMetricDto {
     pub state: QuotaMetricState,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum QuotaMetricState {
     Ok,
@@ -347,12 +347,12 @@ pub enum QuotaMetricState {
 /// `GET /admin/account/usage`
 ///
 /// Merged account-level usage from all configured providers.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AccountUsageResponse {
     pub providers: Vec<ProviderAccountUsageDto>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ProviderAccountUsageDto {
     pub provider: String,
     pub status: ProviderUsageStatus,
@@ -365,7 +365,7 @@ pub struct ProviderAccountUsageDto {
     pub monthly_cost_usd: Option<f64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderUsageStatus {
     Available,
@@ -373,7 +373,7 @@ pub enum ProviderUsageStatus {
     Error,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UsageWindowDto {
     pub label: String,
     pub used_pct: f64,
@@ -383,14 +383,14 @@ pub struct UsageWindowDto {
     pub sub_items: Vec<UsageSubItemDto>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UsageSubItemDto {
     pub label: String,
     pub used: u64,
 }
 
 /// Per-model usage breakdown item.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ModelBreakdownItemDto {
     pub model: String,
     pub tokens: u64,
@@ -399,7 +399,7 @@ pub struct ModelBreakdownItemDto {
     pub cost_usd: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ModelUsageDto {
     pub total_tokens: u64,
     pub total_calls: u64,
