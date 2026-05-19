@@ -370,6 +370,42 @@ curl -X POST http://127.0.0.1:8787/admin/providers/anthropic/test \
 
 ---
 
+## API Documentation (Swagger UI)
+
+The proxy serves interactive API documentation on a **separate port** (default: 8788).
+
+| URL | Description |
+|-----|-------------|
+| `http://127.0.0.1:8788/swagger-ui/` | Swagger UI — try all endpoints from the browser |
+| `http://127.0.0.1:8788/redoc` | ReDoc — clean, readable API reference |
+| `http://127.0.0.1:8788/api-docs/openapi.json` | Raw OpenAPI 3.0 JSON spec |
+
+All 15 endpoints are documented with request/response schemas:
+- **Proxy**: `/v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions`
+- **Admin**: status, config, recent requests, usage, quotas, provider testing, OAuth
+
+### Configuration
+
+```toml
+# docs server port (default: 8788)
+docs_port = 8788
+
+# disable the docs server entirely (default: true)
+docs_enabled = false
+```
+
+### Quick test:
+
+```bash
+# Open in browser
+open http://127.0.0.1:8788/swagger-ui/
+
+# Or fetch the spec directly
+curl http://127.0.0.1:8788/api-docs/openapi.json | jq .info
+```
+
+---
+
 ## Full Config Example
 
 ```toml
