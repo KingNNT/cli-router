@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Rust workspace named **`cli-router`** with **3 binary apps** and **2 library crates**:
 
-- **`analysis`** — interactive Ratatui TUI that reads the OpenCode SQLite database at `~/.local/share/opencode/opencode.db` and Claude Code's JSONL session files, then renders token/cost usage as a ccusage-style dashboard. Menu-driven, not argv-driven.
-- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai, DeepSeek). Multi-provider routing with glob-based model matching, `provider/model` namespace overrides, round-robin load balancing with 429 cooldown, admin API for live config editing, Anthropic OAuth PKCE flow with automatic token refresh, and hot reload. Accepts both Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`) formats, captures token usage from streaming and non-streaming responses, and writes one row per request to a local SQLite file.
-- **`proxy-tui`** — Ratatui admin client for the proxy daemon. Connects to the proxy's admin API to view status, edit config, manage providers, test connectivity, and initiate OAuth flows.
+- **`analysis`** — interactive Ratatui TUI that reads the OpenCode SQLite database at `~/.local/share/opencode/opencode.db` and Claude Code's JSONL session files, then renders token/cost usage as a ccusage-style dashboard. Menu-driven, not argv-driven. Has both `lib` and `bin` targets.
+- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai, DeepSeek, OpenAI, Codex). Multi-provider routing with glob-based model matching, `provider/model` namespace overrides, round-robin load balancing with 429 cooldown, affinity-based session stickiness, admin API for live config editing, OAuth flows for Anthropic (PKCE) and OpenAI with automatic token refresh, cross-format translation (Anthropic↔OpenAI), token counting endpoint with local estimation fallback, Swagger/OpenAPI docs via utoipa, and hot reload. Accepts both Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`) formats, captures token usage from streaming and non-streaming responses, and writes one row per request to a local SQLite file. **Config is stored in SQLite** (single source of truth via `DbConfigRepository`), not TOML.
+- **`proxy-tui`** — Ratatui admin client for the proxy daemon. Connects to the proxy's admin API to view status, edit config, manage providers, test connectivity, and initiate OAuth flows (Anthropic and OpenAI).
 
 Shared libraries:
 - **`shared`** — domain types, ports, and pricing adapters used by both apps.
@@ -63,6 +63,7 @@ crates/
 │       │                   presenters, view models
 │       ├── tui/            framework ring — ratatui renderer, AppState, event loop,
 │       │                   terminal setup, controllers
+│       ├── lib.rs          library root (shared types for tests)
 │       └── main.rs         composition root
 │
 ├── proxy-admin-api/     # library — shared DTOs for admin API
@@ -78,17 +79,23 @@ crates/
 │
 └── proxy/               # APP 2 — axum HTTP proxy binary `proxy`
     └── src/
-        ├── domain/         RequestStart, RequestUsage, UsageRecord, RequestStatus,
-    │                   ProviderAccountUsage, UsageSummary, QuotaSnapshot,
-    │                   QuotaCheck, AccountUsageStatus
-        ├── application/    Provider + RequestLogPort + UsageParser ports,
-        │                   HandleMessages use case (with ApiFormat for dual-protocol),
+        ├── domain/         RequestStart, RequestUsage, UsageRecord, UsageState,
+    │                   RequestStatus, ProviderAccountUsage, UsageSummary,
+    │                   DailyTotal, ModelTotal, QuotaSnapshot,
+    │                   QuotaCheck, AccountUsageStatus, ModelBreakdownItem
+        ├── application/    Provider + RequestLogPort + RequestLogReadPort +
+    │                   UsageParser + ConfigRepository + QuotaPort ports,
+    │                   HandleMessages use case (with ApiFormat for dual-protocol,
+    │                   UpstreamResponse, BoxedByteStream),
     │                   admin use cases (GetStatus, GetConfig, UpdateConfig,
     │                   TestProvider, GetRecentRequests, GetUsageSummary,
     │                   GetAccountUsage, GetQuotaStatus,
-    │                   StartAnthropicOAuth, CompleteAnthropicOAuth)
+    │                   StartAnthropicOAuth, CompleteAnthropicOAuth,
+    │                   StartOpenAiOAuth, CompleteOpenAiOAuth)
     ├── adapters/
     │   ├── providers/  AnthropicProvider, ZaiProvider, DeepSeekProvider,
+    │   │               OpenAiProvider (OpenAI-compatible with OAuth),
+    │   │               CodexProvider (Codex CLI with CodexAuto auth),
     │   │               RoutingProvider (glob match + namespace + load balancing),
     │   │               LiveProvider (hot reload), builder, affinity (conversation
     │   │               hashing for session stickiness),
@@ -96,15 +103,25 @@ crates/
     │   │               token_refresh (background OAuth refresh)
     │   │   └── account_usage/  AnthropicAccountUsage, ZaiAccountUsage,
     │   │                        DeepSeekAccountUsage, NoopAccountUsage
-    │   ├── oauth/      Anthropic PKCE flow
-    │   ├── storage/    SqliteRequestLogRepository, schema migrations
-    │   └── usage/      AnthropicSseParser
-├── config.rs        TOML config with multi-provider, routing rules,
-│                   AuthConfig variants (Passthrough, ApiKey, Bearer, AnthropicOAuth),
-│                   ${ENV} interpolation with ~/.config/cli-router/.env fallback
+    │   ├── oauth/      anthropic (PKCE flow), openai (OAuth flow)
+    │   ├── storage/    SqliteRequestLogRepository, DbConfigRepository
+    │   │               (SQLite-backed config, single source of truth),
+    │   │               schema migrations
+    │   ├── usage/      AnthropicSseParser
+    │   ├── translation/  anthropic_to_openai (request/response/stream),
+    │   │                 openai_to_anthropic (request/response/stream),
+    │   │                 stream_wrap
+    │   └── quota/      quota enforcement
+    ├── config.rs        TOML config types (ProviderKind: anthropic, zai, deepseek,
+    │                   openai, codex; AuthConfig: Passthrough, ApiKey, Bearer,
+    │                   AnthropicOAuth, OpenAiOAuth, CodexAuto; routing rules;
+    │                   docs_port, docs_enabled; ${ENV} interpolation with
+    │                   ~/.config/cli-router/.env fallback). SQLite is the
+    │                   single source of truth — TOML is for initial seed only.
         ├── frameworks/     framework ring — axum router (`/v1/messages`,
-        │                   `/v1/chat/completions`, `/admin/*`), admin handler glue,
-        │                   TeedStream, ProxyError IntoResponse
+        │                   `/v1/messages/count_tokens`, `/v1/chat/completions`,
+        │                   `/admin/*`), admin handler glue, openapi (utoipa spec,
+        │                   Swagger UI, ReDoc), TeedStream, ProxyError IntoResponse
         └── main.rs         composition root
 ```
 
@@ -131,24 +148,40 @@ frameworks/tui  →  adapters  →  application  →  domain
 
 **Proxy request path:**
 ```
-Client → axum handler (`/v1/messages` or `/v1/chat/completions`)
+Client → axum handler (`/v1/messages`, `/v1/messages/count_tokens`,
+  or `/v1/chat/completions`)
   → HandleMessages use case (ApiFormat::Anthropic | ApiFormat::OpenAI)
   → LiveProvider → RoutingProvider (namespace override → glob match
     → priority + round-robin load balancing with 429 cooldown)
-  → AnthropicProvider/ZaiProvider
+  → AnthropicProvider/ZaiProvider/DeepSeekProvider/OpenAiProvider/CodexProvider
   → messages_protocol::forward / forward_openai (auth injection,
-    streaming/buffered)
+    streaming/buffered; cross-format translation if needed)
   → Upstream → response → usage logging
 ```
 
-**OAuth token lifecycle:**
+**OAuth token lifecycle (Anthropic):**
 ```
 TUI → POST /admin/oauth/anthropic/start → PKCE codes generated
 TUI → browser opens authorize URL → user pastes code back
 TUI → POST /admin/oauth/anthropic/complete → exchange code for tokens
-  → AuthConfig::AnthropicOAuth stored in config.toml
-  → Background task (token_refresh.rs) refreshes every 60s, persists to disk
+  → AuthConfig::AnthropicOAuth stored in DB
+  → Background task (token_refresh.rs) refreshes every 60s, persists to DB
   → 401-retry safety net in messages_protocol::forward
+```
+
+**OAuth token lifecycle (OpenAI):**
+```
+TUI → POST /admin/oauth/openai/start → OAuth URL + state generated
+TUI → browser opens authorize URL → user pastes code back
+TUI → POST /admin/oauth/openai/complete → exchange code for tokens
+  → AuthConfig::OpenAiOAuth stored in DB
+  → Background task refreshes, persists to DB
+```
+
+**Codex auto-auth:**
+```
+AuthConfig::CodexAuto → proxy reads ~/.codex/auth.json at startup
+  and during background refresh. No tokens in config/DB.
 ```
 
 ## Rules
@@ -166,5 +199,18 @@ Detailed conventions live in `.claude/rules/`:
 - **Provider namespace routing** — spec `docs/superpowers/specs/2026-05-03-provider-namespace-design.md`, plan `docs/superpowers/plans/2026-05-03-provider-namespace.md`.
 - **Load balancing** — spec `docs/superpowers/specs/2026-05-03-load-balancing-design.md`.
 - **OpenAI chat completions endpoint** — spec `docs/superpowers/specs/2026-05-03-openai-chat-completions-design.md`, plan `docs/superpowers/plans/2026-05-03-openai-chat-completions.md`.
+- **Cross-format translation** — spec `docs/superpowers/specs/2026-05-03-cross-format-translation-design.md`.
+- **Sticky auth / affinity** — spec `docs/superpowers/specs/2026-05-03-sticky-auth-design.md`, plan `docs/superpowers/plans/2026-05-03-sticky-auth.md`.
+- **Quota tracking** — spec `docs/superpowers/specs/2026-05-03-quota-tracking-design.md`, plan `docs/superpowers/plans/2026-05-03-quota-tracking.md`.
+- **TUI usage dashboard** — spec `docs/superpowers/specs/2026-05-03-proxy-tui-usage-dashboard-design.md`, plan `docs/superpowers/plans/2026-05-03-proxy-tui-usage-dashboard.md`.
+- **TUI provider CRUD** — spec `docs/superpowers/specs/2026-05-04-tui-provider-crud-design.md`, plan `docs/superpowers/plans/2026-05-04-tui-provider-crud.md`.
+- **Account usage** — spec `docs/superpowers/specs/2026-05-05-account-usage-design.md`, plan `docs/superpowers/plans/2026-05-05-account-usage.md`.
+- **TUI config wizard** — spec `docs/superpowers/specs/2026-05-09-tui-config-wizard-design.md`, plan `docs/superpowers/plans/2026-05-09-tui-config-wizard.md`.
+- **DeepSeek provider account** — spec `docs/superpowers/specs/2026-05-11-deepseek-provider-account-design.md`, plan `docs/superpowers/plans/2026-05-11-deepseek-provider-account.md`.
+- **OpenAI provider** — spec `docs/superpowers/specs/2026-05-18-openai-provider-design.md`, plan `docs/superpowers/plans/2026-05-18-openai-provider.md`.
+- **Codex provider** — spec `docs/superpowers/specs/2026-05-18-codex-provider-design.md`, plan `docs/superpowers/plans/2026-05-18-codex-provider.md`.
+- **Codex auto-auth** — spec `docs/superpowers/specs/2026-05-18-codex-auto-auth-design.md`, plan `docs/superpowers/plans/2026-05-18-codex-auto-auth.md`.
+- **DB config** — spec `docs/superpowers/specs/2026-05-18-db-config-design.md`, plan `docs/superpowers/plans/2026-05-18-db-config.md`.
+- **Swagger OpenAPI** — spec `docs/superpowers/specs/2026-05-19-swagger-openapi-design.md`, plan `docs/superpowers/plans/2026-05-19-swagger-openapi.md`.
 
 Consult these for motivation before changing data shapes, ring boundaries, or proxy contracts.

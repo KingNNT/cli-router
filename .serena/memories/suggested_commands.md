@@ -22,7 +22,7 @@
 - `cargo coverage-html` — open HTML report
 
 ## Release
-- `cargo build --release --workspace` — binaries land at `target/release/{proxy,analysis,proxy-tui}`
+- `cargo build --release --workspace` — binaries land at `target/release/{cli-router-proxy,cli-router-analysis,cli-router-proxy-tui}`
 
 ## Platform
 Darwin/macOS, zsh. Standard git available. Pricing sync hits the network via `ureq` (rustls, blocking). Proxy uses `reqwest` over rustls.
