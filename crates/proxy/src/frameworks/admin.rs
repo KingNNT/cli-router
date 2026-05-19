@@ -78,16 +78,45 @@ pub fn build_admin_router(state: AdminState) -> Router {
         .with_state(state)
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/status",
+    responses(
+        (status = 200, description = "Proxy uptime and request counts", body = StatusResponse),
+        (status = 500, description = "Internal error"),
+    ),
+    tag = "Admin"
+)]
 async fn status_handler(State(s): State<AdminState>) -> Result<Json<StatusResponse>, ProxyError> {
     Ok(Json(s.get_status.execute()?))
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/config",
+    responses(
+        (status = 200, description = "Current proxy configuration", body = ConfigPayload),
+        (status = 500, description = "Internal error"),
+    ),
+    tag = "Admin"
+)]
 async fn get_config_handler(
     State(s): State<AdminState>,
 ) -> Result<Json<ConfigPayload>, ProxyError> {
     Ok(Json(s.get_config.execute()?))
 }
 
+#[utoipa::path(
+    put,
+    path = "/admin/config",
+    request_body = ConfigPayload,
+    responses(
+        (status = 200, description = "Config updated, returns new config", body = ConfigPayload),
+        (status = 400, description = "Invalid config payload"),
+        (status = 500, description = "Internal error"),
+    ),
+    tag = "Admin"
+)]
 async fn update_config_handler(
     State(s): State<AdminState>,
     Json(payload): Json<ConfigPayload>,
@@ -102,6 +131,19 @@ struct RecentParams {
     offset: Option<u32>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/requests/recent",
+    params(
+        ("limit" = Option<u32>, Query, description = "Max rows to return"),
+        ("offset" = Option<u32>, Query, description = "Row offset for pagination"),
+    ),
+    responses(
+        (status = 200, description = "Recent request log entries", body = RecentRequestsResponse),
+        (status = 500, description = "Internal error"),
+    ),
+    tag = "Admin"
+)]
 async fn recent_handler(
     State(s): State<AdminState>,
     Query(params): Query<RecentParams>,
@@ -115,6 +157,19 @@ pub struct UsageSummaryQuery {
     pub to: i64,
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/usage/summary",
+    params(
+        ("from" = i64, Query, description = "Start timestamp (epoch ms)"),
+        ("to" = i64, Query, description = "End timestamp (epoch ms)"),
+    ),
+    responses(
+        (status = 200, description = "Aggregate usage summary", body = UsageSummaryResponse),
+        (status = 500, description = "Internal error"),
+    ),
+    tag = "Usage"
+)]
 async fn usage_summary_handler(
     State(uc): State<Arc<GetUsageSummary>>,
     Query(q): Query<UsageSummaryQuery>,
@@ -122,6 +177,18 @@ async fn usage_summary_handler(
     Ok(Json(uc.execute(q.from, q.to)?))
 }
 
+#[utoipa::path(
+    post,
+    path = "/admin/providers/{name}/test",
+    params(
+        ("name" = String, Path, description = "Provider name"),
+    ),
+    request_body = TestProviderRequest,
+    responses(
+        (status = 200, description = "Provider test result", body = TestProviderResponse),
+    ),
+    tag = "Providers"
+)]
 async fn test_provider_handler(
     State(s): State<AdminState>,
     Path(name): Path<String>,
@@ -130,6 +197,15 @@ async fn test_provider_handler(
     Json(s.test_provider.execute(&name, &req.model).await)
 }
 
+#[utoipa::path(
+    post,
+    path = "/admin/oauth/anthropic/start",
+    request_body = StartOAuthRequest,
+    responses(
+        (status = 200, description = "OAuth authorization URL", body = StartOAuthResponse),
+    ),
+    tag = "OAuth"
+)]
 async fn oauth_start_handler(
     State(s): State<AdminState>,
     Json(_req): Json<StartOAuthRequest>,
@@ -137,6 +213,15 @@ async fn oauth_start_handler(
     Json(s.start_oauth.execute())
 }
 
+#[utoipa::path(
+    post,
+    path = "/admin/oauth/anthropic/complete",
+    request_body = CompleteOAuthRequest,
+    responses(
+        (status = 200, description = "OAuth completion result", body = CompleteOAuthResponse),
+    ),
+    tag = "OAuth"
+)]
 async fn oauth_complete_handler(
     State(s): State<AdminState>,
     Json(req): Json<CompleteOAuthRequest>,
@@ -144,6 +229,15 @@ async fn oauth_complete_handler(
     Json(s.complete_oauth.execute(req).await)
 }
 
+#[utoipa::path(
+    post,
+    path = "/admin/oauth/openai/start",
+    request_body = StartOAuthRequest,
+    responses(
+        (status = 200, description = "OAuth authorization URL", body = StartOAuthResponse),
+    ),
+    tag = "OAuth"
+)]
 async fn openai_oauth_start_handler(
     State(s): State<AdminState>,
     Json(_req): Json<StartOAuthRequest>,
@@ -151,6 +245,15 @@ async fn openai_oauth_start_handler(
     Json(s.start_openai_oauth.execute())
 }
 
+#[utoipa::path(
+    post,
+    path = "/admin/oauth/openai/complete",
+    request_body = CompleteOAuthRequest,
+    responses(
+        (status = 200, description = "OAuth completion result", body = CompleteOAuthResponse),
+    ),
+    tag = "OAuth"
+)]
 async fn openai_oauth_complete_handler(
     State(s): State<AdminState>,
     Json(req): Json<CompleteOAuthRequest>,
@@ -158,10 +261,26 @@ async fn openai_oauth_complete_handler(
     Json(s.complete_openai_oauth.execute(req).await)
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/quota/status",
+    responses(
+        (status = 200, description = "Per-provider quota health", body = QuotaStatusListDto),
+    ),
+    tag = "Usage"
+)]
 async fn quota_status_handler(State(s): State<AdminState>) -> Json<QuotaStatusListDto> {
     Json(s.quota_status.execute())
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/account/usage",
+    responses(
+        (status = 200, description = "Provider account balances and quota", body = AccountUsageResponse),
+    ),
+    tag = "Usage"
+)]
 async fn account_usage_handler(
     State(uc): State<Arc<GetAccountUsage>>,
 ) -> Json<AccountUsageResponse> {

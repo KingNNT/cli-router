@@ -10,6 +10,7 @@ use crate::application::use_cases::{
     CountTokensInput, HandleMessages, HandleMessagesInput, HandleMessagesOutput,
 };
 use crate::frameworks::error::ProxyError;
+use crate::frameworks::openapi::{AnthropicMessagesRequest, CountTokensRequest, OpenAIChatRequest};
 use crate::frameworks::stream::TeedStream;
 use axum::body::Body;
 use axum::extract::{Request, State};
@@ -32,6 +33,18 @@ const HOP_BY_HOP: &[&str] = &[
     "content-length",
 ];
 
+#[utoipa::path(
+    post,
+    path = "/v1/messages",
+    request_body = AnthropicMessagesRequest,
+    responses(
+        (status = 200, description = "Message response (streaming or buffered JSON)"),
+        (status = 400, description = "Bad request — invalid body or missing fields"),
+        (status = 429, description = "Rate limited — all providers in pool are throttled"),
+        (status = 502, description = "Upstream provider error"),
+    ),
+    tag = "Proxy"
+)]
 pub async fn messages(
     State(use_case): State<Arc<HandleMessages>>,
     req: Request,
@@ -68,6 +81,17 @@ pub async fn messages(
     })
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/messages/count_tokens",
+    request_body = CountTokensRequest,
+    responses(
+        (status = 200, description = "Token count estimate"),
+        (status = 400, description = "Bad request"),
+        (status = 502, description = "Upstream provider error"),
+    ),
+    tag = "Proxy"
+)]
 /// Handles `POST /v1/messages/count_tokens` — forwards the token counting
 /// request to the upstream provider. Claude Code requires this endpoint;
 /// without it, clients get a 404 "Not Found" error.
@@ -94,6 +118,18 @@ pub async fn count_tokens(
     ))
 }
 
+#[utoipa::path(
+    post,
+    path = "/v1/chat/completions",
+    request_body = OpenAIChatRequest,
+    responses(
+        (status = 200, description = "Chat completion response (streaming or buffered)"),
+        (status = 400, description = "Bad request — invalid body or missing fields"),
+        (status = 429, description = "Rate limited"),
+        (status = 502, description = "Upstream provider error"),
+    ),
+    tag = "Proxy"
+)]
 pub async fn chat_completions(
     State(use_case): State<Arc<HandleMessages>>,
     req: Request,

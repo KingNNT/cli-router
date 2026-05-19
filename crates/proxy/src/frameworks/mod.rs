@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod error;
 pub mod handler;
+pub mod openapi;
 pub mod server;
 pub mod stream;
 

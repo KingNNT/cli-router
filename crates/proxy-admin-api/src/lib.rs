@@ -221,7 +221,7 @@ pub struct TestProviderResponse {
 }
 
 /// Minimal error envelope returned on failure.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ApiError {
     pub error: String,
 }
