@@ -1,4 +1,7 @@
-//! Integration test: verify the docs server serves the OpenAPI JSON spec.
+//! Integration test: verify the docs routes serve OpenAPI JSON and Swagger UI.
+//!
+//! These tests hit `build_docs_app()` directly — the same Router that gets
+//! merged into the main proxy router by `build_router()`.
 
 use proxy::frameworks::openapi::build_docs_app;
 

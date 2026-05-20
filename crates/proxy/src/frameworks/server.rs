@@ -1,11 +1,12 @@
 //! Build the axum Router with all proxy routes.
 //!
-//! Two route groups live behind the same listener:
+//! Three route groups live behind the same listener:
 //! - `POST /v1/messages` — data path (proxied to upstream LLM provider)
 //! - `POST /v1/messages/count_tokens` — token counting (required by clients
 //!   like Claude Code)
 //! - `POST /v1/chat/completions` — OpenAI-compatible data path
 //! - `/admin/*` — control plane (status, config CRUD, recent requests, ping)
+//! - `/swagger-ui`, `/redoc`, `/api-docs` — interactive API docs
 //!
 //! Each group has its own state — `Arc<HandleMessages>` for the data path,
 //! `AdminState` for admin — merged into one `Router<()>`.
@@ -13,6 +14,7 @@
 use crate::application::use_cases::HandleMessages;
 use crate::frameworks::admin::{AdminState, build_admin_router};
 use crate::frameworks::handler::{chat_completions, count_tokens, messages};
+use crate::frameworks::openapi::build_docs_app;
 use axum::{Router, routing::post};
 use std::sync::Arc;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -29,6 +31,7 @@ pub fn build_router(use_case: Arc<HandleMessages>, admin: AdminState) -> Router 
         .route("/v1/chat/completions", post(chat_completions))
         .with_state(use_case);
     data.merge(build_admin_router(admin))
+        .merge(build_docs_app())
         .layer(PropagateRequestIdLayer::x_request_id())
         .layer(id_layer)
         .layer(TraceLayer::new_for_http())
