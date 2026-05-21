@@ -1,6 +1,7 @@
 //! Per-provider adapters for upstream account-level usage queries.
 
 pub mod anthropic;
+pub mod codex;
 pub mod deepseek;
 pub mod noop;
 pub mod zai;
