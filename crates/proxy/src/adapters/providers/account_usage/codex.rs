@@ -53,9 +53,10 @@ fn resolve_token(auth: &AuthConfig) -> Result<Option<String>, ProxyError> {
                     "CodexAuto requires ~/.codex/auth.json. Run `codex login` first. ({e})"
                 ),
             }),
-        AuthConfig::OpenAiOAuth { access_token, .. } | AuthConfig::Bearer { value: access_token } => {
-            Ok(Some(access_token.clone()))
-        }
+        AuthConfig::OpenAiOAuth { access_token, .. }
+        | AuthConfig::Bearer {
+            value: access_token,
+        } => Ok(Some(access_token.clone())),
         AuthConfig::ApiKey { .. } | AuthConfig::Passthrough => Ok(None),
         AuthConfig::AnthropicOAuth { .. } => Ok(None),
     }
@@ -73,14 +74,97 @@ impl AccountUsagePort for CodexAccountUsage {
             return None;
         }
 
-        Some(Ok(ProviderAccountUsage {
-            provider: self.provider_name.clone(),
-            status: AccountUsageStatus::Available,
-            plan: None,
-            windows: vec![],
-            model_usage: None,
-        }))
+        let url = probe_url(&self.base_url);
+        let body = codex_probe_body();
+        let response = self
+            .agent
+            .post(&url)
+            .set("Authorization", &format!("Bearer {token}"))
+            .set("Accept", "text/event-stream")
+            .set("Content-Type", "application/json")
+            .send_json(body);
+
+        match response {
+            Ok(resp) => {
+                let headers = ureq_headers_to_http(resp.headers_names(), &resp);
+                match provider_usage_from_headers(&self.provider_name, &headers) {
+                    Some(usage) => Some(Ok(usage)),
+                    None => Some(Err(ProxyError::UpstreamUsage {
+                        provider: self.provider_name.clone(),
+                        message: "Codex response did not include rate-limit headers".to_string(),
+                    })),
+                }
+            }
+            Err(ureq::Error::Status(_, resp)) => {
+                let headers = ureq_headers_to_http(resp.headers_names(), &resp);
+                if let Some(usage) = provider_usage_from_headers(&self.provider_name, &headers) {
+                    return Some(Ok(usage));
+                }
+
+                Some(Err(ProxyError::UpstreamUsage {
+                    provider: self.provider_name.clone(),
+                    message: "Codex probe failed and response did not include rate-limit headers"
+                        .to_string(),
+                }))
+            }
+            Err(e) => Some(Err(ProxyError::UpstreamUsage {
+                provider: self.provider_name.clone(),
+                message: format!("Codex probe: {e}"),
+            })),
+        }
     }
+}
+
+fn provider_usage_from_headers(
+    provider_name: &str,
+    headers: &http::HeaderMap,
+) -> Option<ProviderAccountUsage> {
+    let windows = parse_windows_from_headers(headers);
+    if windows.is_empty() {
+        return None;
+    }
+
+    Some(ProviderAccountUsage {
+        provider: provider_name.to_string(),
+        status: AccountUsageStatus::Available,
+        plan: None,
+        windows,
+        model_usage: None,
+    })
+}
+
+fn probe_url(base_url: &str) -> String {
+    format!("{}{}", base_url.trim_end_matches('/'), RESPONSES_PATH)
+}
+
+fn codex_probe_body() -> serde_json::Value {
+    serde_json::json!({
+        "model": "gpt-5.4-mini",
+        "instructions": "",
+        "input": [],
+        "tools": [],
+        "tool_choice": "auto",
+        "parallel_tool_calls": false,
+        "store": false,
+        "stream": true
+    })
+}
+
+fn ureq_headers_to_http(names: Vec<String>, response: &ureq::Response) -> http::HeaderMap {
+    let mut headers = http::HeaderMap::new();
+    for name in names {
+        let Some(value) = response.header(&name) else {
+            continue;
+        };
+        let Ok(header_name) = http::HeaderName::from_bytes(name.as_bytes()) else {
+            continue;
+        };
+        let Ok(header_value) = http::HeaderValue::from_str(value) else {
+            continue;
+        };
+        headers.insert(header_name, header_value);
+    }
+    headers
 }
 
 fn parse_windows_from_headers(headers: &http::HeaderMap) -> Vec<UsageWindow> {
@@ -331,5 +415,71 @@ mod tests {
         );
 
         assert_eq!(adapter.base_url, DEFAULT_BASE_URL);
+    }
+
+    #[test]
+    fn response_headers_map_to_available_provider_usage() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            "x-codex-primary-used-percent",
+            HeaderValue::from_static("10"),
+        );
+        headers.insert(
+            "x-codex-primary-window-minutes",
+            HeaderValue::from_static("300"),
+        );
+        headers.insert(
+            "x-codex-secondary-used-percent",
+            HeaderValue::from_static("70"),
+        );
+        headers.insert(
+            "x-codex-secondary-window-minutes",
+            HeaderValue::from_static("10080"),
+        );
+
+        let usage = provider_usage_from_headers("codex-main", &headers)
+            .expect("headers should produce usage");
+
+        assert_eq!(usage.provider, "codex-main");
+        assert_eq!(usage.status, AccountUsageStatus::Available);
+        assert_eq!(usage.windows.len(), 2);
+        assert_eq!(usage.windows[0].label, "5h limit");
+        assert_eq!(usage.windows[0].used_pct, 10.0);
+        assert_eq!(usage.windows[1].label, "Weekly limit");
+        assert_eq!(usage.windows[1].used_pct, 70.0);
+        assert!(usage.model_usage.is_none());
+    }
+
+    #[test]
+    fn response_headers_without_limits_return_none() {
+        let headers = http::HeaderMap::new();
+
+        let usage = provider_usage_from_headers("codex-main", &headers);
+
+        assert!(usage.is_none());
+    }
+
+    #[test]
+    fn probe_url_joins_base_url_and_responses_path() {
+        assert_eq!(
+            probe_url("https://chatgpt.com/backend-api/codex"),
+            "https://chatgpt.com/backend-api/codex/responses"
+        );
+        assert_eq!(
+            probe_url("https://chatgpt.com/backend-api/codex/"),
+            "https://chatgpt.com/backend-api/codex/responses"
+        );
+    }
+
+    #[test]
+    fn probe_body_is_minimal_streaming_responses_request() {
+        let body = codex_probe_body();
+
+        assert_eq!(body["model"], "gpt-5.4-mini");
+        assert_eq!(body["instructions"], "");
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["store"], false);
+        assert!(body["input"].as_array().unwrap().is_empty());
+        assert!(body["tools"].as_array().unwrap().is_empty());
     }
 }
