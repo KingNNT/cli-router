@@ -2,7 +2,9 @@
 //! the daemon's composition root (`main.rs`) and the hot-reload path
 //! (`LiveProvider::reload`) call the same code.
 
-use super::account_usage::{AnthropicAccountUsage, DeepSeekAccountUsage, ZaiAccountUsage};
+use super::account_usage::{
+    AnthropicAccountUsage, CodexAccountUsage, DeepSeekAccountUsage, ZaiAccountUsage,
+};
 use super::{
     AnthropicProvider, AuthHeader, CodexProvider, DeepSeekProvider, OpenAiProvider,
     RoutingProvider, ZaiProvider,
@@ -190,7 +192,11 @@ pub fn build_account_usage(
                     Arc::new(DeepSeekAccountUsage::new(p.name.clone(), token))
                 }
                 ProviderKind::OpenAi => Arc::new(super::account_usage::noop::NoopAccountUsage),
-                ProviderKind::Codex => Arc::new(super::account_usage::noop::NoopAccountUsage),
+                ProviderKind::Codex => Arc::new(CodexAccountUsage::new(
+                    p.name.clone(),
+                    p.base_url.clone(),
+                    p.auth.clone(),
+                )),
             };
             (p.name.clone(), adapter)
         })
@@ -264,5 +270,35 @@ mod tests {
     fn derive_monitor_base_url_defaults_when_unset() {
         let url = derive_monitor_base_url(&cfg(None, None));
         assert_eq!(url, "https://api.z.ai");
+    }
+
+    #[test]
+    fn build_account_usage_maps_codex_to_supported_adapter() {
+        let config = Config {
+            providers: vec![ProviderConfig {
+                name: "codex-main".to_string(),
+                kind: ProviderKind::Codex,
+                base_url: Some("https://example.test/backend-api/codex".to_string()),
+                openai_base_url: None,
+                auth: AuthConfig::Bearer {
+                    value: "token-123".to_string(),
+                },
+            }],
+            ..Config {
+                port: 0,
+                proxy_db: std::path::PathBuf::new(),
+                pricing_db: std::path::PathBuf::new(),
+                providers: vec![],
+                routing: vec![],
+                affinity: Default::default(),
+                quota: vec![],
+            }
+        };
+        let adapters = build_account_usage(Arc::new(std::sync::RwLock::new(config)));
+        let adapter = adapters.get("codex-main").expect("codex adapter exists");
+
+        let result = adapter.fetch_usage();
+
+        assert!(result.is_some(), "Codex should not use NoopAccountUsage");
     }
 }
