@@ -141,7 +141,11 @@ fn codex_probe_body() -> serde_json::Value {
     serde_json::json!({
         "model": "gpt-5.4-mini",
         "instructions": "",
-        "input": [],
+        "input": [{
+            "type": "message",
+            "role": "user",
+            "content": ""
+        }],
         "tools": [],
         "tool_choice": "auto",
         "parallel_tool_calls": false,
@@ -479,7 +483,12 @@ mod tests {
         assert_eq!(body["instructions"], "");
         assert_eq!(body["stream"], true);
         assert_eq!(body["store"], false);
-        assert!(body["input"].as_array().unwrap().is_empty());
-        assert!(body["tools"].as_array().unwrap().is_empty());
+        assert_eq!(body["tools"].as_array().unwrap().len(), 0);
+
+        let input = body["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["type"], "message");
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[0]["content"], "");
     }
 }
