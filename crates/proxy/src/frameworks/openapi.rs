@@ -173,9 +173,6 @@ pub fn build_docs_app() -> Router {
     let spec = build_openapi_spec();
 
     Router::new()
-        .merge(
-            SwaggerUi::new("/swagger-ui")
-                .url("/api-docs/openapi.json", spec.clone()),
-        )
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", spec.clone()))
         .merge(utoipa_redoc::Redoc::with_url("/redoc", spec))
 }
