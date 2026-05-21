@@ -43,10 +43,7 @@ async fn docs_server_serves_openapi_spec() {
         paths.contains_key("/v1/chat/completions"),
         "missing /v1/chat/completions"
     );
-    assert!(
-        paths.contains_key("/admin/status"),
-        "missing /admin/status"
-    );
+    assert!(paths.contains_key("/admin/status"), "missing /admin/status");
     assert!(paths.contains_key("/admin/config"), "missing /admin/config");
 
     // Verify Swagger UI HTML is served.
