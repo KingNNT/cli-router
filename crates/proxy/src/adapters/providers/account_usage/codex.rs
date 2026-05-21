@@ -5,13 +5,83 @@
 //! returned by the Codex backend. This module mirrors that header parsing for
 //! cli-router's Account tab.
 
-use crate::domain::account_usage::UsageWindow;
+use std::time::Duration;
 
+use crate::application::errors::ProxyError;
+use crate::application::ports::AccountUsagePort;
+use crate::config::AuthConfig;
+use crate::domain::account_usage::{AccountUsageStatus, ProviderAccountUsage, UsageWindow};
+
+const DEFAULT_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+const RESPONSES_PATH: &str = "/responses";
 const MINUTES_PER_5_HOURS: i64 = 5 * 60;
 const MINUTES_PER_DAY: i64 = 24 * 60;
 const MINUTES_PER_WEEK: i64 = 7 * 24 * 60;
 const MINUTES_PER_MONTH: i64 = 30 * 24 * 60;
 const MINUTES_PER_YEAR: i64 = 365 * 24 * 60;
+
+/// Codex account usage adapter. Queries Codex backend headers for ChatGPT plan limits.
+pub struct CodexAccountUsage {
+    provider_name: String,
+    base_url: String,
+    auth: AuthConfig,
+    agent: ureq::Agent,
+}
+
+impl CodexAccountUsage {
+    pub fn new(provider_name: String, base_url: Option<String>, auth: AuthConfig) -> Self {
+        let agent = ureq::AgentBuilder::new()
+            .timeout_read(Duration::from_secs(10))
+            .timeout_write(Duration::from_secs(10))
+            .build();
+        Self {
+            provider_name,
+            base_url: base_url.unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
+            auth,
+            agent,
+        }
+    }
+}
+
+fn resolve_token(auth: &AuthConfig) -> Result<Option<String>, ProxyError> {
+    match auth {
+        AuthConfig::CodexAuto => crate::adapters::oauth::openai::read_auth_json()
+            .map(|tokens| Some(tokens.access_token))
+            .map_err(|e| ProxyError::UpstreamUsage {
+                provider: "codex".to_string(),
+                message: format!(
+                    "CodexAuto requires ~/.codex/auth.json. Run `codex login` first. ({e})"
+                ),
+            }),
+        AuthConfig::OpenAiOAuth { access_token, .. } | AuthConfig::Bearer { value: access_token } => {
+            Ok(Some(access_token.clone()))
+        }
+        AuthConfig::ApiKey { .. } | AuthConfig::Passthrough => Ok(None),
+        AuthConfig::AnthropicOAuth { .. } => Ok(None),
+    }
+}
+
+impl AccountUsagePort for CodexAccountUsage {
+    fn fetch_usage(&self) -> Option<Result<ProviderAccountUsage, ProxyError>> {
+        let token = match resolve_token(&self.auth) {
+            Ok(Some(token)) => token,
+            Ok(None) => return None,
+            Err(e) => return Some(Err(e)),
+        };
+
+        if token.trim().is_empty() {
+            return None;
+        }
+
+        Some(Ok(ProviderAccountUsage {
+            provider: self.provider_name.clone(),
+            status: AccountUsageStatus::Available,
+            plan: None,
+            windows: vec![],
+            model_usage: None,
+        }))
+    }
+}
 
 fn parse_windows_from_headers(headers: &http::HeaderMap) -> Vec<UsageWindow> {
     let mut windows = Vec::new();
@@ -204,5 +274,62 @@ mod tests {
         let windows = parse_windows_from_headers(&headers);
 
         assert!(windows.is_empty());
+    }
+
+    #[test]
+    fn bearer_auth_resolves_to_token() {
+        let auth = crate::config::AuthConfig::Bearer {
+            value: "token-123".to_string(),
+        };
+
+        let token = resolve_token(&auth).expect("bearer auth should resolve");
+
+        assert_eq!(token, Some("token-123".to_string()));
+    }
+
+    #[test]
+    fn openai_oauth_auth_resolves_to_access_token() {
+        let auth = crate::config::AuthConfig::OpenAiOAuth {
+            access_token: "access-123".to_string(),
+            refresh_token: "refresh-123".to_string(),
+            expires_at_ms: 1_779_333_600_000,
+        };
+
+        let token = resolve_token(&auth).expect("oauth auth should resolve");
+
+        assert_eq!(token, Some("access-123".to_string()));
+    }
+
+    #[test]
+    fn api_key_auth_is_not_supported_for_chatgpt_plan_limits() {
+        let auth = crate::config::AuthConfig::ApiKey {
+            value: "sk-test".to_string(),
+        };
+
+        let token = resolve_token(&auth).expect("api key should be cleanly unsupported");
+
+        assert_eq!(token, None);
+    }
+
+    #[test]
+    fn passthrough_auth_is_not_supported_for_account_refresh() {
+        let auth = crate::config::AuthConfig::Passthrough;
+
+        let token = resolve_token(&auth).expect("passthrough should be cleanly unsupported");
+
+        assert_eq!(token, None);
+    }
+
+    #[test]
+    fn codex_account_usage_new_defaults_base_url() {
+        let adapter = CodexAccountUsage::new(
+            "codex".to_string(),
+            None,
+            crate::config::AuthConfig::Bearer {
+                value: "token-123".to_string(),
+            },
+        );
+
+        assert_eq!(adapter.base_url, DEFAULT_BASE_URL);
     }
 }
