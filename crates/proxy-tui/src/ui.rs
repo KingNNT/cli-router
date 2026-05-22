@@ -116,12 +116,12 @@ fn draw_status_panel(f: &mut Frame, area: Rect, status: Option<&Result<StatusRes
             };
             let mut v = vec![
                 Line::from(format!("Started:        {started}")),
-                Line::from(format!("Uptime:         {} s", s.uptime_seconds)),
+                Line::from(format!("Uptime:         {}", format_uptime(s.uptime_seconds))),
                 Line::from(format!("Total requests: {}", s.total_requests)),
                 Line::from(affinity_line),
                 Line::from(""),
                 Line::from(Span::styled(
-                    "By provider",
+                    "By provider — where requests were routed",
                     Style::default().add_modifier(Modifier::BOLD),
                 )),
             ];
@@ -134,7 +134,7 @@ fn draw_status_panel(f: &mut Frame, area: Rect, status: Option<&Result<StatusRes
             }
             v.push(Line::from(""));
             v.push(Line::from(Span::styled(
-                "By status",
+                "By status — current/final request result",
                 Style::default().add_modifier(Modifier::BOLD),
             )));
             if s.requests_by_status.is_empty() {
@@ -152,7 +152,7 @@ fn draw_status_panel(f: &mut Frame, area: Rect, status: Option<&Result<StatusRes
                     .map(|(k, count)| format!("{} {count}", xform_short_label(k)))
                     .collect();
                 format!(
-                    "Translation: {} completed | {} failed | {}",
+                    "Translation — API format conversions: {} completed | {} failed | {}",
                     s.translations_completed,
                     s.translations_failed,
                     by_dir.join(", ")
@@ -165,6 +165,27 @@ fn draw_status_panel(f: &mut Frame, area: Rect, status: Option<&Result<StatusRes
         }
     };
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn format_uptime(seconds: u64) -> String {
+    const MINUTE: u64 = 60;
+    const HOUR: u64 = 60 * MINUTE;
+    const DAY: u64 = 24 * HOUR;
+
+    let days = seconds / DAY;
+    let hours = (seconds % DAY) / HOUR;
+    let minutes = (seconds % HOUR) / MINUTE;
+    let secs = seconds % MINUTE;
+
+    if days > 0 {
+        format!("{days}d {hours}h {minutes}m {secs}s")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m {secs}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {secs}s")
+    } else {
+        format!("{secs}s")
+    }
 }
 
 // ---- Quota panel ----
@@ -938,9 +959,9 @@ fn trunc(s: &str, max: usize) -> String {
 
 fn xform_short_label(dir: &str) -> &str {
     match dir {
-        "anthropic\u{2192}openai" => "A\u{2192}O",
-        "openai\u{2192}anthropic" => "O\u{2192}A",
-        _ => "?",
+        "anthropic→openai" => "Anthropic→OpenAI",
+        "openai→anthropic" => "OpenAI→Anthropic",
+        _ => "unknown direction",
     }
 }
 
@@ -1164,6 +1185,16 @@ fn draw_help_modal(f: &mut Frame) {
         Line::from("  d                     delete selected"),
         Line::from("  t                     test selected"),
         Line::from(Span::styled("  (or click the toolbar buttons)", dim)),
+        Line::from(""),
+        Line::from(Span::styled("Status tab metrics", bold)),
+        Line::from("  By provider       Counts requests by backend/provider name."),
+        Line::from("  By status         Counts requests by lifecycle state."),
+        Line::from("                    completed = finished successfully"),
+        Line::from("                    errored   = failed"),
+        Line::from("                    started   = still running or not finalized yet"),
+        Line::from("  Translation       Counts API format conversions."),
+        Line::from("                    Anthropic→OpenAI means the proxy received Anthropic-style input"),
+        Line::from("                    and converted it for an OpenAI-style backend."),
         Line::from(""),
         Line::from(Span::styled("Requests tab", bold)),
         Line::from("  ↑ / ↓ / j / k         move selection"),
@@ -1455,4 +1486,102 @@ fn draw_quota_form_modal(f: &mut Frame, m: &QuotaFormModal) {
         Style::default().fg(Color::DarkGray),
     )));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{AppState, Modal};
+    use proxy_admin_api::{AffinityStatus, StatusResponse};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use std::collections::BTreeMap;
+
+    fn render_state(state: &AppState, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test backend should initialize");
+        terminal.draw(|frame| draw(frame, state)).expect("draw should succeed");
+        terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect::<String>()
+    }
+
+    fn sample_status() -> StatusResponse {
+        let mut by_provider = BTreeMap::new();
+        by_provider.insert("router".to_string(), 42);
+        let mut by_status = BTreeMap::new();
+        by_status.insert("completed".to_string(), 40);
+        by_status.insert("errored".to_string(), 1);
+        by_status.insert("started".to_string(), 1);
+        let mut translation_directions = BTreeMap::new();
+        translation_directions.insert("anthropic→openai".to_string(), 7);
+
+        StatusResponse {
+            started_at_ms: 1_700_000_000_000,
+            uptime_seconds: 60,
+            total_requests: 42,
+            requests_by_provider: by_provider,
+            requests_by_status: by_status,
+            affinity: AffinityStatus { enabled: true, headers: vec!["authorization".to_string()] },
+            translations_completed: 7,
+            translations_failed: 0,
+            translation_directions,
+        }
+    }
+
+    #[test]
+    fn format_uptime_uses_compact_human_readable_units() {
+        assert_eq!(format_uptime(45), "45s");
+        assert_eq!(format_uptime(3 * 60 + 12), "3m 12s");
+        assert_eq!(format_uptime(4 * 60 * 60 + 8 * 60 + 30), "4h 8m 30s");
+        assert_eq!(format_uptime(2 * 24 * 60 * 60 + 3 * 60 * 60 + 15 * 60 + 4), "2d 3h 15m 4s");
+    }
+
+    #[test]
+    fn status_view_renders_human_readable_uptime() {
+        let mut status = sample_status();
+        status.uptime_seconds = 72_080;
+        let mut state = AppState::new();
+        state.status = Some(Ok(status));
+
+        let rendered = render_state(&state, 160, 48);
+
+        assert!(rendered.contains("Uptime:         20h 1m 20s"));
+        assert!(!rendered.contains("Uptime:         72080 s"));
+    }
+
+    #[test]
+    fn status_view_explains_metric_sections_inline() {
+        let mut state = AppState::new();
+        state.status = Some(Ok(sample_status()));
+
+        let rendered = render_state(&state, 160, 48);
+
+        assert!(rendered.contains("By provider — where requests were routed"));
+        assert!(rendered.contains("By status — current/final request result"));
+        assert!(rendered.contains("Translation — API format conversions:"));
+    }
+
+    #[test]
+    fn status_view_uses_readable_translation_direction_labels() {
+        let mut state = AppState::new();
+        state.status = Some(Ok(sample_status()));
+
+        let rendered = render_state(&state, 160, 48);
+
+        assert!(rendered.contains("Anthropic→OpenAI 7"));
+        assert!(!rendered.contains("A→O 7"));
+    }
+
+    #[test]
+    fn help_modal_explains_status_metrics() {
+        let mut state = AppState::new();
+        state.modal = Modal::Help;
+
+        let rendered = render_state(&state, 160, 48);
+
+        assert!(rendered.contains("Status tab metrics"));
+        assert!(rendered.contains("By provider"));
+        assert!(rendered.contains("Counts requests by backend/provider name."));
+        assert!(rendered.contains("completed = finished successfully"));
+        assert!(rendered.contains("Anthropic→OpenAI means the proxy received Anthropic-style input"));
+    }
 }
