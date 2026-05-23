@@ -279,7 +279,7 @@ impl AuthInputKind {
             AuthPayload::Bearer { .. } => AuthInputKind::Bearer,
             AuthPayload::AnthropicOAuth { .. } => AuthInputKind::OAuthAnthropic,
             AuthPayload::OpenAiOAuth { .. } => AuthInputKind::OAuthOpenAi,
-            AuthPayload::CodexAuto => AuthInputKind::OAuthOpenAi,
+            AuthPayload::CodexAuto => AuthInputKind::Passthrough,
         }
     }
 }
@@ -892,6 +892,14 @@ mod form_field_tests {
         assert_eq!(
             f.next(AuthInputKind::Passthrough, ProviderKind::Codex),
             FormField::ReasoningEffort
+        );
+    }
+
+    #[test]
+    fn codex_auto_auth_uses_non_oauth_form_mode() {
+        assert_eq!(
+            AuthInputKind::from_payload(&AuthPayload::CodexAuto),
+            AuthInputKind::Passthrough
         );
     }
 
