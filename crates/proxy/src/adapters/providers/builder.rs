@@ -83,7 +83,12 @@ pub fn build_leaf(
             Arc::new(DeepSeekProvider::configure(http, p.base_url.clone(), auth))
         }
         ProviderKind::OpenAi => Arc::new(OpenAiProvider::configure(http, p.base_url.clone(), auth)),
-        ProviderKind::Codex => Arc::new(CodexProvider::configure(http, p.base_url.clone(), auth)),
+        ProviderKind::Codex => Arc::new(CodexProvider::configure_with_reasoning_effort(
+            http,
+            p.base_url.clone(),
+            auth,
+            p.reasoning_effort.clone(),
+        )),
     })
 }
 

@@ -26,34 +26,51 @@ pub struct CodexProvider {
     base_url: String,
     http: reqwest::Client,
     auth: AuthHeader,
+    default_reasoning_effort: Option<String>,
 }
 
 impl CodexProvider {
     pub fn new(http: reqwest::Client) -> Self {
-        Self::build(http, DEFAULT_BASE_URL.into(), AuthHeader::Passthrough)
+        Self::build(http, DEFAULT_BASE_URL.into(), AuthHeader::Passthrough, None)
     }
 
     pub fn with_base_url(http: reqwest::Client, base_url: impl Into<String>) -> Self {
-        Self::build(http, base_url.into(), AuthHeader::Passthrough)
+        Self::build(http, base_url.into(), AuthHeader::Passthrough, None)
     }
 
     pub fn with_auth(http: reqwest::Client, auth: AuthHeader) -> Self {
-        Self::build(http, DEFAULT_BASE_URL.into(), auth)
+        Self::build(http, DEFAULT_BASE_URL.into(), auth, None)
     }
 
     pub fn configure(http: reqwest::Client, base_url: Option<String>, auth: AuthHeader) -> Self {
+        Self::configure_with_reasoning_effort(http, base_url, auth, None)
+    }
+
+    pub fn configure_with_reasoning_effort(
+        http: reqwest::Client,
+        base_url: Option<String>,
+        auth: AuthHeader,
+        default_reasoning_effort: Option<String>,
+    ) -> Self {
         Self::build(
             http,
             base_url.unwrap_or_else(|| DEFAULT_BASE_URL.into()),
             auth,
+            default_reasoning_effort,
         )
     }
 
-    fn build(http: reqwest::Client, base_url: String, auth: AuthHeader) -> Self {
+    fn build(
+        http: reqwest::Client,
+        base_url: String,
+        auth: AuthHeader,
+        default_reasoning_effort: Option<String>,
+    ) -> Self {
         Self {
             base_url,
             http,
             auth,
+            default_reasoning_effort,
         }
     }
 }
@@ -117,7 +134,11 @@ impl Provider for CodexProvider {
             .map_err(|e| ProxyError::BadRequest(format!("invalid JSON body: {e}")))?;
 
         // Translate to Responses API payload (always sets stream:true)
-        let responses_body = translate_request(&chat_body).map_err(|e| {
+        let responses_body = translate_request_with_default_reasoning_effort(
+            &chat_body,
+            self.default_reasoning_effort.as_deref(),
+        )
+        .map_err(|e| {
             ProxyError::BadRequest(format!("codex request translation failed: {e}"))
         })?;
 
@@ -316,7 +337,15 @@ fn translate_tool(tool: &Value) -> Value {
     }
 }
 
+#[cfg(test)]
 fn translate_request(chat: &Value) -> Result<Value, String> {
+    translate_request_with_default_reasoning_effort(chat, None)
+}
+
+fn translate_request_with_default_reasoning_effort(
+    chat: &Value,
+    default_reasoning_effort: Option<&str>,
+) -> Result<Value, String> {
     let mut out = serde_json::Map::new();
 
     // model → passthrough
@@ -411,6 +440,8 @@ fn translate_request(chat: &Value) -> Result<Value, String> {
 
     // reasoning_effort → reasoning.effort
     if let Some(effort) = chat.get("reasoning_effort") {
+        out.insert("reasoning".into(), json!({ "effort": effort }));
+    } else if let Some(effort) = default_reasoning_effort {
         out.insert("reasoning".into(), json!({ "effort": effort }));
     }
 
@@ -1078,6 +1109,37 @@ mod tests {
         });
         let result = translate_request(&chat).unwrap();
         assert_eq!(result["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn translate_uses_default_reasoning_effort_when_request_omits_it() {
+        let chat = json!({
+            "model": "codex-mini",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let result = translate_request_with_default_reasoning_effort(&chat, Some("high")).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "high");
+    }
+
+    #[test]
+    fn translate_request_reasoning_effort_overrides_provider_default() {
+        let chat = json!({
+            "model": "codex-mini",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "reasoning_effort": "low"
+        });
+        let result = translate_request_with_default_reasoning_effort(&chat, Some("high")).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "low");
+    }
+
+    #[test]
+    fn translate_without_default_keeps_reasoning_absent() {
+        let chat = json!({
+            "model": "codex-mini",
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let result = translate_request_with_default_reasoning_effort(&chat, None).unwrap();
+        assert!(result.get("reasoning").is_none());
     }
 
     #[test]
