@@ -106,9 +106,9 @@ impl ConfigRepository for DbConfigRepository {
             tx.execute("DELETE FROM providers", []).map_err(db_err)?;
             let mut stmt = tx
                 .prepare(
-                    "INSERT INTO providers (name, kind, base_url, openai_base_url, auth_type,
+                    "INSERT INTO providers (name, kind, base_url, openai_base_url, reasoning_effort, auth_type,
                      auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 )
                 .map_err(db_err)?;
             for p in &config.providers {
@@ -119,6 +119,7 @@ impl ConfigRepository for DbConfigRepository {
                     kind_str,
                     p.base_url,
                     p.openai_base_url,
+                    p.reasoning_effort,
                     auth_type,
                     ak,
                     bearer,
@@ -193,7 +194,7 @@ fn load_setting(conn: &Connection, key: &str) -> Option<String> {
 fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError> {
     let mut stmt = conn
         .prepare(
-            "SELECT name, kind, base_url, openai_base_url, auth_type,
+            "SELECT name, kind, base_url, openai_base_url, reasoning_effort, auth_type,
                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms
              FROM providers ORDER BY id",
         )
@@ -201,20 +202,20 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
     let rows = stmt
         .query_map([], |row| {
             let kind_str: String = row.get(1)?;
-            let auth_type_str: String = row.get(4)?;
+            let auth_type_str: String = row.get(5)?;
             Ok(ProviderConfig {
                 name: row.get(0)?,
                 kind: parse_kind(&kind_str),
                 base_url: row.get(2)?,
                 openai_base_url: row.get(3)?,
-                reasoning_effort: None,
+                reasoning_effort: row.get(4)?,
                 auth: columns_to_auth(
                     &auth_type_str,
-                    row.get(5)?,
                     row.get(6)?,
                     row.get(7)?,
                     row.get(8)?,
                     row.get(9)?,
+                    row.get(10)?,
                 ),
             })
         })
@@ -442,7 +443,7 @@ mod tests {
             },
             base_url: Some("https://example.com".into()),
             openai_base_url: Some("https://example.com/v1".into()),
-            reasoning_effort: None,
+            reasoning_effort: Some("high".into()),
         });
         cfg.routing.push(RoutingRule {
             match_spec: MatchSpec {
@@ -469,6 +470,7 @@ mod tests {
         assert_eq!(loaded.providers.len(), 1);
         assert_eq!(loaded.providers[0].name, "test");
         assert_eq!(loaded.providers[0].kind, ProviderKind::Zai);
+        assert_eq!(loaded.providers[0].reasoning_effort.as_deref(), Some("high"));
         assert!(matches!(
             loaded.providers[0].auth,
             AuthConfig::Bearer { .. }
