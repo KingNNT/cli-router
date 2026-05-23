@@ -116,7 +116,10 @@ fn draw_status_panel(f: &mut Frame, area: Rect, status: Option<&Result<StatusRes
             };
             let mut v = vec![
                 Line::from(format!("Started:        {started}")),
-                Line::from(format!("Uptime:         {}", format_uptime(s.uptime_seconds))),
+                Line::from(format!(
+                    "Uptime:         {}",
+                    format_uptime(s.uptime_seconds)
+                )),
                 Line::from(format!("Total requests: {}", s.total_requests)),
                 Line::from(affinity_line),
                 Line::from(""),
@@ -1045,7 +1048,7 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
     match &m.state {
         FormState::Editing => {
             lines.push(Line::from(Span::styled(
-                "Tab/Shift+Tab: move  ←/→: cycle  Enter on Save: submit  Esc: cancel",
+                "↑/↓: move  ←/→: cycle  Enter on Save: submit  Esc: cancel",
                 Style::default().fg(Color::DarkGray),
             )));
         }
@@ -1184,7 +1187,7 @@ fn draw_help_modal(f: &mut Frame) {
         Line::from(""),
         Line::from(Span::styled("Providers tab", bold)),
         Line::from(
-            "  ← / → / Tab          switch section (Providers / Routing / Quotas / Settings)",
+            "  ← / →                switch section (Providers / Routing / Quotas / Settings)",
         ),
         Line::from("  ↑ / ↓ / j / k         move selection"),
         Line::from("  a                     add provider"),
@@ -1200,7 +1203,9 @@ fn draw_help_modal(f: &mut Frame) {
         Line::from("                    errored   = failed"),
         Line::from("                    started   = still running or not finalized yet"),
         Line::from("  Translation       Counts API format conversions."),
-        Line::from("                    Anthropic→OpenAI means the proxy received Anthropic-style input"),
+        Line::from(
+            "                    Anthropic→OpenAI means the proxy received Anthropic-style input",
+        ),
         Line::from("                    and converted it for an OpenAI-style backend."),
         Line::from(""),
         Line::from(Span::styled("Requests tab", bold)),
@@ -1408,8 +1413,14 @@ fn draw_routing_form_modal(f: &mut Frame, m: &RoutingFormModal) {
         show_or_placeholder(&m.priority),
     ));
     lines.push(Line::from(""));
+    lines.push(row(
+        RoutingField::Save,
+        "[ Save ]",
+        "(Enter to submit)".into(),
+    ));
+    lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Tab/Shift+Tab: move  Enter on Strategy: cycle  s: submit  Esc: cancel",
+        "↑/↓: move  Enter on Strategy: cycle  Enter on Save: submit  Esc: cancel",
         Style::default().fg(Color::DarkGray),
     )));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
@@ -1488,8 +1499,14 @@ fn draw_quota_form_modal(f: &mut Frame, m: &QuotaFormModal) {
         show_or_placeholder(&m.warn_pct),
     ));
     lines.push(Line::from(""));
+    lines.push(row(
+        QuotaField::Save,
+        "[ Save ]",
+        "(Enter to submit)".into(),
+    ));
+    lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Tab/Shift+Tab: move  s: submit  Esc: cancel",
+        "↑/↓: move  Enter on Save: submit  Esc: cancel",
         Style::default().fg(Color::DarkGray),
     )));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
@@ -1507,8 +1524,16 @@ mod tests {
     fn render_state(state: &AppState, width: u16, height: u16) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("test backend should initialize");
-        terminal.draw(|frame| draw(frame, state)).expect("draw should succeed");
-        terminal.backend().buffer().content().iter().map(|cell| cell.symbol()).collect::<String>()
+        terminal
+            .draw(|frame| draw(frame, state))
+            .expect("draw should succeed");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>()
     }
 
     fn sample_status() -> StatusResponse {
@@ -1527,7 +1552,10 @@ mod tests {
             total_requests: 42,
             requests_by_provider: by_provider,
             requests_by_status: by_status,
-            affinity: AffinityStatus { enabled: true, headers: vec!["authorization".to_string()] },
+            affinity: AffinityStatus {
+                enabled: true,
+                headers: vec!["authorization".to_string()],
+            },
             translations_completed: 7,
             translations_failed: 0,
             translation_directions,
@@ -1539,7 +1567,10 @@ mod tests {
         assert_eq!(format_uptime(45), "45s");
         assert_eq!(format_uptime(3 * 60 + 12), "3m 12s");
         assert_eq!(format_uptime(4 * 60 * 60 + 8 * 60 + 30), "4h 8m 30s");
-        assert_eq!(format_uptime(2 * 24 * 60 * 60 + 3 * 60 * 60 + 15 * 60 + 4), "2d 3h 15m 4s");
+        assert_eq!(
+            format_uptime(2 * 24 * 60 * 60 + 3 * 60 * 60 + 15 * 60 + 4),
+            "2d 3h 15m 4s"
+        );
     }
 
     #[test]
@@ -1589,6 +1620,49 @@ mod tests {
         assert!(rendered.contains("By provider"));
         assert!(rendered.contains("Counts requests by backend/provider name."));
         assert!(rendered.contains("completed = finished successfully"));
-        assert!(rendered.contains("Anthropic→OpenAI means the proxy received Anthropic-style input"));
+        assert!(
+            rendered.contains("Anthropic→OpenAI means the proxy received Anthropic-style input")
+        );
+    }
+
+    #[test]
+    fn provider_form_help_mentions_arrow_navigation_not_tab() {
+        let mut state = AppState::new();
+        state.modal = Modal::ProviderForm(crate::app::ProviderFormModal::new_for_add());
+
+        let output = render_state(&state, 120, 30);
+
+        assert!(output.contains("move"));
+        assert!(output.contains("←/→: cycle"));
+        assert!(output.contains("Enter on Save: submit"));
+        assert!(!output.contains("Tab/Shift+Tab: move"));
+    }
+
+    #[test]
+    fn routing_form_renders_save_row_and_arrow_help() {
+        let mut state = AppState::new();
+        state.modal = Modal::RoutingForm(crate::app::RoutingFormModal::new_for_add());
+
+        let output = render_state(&state, 120, 30);
+
+        assert!(output.contains("[ Save ]"));
+        assert!(output.contains("move"));
+        assert!(output.contains("Enter on Save: submit"));
+        assert!(!output.contains("s: submit"));
+        assert!(!output.contains("Tab/Shift+Tab: move"));
+    }
+
+    #[test]
+    fn quota_form_renders_save_row_and_arrow_help() {
+        let mut state = AppState::new();
+        state.modal = Modal::QuotaForm(crate::app::QuotaFormModal::new_for_add());
+
+        let output = render_state(&state, 120, 30);
+
+        assert!(output.contains("[ Save ]"));
+        assert!(output.contains("move"));
+        assert!(output.contains("Enter on Save: submit"));
+        assert!(!output.contains("s: submit"));
+        assert!(!output.contains("Tab/Shift+Tab: move"));
     }
 }

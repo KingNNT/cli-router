@@ -528,6 +528,7 @@ pub enum RoutingField {
     Fallback,
     Strategy,
     Priority,
+    Save,
 }
 
 impl RoutingField {
@@ -537,17 +538,19 @@ impl RoutingField {
             Self::Provider => Self::Fallback,
             Self::Fallback => Self::Strategy,
             Self::Strategy => Self::Priority,
-            Self::Priority => Self::MatchModel,
+            Self::Priority => Self::Save,
+            Self::Save => Self::MatchModel,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            Self::MatchModel => Self::Priority,
+            Self::MatchModel => Self::Save,
             Self::Provider => Self::MatchModel,
             Self::Fallback => Self::Provider,
             Self::Strategy => Self::Fallback,
             Self::Priority => Self::Strategy,
+            Self::Save => Self::Priority,
         }
     }
 }
@@ -603,6 +606,7 @@ pub enum QuotaField {
     MaxInputTokens,
     MaxOutputTokens,
     WarnPct,
+    Save,
 }
 
 impl QuotaField {
@@ -613,18 +617,20 @@ impl QuotaField {
             Self::MaxRequests => Self::MaxInputTokens,
             Self::MaxInputTokens => Self::MaxOutputTokens,
             Self::MaxOutputTokens => Self::WarnPct,
-            Self::WarnPct => Self::Provider,
+            Self::WarnPct => Self::Save,
+            Self::Save => Self::Provider,
         }
     }
 
     pub fn prev(self) -> Self {
         match self {
-            Self::Provider => Self::WarnPct,
+            Self::Provider => Self::Save,
             Self::Window => Self::Provider,
             Self::MaxRequests => Self::Window,
             Self::MaxInputTokens => Self::MaxRequests,
             Self::MaxOutputTokens => Self::MaxInputTokens,
             Self::WarnPct => Self::MaxOutputTokens,
+            Self::Save => Self::WarnPct,
         }
     }
 }
@@ -859,13 +865,19 @@ mod form_field_tests {
     #[test]
     fn next_wraps_past_save_back_to_name() {
         let f = FormField::Save;
-        assert_eq!(f.next(AuthInputKind::ApiKey, ProviderKind::Anthropic), FormField::Name);
+        assert_eq!(
+            f.next(AuthInputKind::ApiKey, ProviderKind::Anthropic),
+            FormField::Name
+        );
     }
 
     #[test]
     fn prev_wraps_from_name_to_save() {
         let f = FormField::Name;
-        assert_eq!(f.prev(AuthInputKind::ApiKey, ProviderKind::Anthropic), FormField::Save);
+        assert_eq!(
+            f.prev(AuthInputKind::ApiKey, ProviderKind::Anthropic),
+            FormField::Save
+        );
     }
 
     #[test]
@@ -893,6 +905,22 @@ mod form_field_tests {
             f.next(AuthInputKind::Passthrough, ProviderKind::Codex),
             FormField::ReasoningEffort
         );
+    }
+
+    #[test]
+    fn routing_field_navigation_includes_save() {
+        assert_eq!(RoutingField::Priority.next(), RoutingField::Save);
+        assert_eq!(RoutingField::Save.next(), RoutingField::MatchModel);
+        assert_eq!(RoutingField::MatchModel.prev(), RoutingField::Save);
+        assert_eq!(RoutingField::Save.prev(), RoutingField::Priority);
+    }
+
+    #[test]
+    fn quota_field_navigation_includes_save() {
+        assert_eq!(QuotaField::WarnPct.next(), QuotaField::Save);
+        assert_eq!(QuotaField::Save.next(), QuotaField::Provider);
+        assert_eq!(QuotaField::Provider.prev(), QuotaField::Save);
+        assert_eq!(QuotaField::Save.prev(), QuotaField::WarnPct);
     }
 
     #[test]
