@@ -426,6 +426,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             auth: AuthConfig::Passthrough,
             base_url: Some(upstream_a.uri()),
             openai_base_url: None,
+            reasoning_effort: None,
         }],
         routing: vec![RoutingRule {
             match_spec: MatchSpec {

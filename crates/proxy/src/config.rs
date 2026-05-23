@@ -34,6 +34,8 @@ pub struct ProviderConfig {
     pub base_url: Option<String>,
     #[serde(default)]
     pub openai_base_url: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -374,6 +376,17 @@ mod tests {
     }
 
     #[test]
+    fn provider_config_deserializes_reasoning_effort() {
+        let toml = r#"
+name = "codex-main"
+kind = "codex"
+reasoning_effort = "high"
+"#;
+        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        assert_eq!(provider.reasoning_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
     fn validate_rejects_empty_providers() {
         let cfg = Config {
             port: 8787,
@@ -399,6 +412,7 @@ mod tests {
                 auth: AuthConfig::Passthrough,
                 base_url: None,
                 openai_base_url: None,
+                reasoning_effort: None,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -429,6 +443,7 @@ mod tests {
                     auth: AuthConfig::Passthrough,
                     base_url: None,
                     openai_base_url: None,
+                    reasoning_effort: None,
                 },
                 ProviderConfig {
                     name: "x".into(),
@@ -436,6 +451,7 @@ mod tests {
                     auth: AuthConfig::Passthrough,
                     base_url: None,
                     openai_base_url: None,
+                    reasoning_effort: None,
                 },
             ],
             routing: vec![RoutingRule {
@@ -465,6 +481,7 @@ mod tests {
                 auth: AuthConfig::Passthrough,
                 base_url: None,
                 openai_base_url: None,
+                reasoning_effort: None,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {

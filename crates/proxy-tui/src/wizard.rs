@@ -46,6 +46,7 @@ pub fn build_config_from_form(form: &ProviderFormModal) -> ConfigPayload {
             base_url: Some(form.base_url.trim().to_string()).filter(|s| !s.is_empty()),
             openai_base_url: Some(form.openai_base_url.trim().to_string())
                 .filter(|s| !s.is_empty()),
+            reasoning_effort: None,
         })
     };
 

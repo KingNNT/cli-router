@@ -109,6 +109,7 @@ pub fn validate_provider_form(
             .openai_base_url
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
+        reasoning_effort: None,
     })
 }
 
@@ -167,6 +168,7 @@ mod tests {
             auth: AuthPayload::Passthrough,
             base_url: None,
             openai_base_url: None,
+            reasoning_effort: None,
         }
     }
 

@@ -245,6 +245,7 @@ mod tests {
             auth: AuthConfig::Bearer { value: "x".into() },
             base_url: base.map(str::to_string),
             openai_base_url: openai.map(str::to_string),
+            reasoning_effort: None,
         }
     }
 
@@ -283,6 +284,7 @@ mod tests {
                 auth: AuthConfig::Bearer {
                     value: "token-123".to_string(),
                 },
+                reasoning_effort: None,
             }],
             ..Config {
                 port: 0,

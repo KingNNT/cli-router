@@ -207,6 +207,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
                 kind: parse_kind(&kind_str),
                 base_url: row.get(2)?,
                 openai_base_url: row.get(3)?,
+                reasoning_effort: None,
                 auth: columns_to_auth(
                     &auth_type_str,
                     row.get(5)?,
@@ -441,6 +442,7 @@ mod tests {
             },
             base_url: Some("https://example.com".into()),
             openai_base_url: Some("https://example.com/v1".into()),
+            reasoning_effort: None,
         });
         cfg.routing.push(RoutingRule {
             match_spec: MatchSpec {
@@ -524,6 +526,7 @@ mod tests {
                 auth: auth.clone(),
                 base_url: None,
                 openai_base_url: None,
+                reasoning_effort: None,
             });
             repo.save(&cfg).unwrap();
             let loaded = repo.load().unwrap();

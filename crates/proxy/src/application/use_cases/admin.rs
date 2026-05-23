@@ -700,6 +700,7 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                 auth: auth_to_payload(&p.auth),
                 base_url: p.base_url.clone(),
                 openai_base_url: p.openai_base_url.clone(),
+                reasoning_effort: p.reasoning_effort.clone(),
             })
             .collect(),
         routing: c
@@ -752,6 +753,7 @@ fn payload_to_config(
                 auth: payload_to_auth(pp.auth),
                 base_url: pp.base_url,
                 openai_base_url: pp.openai_base_url,
+                reasoning_effort: pp.reasoning_effort,
             })
         })
         .collect::<Result<Vec<_>, ProxyError>>()?;
@@ -1202,6 +1204,7 @@ mod tests {
                 },
                 base_url: None,
                 openai_base_url: None,
+                reasoning_effort: None,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -1254,6 +1257,7 @@ mod tests {
                 auth: AuthPayload::Passthrough,
                 base_url: None,
                 openai_base_url: None,
+                reasoning_effort: None,
             }],
             routing: vec![],
             quota: vec![],

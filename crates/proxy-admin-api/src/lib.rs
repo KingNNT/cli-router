@@ -120,6 +120,8 @@ pub struct ProviderPayload {
     pub base_url: Option<String>,
     #[serde(default)]
     pub openai_base_url: Option<String>,
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, utoipa::ToSchema)]
@@ -570,6 +572,7 @@ mod config_payload_toml_tests {
                 auth: AuthPayload::Passthrough,
                 base_url: None,
                 openai_base_url: None,
+                reasoning_effort: Some("high".into()),
             }],
             routing: vec![],
             quota: vec![QuotaPayload {
@@ -591,6 +594,10 @@ mod config_payload_toml_tests {
         let parsed: ConfigPayload = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.port, 8787);
         assert_eq!(parsed.providers.len(), 1);
+        assert_eq!(
+            parsed.providers[0].reasoning_effort.as_deref(),
+            Some("high")
+        );
         assert_eq!(parsed.quota.len(), 1);
         assert_eq!(parsed.quota[0].provider, "zai");
         assert!(parsed.affinity.enabled);
