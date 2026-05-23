@@ -93,6 +93,7 @@ mod tests {
                 auth: AuthPayload::Passthrough,
                 base_url: None,
                 openai_base_url: None,
+                reasoning_effort: None,
             }],
             routing: vec![],
             quota: vec![],

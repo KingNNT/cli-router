@@ -83,7 +83,12 @@ pub fn build_leaf(
             Arc::new(DeepSeekProvider::configure(http, p.base_url.clone(), auth))
         }
         ProviderKind::OpenAi => Arc::new(OpenAiProvider::configure(http, p.base_url.clone(), auth)),
-        ProviderKind::Codex => Arc::new(CodexProvider::configure(http, p.base_url.clone(), auth)),
+        ProviderKind::Codex => Arc::new(CodexProvider::configure_with_reasoning_effort(
+            http,
+            p.base_url.clone(),
+            auth,
+            p.reasoning_effort.clone(),
+        )),
     })
 }
 
@@ -245,6 +250,7 @@ mod tests {
             auth: AuthConfig::Bearer { value: "x".into() },
             base_url: base.map(str::to_string),
             openai_base_url: openai.map(str::to_string),
+            reasoning_effort: None,
         }
     }
 
@@ -283,6 +289,7 @@ mod tests {
                 auth: AuthConfig::Bearer {
                     value: "token-123".to_string(),
                 },
+                reasoning_effort: None,
             }],
             ..Config {
                 port: 0,

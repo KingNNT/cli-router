@@ -15,8 +15,8 @@ mod wizard;
 use crate::app::{
     ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal, FormField,
     FormMode, FormState, Modal, PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderAction,
-    ProviderFormModal, QuotaField, QuotaFormModal, RangePreset, RoutingField, RoutingFormModal,
-    TestProviderModal, TestState, View, WizardStep,
+    ProviderFormModal, ProviderKind, QuotaField, QuotaFormModal, RangePreset, ReasoningEffortInput,
+    RoutingField, RoutingFormModal, TestProviderModal, TestState, View, WizardStep,
 };
 use crate::client::AdminClient;
 use chrono::{Datelike, Local, TimeZone};
@@ -976,12 +976,12 @@ fn handle_form_key(
     match (&m.state, k.code) {
         (_, KeyCode::Esc) => Modal::None,
 
-        (FormState::Editing, KeyCode::Tab) => {
-            m.focused = m.focused.next(m.auth_kind);
+        (FormState::Editing, KeyCode::Down) => {
+            m.focused = m.focused.next(m.auth_kind, m.kind);
             Modal::ProviderForm(m)
         }
-        (FormState::Editing, KeyCode::BackTab) => {
-            m.focused = m.focused.prev(m.auth_kind);
+        (FormState::Editing, KeyCode::Up) => {
+            m.focused = m.focused.prev(m.auth_kind, m.kind);
             Modal::ProviderForm(m)
         }
         (FormState::Editing, KeyCode::Left) => {
@@ -1120,6 +1120,7 @@ fn submit_non_oauth_save(
         kind: m.kind.label(),
         base_url: Some(&m.base_url),
         openai_base_url: Some(&m.openai_base_url),
+        reasoning_effort: m.reasoning_effort.as_option(),
         auth: &auth,
         editing_index,
         original_name,
@@ -1171,6 +1172,16 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
                 m.kind.cycle_next()
             } else {
                 m.kind.cycle_prev()
+            };
+            if m.kind != ProviderKind::Codex {
+                m.reasoning_effort = ReasoningEffortInput::Unset;
+            }
+        }
+        FormField::ReasoningEffort => {
+            m.reasoning_effort = if forward {
+                m.reasoning_effort.cycle_next()
+            } else {
+                m.reasoning_effort.cycle_prev()
             };
         }
         FormField::AuthKind => {
@@ -1236,6 +1247,7 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
             kind: m.kind.label(),
             base_url: Some(&m.base_url),
             openai_base_url: Some(&m.openai_base_url),
+            reasoning_effort: m.reasoning_effort.as_option(),
             auth: &placeholder_auth,
             editing_index: None,
             original_name: None,
@@ -1381,11 +1393,11 @@ fn handle_wizard_form_key(
             }
             return None;
         }
-        KeyCode::Tab => {
-            m.focused = m.focused.next(m.auth_kind);
+        KeyCode::Down => {
+            m.focused = m.focused.next(m.auth_kind, m.kind);
         }
-        KeyCode::BackTab => {
-            m.focused = m.focused.prev(m.auth_kind);
+        KeyCode::Up => {
+            m.focused = m.focused.prev(m.auth_kind, m.kind);
         }
         KeyCode::Left => cycle_field_value(&mut m, false),
         KeyCode::Right => cycle_field_value(&mut m, true),
@@ -1398,21 +1410,6 @@ fn handle_wizard_form_key(
                 m.error = Some("OAuth not supported in wizard. Use passthrough or api_key.".into());
                 return Some(Modal::ProviderForm(m));
             }
-            let cfg = wizard::build_config_from_form(&m);
-            let path = config_writer::resolved_config_path();
-            match config_writer::write_to_file(&cfg, &path) {
-                Ok(()) => {
-                    state.set_config(Ok(cfg));
-                    return None;
-                }
-                Err(e) => {
-                    m.error = Some(format!("failed to save config: {e}"));
-                    return Some(Modal::ProviderForm(m));
-                }
-            }
-        }
-        KeyCode::Char('s') => {
-            // s also submits (same as Enter on Save)
             let cfg = wizard::build_config_from_form(&m);
             let path = config_writer::resolved_config_path();
             match config_writer::write_to_file(&cfg, &path) {
@@ -1545,11 +1542,11 @@ fn handle_routing_form_key(
 ) -> Modal {
     match k.code {
         KeyCode::Esc => Modal::None,
-        KeyCode::Tab => {
+        KeyCode::Down => {
             m.focused = m.focused.next();
             Modal::RoutingForm(m)
         }
-        KeyCode::BackTab => {
+        KeyCode::Up => {
             m.focused = m.focused.prev();
             Modal::RoutingForm(m)
         }
@@ -1557,7 +1554,7 @@ fn handle_routing_form_key(
             m.strategy = wizard::strategy_cycle(&m.strategy);
             Modal::RoutingForm(m)
         }
-        KeyCode::Char('s') | KeyCode::Enter => {
+        KeyCode::Enter if m.focused == RoutingField::Save => {
             // Submit
             if m.match_model.trim().is_empty() {
                 m.error = Some("match model is required".into());
@@ -1654,15 +1651,15 @@ fn handle_quota_form_key(
 ) -> Modal {
     match k.code {
         KeyCode::Esc => Modal::None,
-        KeyCode::Tab => {
+        KeyCode::Down => {
             m.focused = m.focused.next();
             Modal::QuotaForm(m)
         }
-        KeyCode::BackTab => {
+        KeyCode::Up => {
             m.focused = m.focused.prev();
             Modal::QuotaForm(m)
         }
-        KeyCode::Char('s') | KeyCode::Enter => {
+        KeyCode::Enter if m.focused == QuotaField::Save => {
             // Submit
             if m.provider.trim().is_empty() {
                 m.error = Some("provider is required".into());
@@ -1740,6 +1737,7 @@ fn edit_quota_text(m: &mut QuotaFormModal, f: impl FnOnce(&mut String)) {
         QuotaField::MaxInputTokens => Some(&mut m.max_input_tokens),
         QuotaField::MaxOutputTokens => Some(&mut m.max_output_tokens),
         QuotaField::WarnPct => Some(&mut m.warn_pct),
+        QuotaField::Save => None,
     };
     if let Some(s) = target {
         f(s);
@@ -1817,6 +1815,7 @@ fn submit_oauth_edit(
         kind: m.kind.label(),
         base_url: Some(&m.base_url),
         openai_base_url: Some(&m.openai_base_url),
+        reasoning_effort: m.reasoning_effort.as_option(),
         auth: &original_auth,
         editing_index: Some(original_index),
         original_name: Some(&original_name),
@@ -1836,6 +1835,7 @@ fn submit_oauth_edit(
             || prev.kind != provider.kind
             || prev.base_url != provider.base_url
             || prev.openai_base_url != provider.openai_base_url
+            || prev.reasoning_effort != provider.reasoning_effort
     } else {
         m.error = Some("provider list changed; press Esc and reopen".into());
         return Modal::ProviderForm(m);
@@ -1888,6 +1888,205 @@ fn submit_oauth_edit(
         }
     }
     Modal::ProviderForm(m)
+}
+
+#[cfg(test)]
+mod modal_key_tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use proxy_admin_api::{AffinityPayload, ConfigPayload};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn client() -> AdminClient {
+        AdminClient::new("http://127.0.0.1:9")
+    }
+
+    fn app_state_with_config() -> AppState {
+        let mut state = AppState::new();
+        state.set_config(Ok(ConfigPayload {
+            port: 3456,
+            providers: Vec::new(),
+            routing: Vec::new(),
+            quota: Vec::new(),
+            affinity: AffinityPayload::default(),
+            proxy_db: None,
+            pricing_db: None,
+        }));
+        state
+    }
+
+    #[test]
+    fn provider_form_down_and_up_move_focus() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let modal = handle_form_key(
+            key(KeyCode::Down),
+            &client,
+            &mut state,
+            ProviderFormModal::new_for_add(),
+        );
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+        assert_eq!(m.focused, FormField::Kind);
+
+        let modal = handle_form_key(key(KeyCode::Up), &client, &mut state, m);
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+        assert_eq!(m.focused, FormField::Name);
+    }
+
+    #[test]
+    fn provider_form_tab_no_longer_moves_focus() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let modal = handle_form_key(
+            key(KeyCode::Tab),
+            &client,
+            &mut state,
+            ProviderFormModal::new_for_add(),
+        );
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+        assert_eq!(m.focused, FormField::Name);
+    }
+
+    #[test]
+    fn routing_form_enter_on_non_save_does_not_submit() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut form = RoutingFormModal::new_for_add();
+        form.match_model = "claude-*".into();
+        form.provider = "anthropic".into();
+        form.focused = RoutingField::Provider;
+
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.focused, RoutingField::Provider);
+        assert!(
+            state
+                .config
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .routing
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn routing_form_down_can_focus_save() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut form = RoutingFormModal::new_for_add();
+        form.focused = RoutingField::Priority;
+
+        let modal = handle_routing_form_key(key(KeyCode::Down), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.focused, RoutingField::Save);
+    }
+
+    #[test]
+    fn routing_form_s_no_longer_submits() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut form = RoutingFormModal::new_for_add();
+        form.match_model = "claude-*".into();
+        form.provider = "anthropic".into();
+        form.focused = RoutingField::Save;
+
+        let modal = handle_routing_form_key(key(KeyCode::Char('s')), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.provider, "anthropic");
+        assert!(
+            state
+                .config
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .routing
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn quota_form_enter_on_non_save_does_not_submit() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut form = QuotaFormModal::new_for_add();
+        form.provider = "anthropic".into();
+        form.window = "1d".into();
+        form.focused = QuotaField::Provider;
+
+        let modal = handle_quota_form_key(key(KeyCode::Enter), &client, &mut state, form);
+        let Modal::QuotaForm(m) = modal else {
+            panic!("expected quota form modal");
+        };
+        assert_eq!(m.focused, QuotaField::Provider);
+        assert!(
+            state
+                .config
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .quota
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn quota_form_down_can_focus_save() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut form = QuotaFormModal::new_for_add();
+        form.focused = QuotaField::WarnPct;
+
+        let modal = handle_quota_form_key(key(KeyCode::Down), &client, &mut state, form);
+        let Modal::QuotaForm(m) = modal else {
+            panic!("expected quota form modal");
+        };
+        assert_eq!(m.focused, QuotaField::Save);
+    }
+
+    #[test]
+    fn quota_form_s_no_longer_submits() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut form = QuotaFormModal::new_for_add();
+        form.provider = "anthropic".into();
+        form.window = "1d".into();
+        form.focused = QuotaField::Save;
+
+        let modal = handle_quota_form_key(key(KeyCode::Char('s')), &client, &mut state, form);
+        let Modal::QuotaForm(m) = modal else {
+            panic!("expected quota form modal");
+        };
+        assert_eq!(m.warn_pct, "80");
+        assert!(
+            state
+                .config
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .quota
+                .is_empty()
+        );
+    }
 }
 
 #[cfg(test)]

@@ -700,6 +700,7 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                 auth: auth_to_payload(&p.auth),
                 base_url: p.base_url.clone(),
                 openai_base_url: p.openai_base_url.clone(),
+                reasoning_effort: p.reasoning_effort.clone(),
             })
             .collect(),
         routing: c
@@ -746,12 +747,26 @@ fn payload_to_config(
         .providers
         .into_iter()
         .map(|pp| {
+            let kind = str_to_kind(&pp.kind)?;
+            let reasoning_effort = match pp.reasoning_effort.as_deref().map(str::trim) {
+                None | Some("") => None,
+                Some("low" | "medium" | "high") => pp
+                    .reasoning_effort
+                    .map(|s| s.trim().to_string()),
+                Some(other) => {
+                    return Err(ProxyError::BadRequest(format!(
+                        "invalid reasoning_effort '{other}' for provider '{}'",
+                        pp.name
+                    )));
+                }
+            };
             Ok(ProviderConfig {
                 name: pp.name,
-                kind: str_to_kind(&pp.kind)?,
+                kind,
                 auth: payload_to_auth(pp.auth),
                 base_url: pp.base_url,
                 openai_base_url: pp.openai_base_url,
+                reasoning_effort,
             })
         })
         .collect::<Result<Vec<_>, ProxyError>>()?;
@@ -1202,6 +1217,7 @@ mod tests {
                 },
                 base_url: None,
                 openai_base_url: None,
+                reasoning_effort: None,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -1223,6 +1239,70 @@ mod tests {
             AuthPayload::ApiKey { .. }
         ));
         assert_eq!(payload.routing[0].provider, "anthropic");
+    }
+
+    #[test]
+    fn config_payload_preserves_reasoning_effort() {
+        let cfg = Config {
+            port: 8787,
+            proxy_db: PathBuf::from("/tmp/proxy.db"),
+            pricing_db: PathBuf::from("/tmp/pricing.db"),
+            providers: vec![ProviderConfig {
+                name: "codex-main".into(),
+                kind: ProviderKind::Codex,
+                auth: AuthConfig::CodexAuto,
+                base_url: None,
+                openai_base_url: None,
+                reasoning_effort: Some("high".into()),
+            }],
+            routing: vec![],
+            affinity: AffinityConfig::default(),
+            quota: vec![],
+        };
+
+        let payload = config_to_payload(&cfg);
+        assert_eq!(payload.providers[0].reasoning_effort.as_deref(), Some("high"));
+
+        let restored = payload_to_config(
+            payload,
+            PathBuf::from("/tmp/proxy.db"),
+            PathBuf::from("/tmp/pricing.db"),
+            &cfg,
+        )
+        .unwrap();
+        assert_eq!(restored.providers[0].reasoning_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn payload_to_config_rejects_invalid_reasoning_effort() {
+        let p = ConfigPayload {
+            port: 8787,
+            providers: vec![ProviderPayload {
+                name: "codex-main".into(),
+                kind: "codex".into(),
+                auth: AuthPayload::CodexAuto,
+                base_url: None,
+                openai_base_url: None,
+                reasoning_effort: Some("extreme".into()),
+            }],
+            routing: vec![],
+            quota: vec![],
+            affinity: AffinityPayload::default(),
+            proxy_db: None,
+            pricing_db: None,
+        };
+        let existing = Config {
+            port: 8787,
+            proxy_db: PathBuf::new(),
+            pricing_db: PathBuf::new(),
+            providers: vec![],
+            routing: vec![],
+            affinity: AffinityConfig::default(),
+            quota: Vec::new(),
+        };
+
+        let err = payload_to_config(p, PathBuf::new(), PathBuf::new(), &existing).unwrap_err();
+        assert!(err.to_string().contains("invalid reasoning_effort"));
     }
 
     #[test]
@@ -1254,6 +1334,7 @@ mod tests {
                 auth: AuthPayload::Passthrough,
                 base_url: None,
                 openai_base_url: None,
+                reasoning_effort: None,
             }],
             routing: vec![],
             quota: vec![],

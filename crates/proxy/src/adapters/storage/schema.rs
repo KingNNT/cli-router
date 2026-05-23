@@ -2,7 +2,12 @@
 
 use rusqlite::{Connection, Error};
 
-const MIGRATIONS: &[(i32, &str)] = &[(1, MIGRATION_V1), (2, MIGRATION_V2), (3, MIGRATION_V3)];
+const MIGRATIONS: &[(i32, &str)] = &[
+    (1, MIGRATION_V1),
+    (2, MIGRATION_V2),
+    (3, MIGRATION_V3),
+    (4, MIGRATION_V4),
+];
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE users (
@@ -91,6 +96,10 @@ CREATE TABLE IF NOT EXISTS quota_rules (
     max_output_tokens INTEGER,
     warn_pct          INTEGER NOT NULL DEFAULT 80
 );
+"#;
+
+const MIGRATION_V4: &str = r#"
+ALTER TABLE providers ADD COLUMN reasoning_effort TEXT;
 "#;
 
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
@@ -203,5 +212,19 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM settings", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0, "no seed data in settings");
+    }
+
+    #[test]
+    fn v4_adds_provider_reasoning_effort_column() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+        let cols: Vec<String> = conn
+            .prepare("PRAGMA table_info(providers)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(cols.contains(&"reasoning_effort".into()));
     }
 }

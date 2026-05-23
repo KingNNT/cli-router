@@ -143,6 +143,7 @@ fn hot_reload_preserves_quota_enforcement() {
             auth: AuthConfig::Passthrough,
             base_url: None,
             openai_base_url: None,
+            reasoning_effort: None,
         }],
         routing: vec![RoutingRule {
             match_spec: MatchSpec {
