@@ -375,6 +375,127 @@ async fn codex_streaming_translates_responses_sse_to_chat_completions_sse() {
     assert!(text.contains("[DONE]"), "SSE output should end with [DONE]");
 }
 
+#[tokio::test]
+async fn codex_buffered_returns_completed_response_text_to_client_when_no_deltas() {
+    let upstream = MockServer::start().await;
+
+    let sse_body = [
+        "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_completed\",\"model\":\"gpt-5.5\"}}\n\n",
+        "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_completed\",\"model\":\"gpt-5.5\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Completed fallback text for client\"}]}],\"usage\":{\"input_tokens\":11,\"output_tokens\":4,\"total_tokens\":15}}}\n\n",
+        "event: response.done\ndata: {\"type\":\"response.done\"}\n\n",
+    ].join("");
+
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/responses"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(sse_body),
+        )
+        .mount(&upstream)
+        .await;
+
+    let (proxy_addr, _repo) = start_codex_proxy(upstream.uri()).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("http://{proxy_addr}/v1/chat/completions"))
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({
+                "model": "gpt-5.5",
+                "messages": [{"role": "user", "content": "Please answer"}]
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+
+    let status = resp.status();
+    let text = resp.text().await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&text).unwrap_or_else(|e| {
+        panic!("response is not valid JSON: {e}\nraw text: {text}");
+    });
+
+    assert_eq!(status, 200, "proxy should return 200, got body: {body}");
+    assert_eq!(body["object"], "chat.completion");
+    assert_eq!(
+        body["choices"][0]["message"]["content"],
+        "Completed fallback text for client"
+    );
+    assert_eq!(body["choices"][0]["finish_reason"], "stop");
+    assert_eq!(body["usage"]["prompt_tokens"], 11);
+    assert_eq!(body["usage"]["completion_tokens"], 4);
+    assert_eq!(body["usage"]["total_tokens"], 15);
+}
+
+#[tokio::test]
+async fn codex_streaming_returns_tool_calls_to_client() {
+    let upstream = MockServer::start().await;
+
+    let sse_body = [
+        "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_tool\",\"model\":\"gpt-5.5\"}}\n\n",
+        "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"call_id\":\"call_123\",\"name\":\"initial_instructions\",\"arguments\":\"\"}}\n\n",
+        "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"call_id\":\"call_123\",\"delta\":\"{}\"}\n\n",
+        "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tool\",\"model\":\"gpt-5.5\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}\n\n",
+    ].join("");
+
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/responses"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(sse_body),
+        )
+        .mount(&upstream)
+        .await;
+
+    let (proxy_addr, _repo) = start_codex_proxy(upstream.uri()).await;
+
+    let resp = reqwest::Client::new()
+        .post(format!("http://{proxy_addr}/v1/chat/completions"))
+        .header("content-type", "application/json")
+        .body(
+            serde_json::json!({
+                "model": "gpt-5.5",
+                "messages": [{"role": "user", "content": "Use a tool"}],
+                "stream": true,
+                "tools": [{
+                    "type": "function",
+                    "function": {
+                        "name": "initial_instructions",
+                        "parameters": {"type": "object", "properties": {}}
+                    }
+                }]
+            })
+            .to_string(),
+        )
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200, "proxy should return 200");
+    let text = resp.text().await.unwrap();
+
+    assert!(
+        text.contains("\"tool_calls\":[{\"function\":{\"arguments\":\"\",\"name\":\"initial_instructions\"},\"id\":\"call_123\",\"index\":0,\"type\":\"function\"}]"),
+        "client stream should contain tool call metadata, got: {text}"
+    );
+    assert!(
+        text.contains("\"arguments\":\"{}\""),
+        "client stream should contain tool call arguments, got: {text}"
+    );
+    assert!(
+        text.contains("\"finish_reason\":\"tool_calls\""),
+        "client stream should finish with tool_calls, got: {text}"
+    );
+    assert!(
+        text.contains("\"prompt_tokens\":10"),
+        "client stream should contain usage, got: {text}"
+    );
+    assert!(text.contains("[DONE]"), "client stream should end with [DONE]");
+}
+
 // ── Test 3: System message is extracted into instructions ─────────────────────
 
 #[tokio::test]

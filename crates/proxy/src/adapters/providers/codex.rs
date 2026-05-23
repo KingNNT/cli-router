@@ -337,6 +337,33 @@ fn translate_tool(tool: &Value) -> Value {
     }
 }
 
+fn text_content_to_string(content: Option<&Value>) -> String {
+    let Some(content) = content else {
+        return String::new();
+    };
+
+    if let Some(text) = content.as_str() {
+        return text.to_string();
+    }
+
+    if let Some(parts) = content.as_array() {
+        return parts
+            .iter()
+            .filter_map(|part| {
+                let part_type = part.get("type").and_then(|v| v.as_str());
+                if part_type == Some("text") || part_type == Some("input_text") {
+                    part.get("text").and_then(|v| v.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("");
+    }
+
+    String::new()
+}
+
 #[cfg(test)]
 fn translate_request(chat: &Value) -> Result<Value, String> {
     translate_request_with_default_reasoning_effort(chat, None)
@@ -362,19 +389,13 @@ fn translate_request_with_default_reasoning_effort(
             let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
 
             if role == "system" || role == "developer" {
-                let content = msg
-                    .get("content")
-                    .map(|c| c.as_str().unwrap_or("").to_string())
-                    .unwrap_or_default();
+                let content = text_content_to_string(msg.get("content"));
                 instructions = Value::String(content);
                 continue;
             }
 
             if role == "tool" {
-                let output = msg
-                    .get("content")
-                    .map(|c| c.as_str().unwrap_or("").to_string())
-                    .unwrap_or_default();
+                let output = text_content_to_string(msg.get("content"));
                 input_messages.push(json!({
                     "type": "function_call_output",
                     "call_id": msg
@@ -419,10 +440,7 @@ fn translate_request_with_default_reasoning_effort(
             }
 
             // Codex backend accepts plain string content for simple text messages.
-            let content = msg
-                .get("content")
-                .map(|c| c.as_str().unwrap_or("").to_string())
-                .unwrap_or_default();
+            let content = text_content_to_string(msg.get("content"));
 
             input_messages.push(json!({
                 "type": "message",
@@ -1040,6 +1058,25 @@ mod tests {
         assert_eq!(input[0]["role"], "user");
         // Content is a plain string for the Codex backend.
         assert_eq!(input[0]["content"], "Hello");
+    }
+
+    #[test]
+    fn translate_openai_text_content_parts_preserves_text() {
+        let chat = json!({
+            "model": "codex-mini",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Check the issue again"}
+                ]
+            }]
+        });
+
+        let result = translate_request(&chat).unwrap();
+        let input = result["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["role"], "user");
+        assert_eq!(input[0]["content"], "Check the issue again");
     }
 
     #[test]
