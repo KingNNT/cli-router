@@ -46,7 +46,11 @@ pub fn build_config_from_form(form: &ProviderFormModal) -> ConfigPayload {
             base_url: Some(form.base_url.trim().to_string()).filter(|s| !s.is_empty()),
             openai_base_url: Some(form.openai_base_url.trim().to_string())
                 .filter(|s| !s.is_empty()),
-            reasoning_effort: None,
+            reasoning_effort: if form.kind == crate::app::ProviderKind::Codex {
+                form.reasoning_effort.as_option().map(str::to_string)
+            } else {
+                None
+            },
         })
     };
 

@@ -42,6 +42,7 @@ pub struct FormInputs<'a> {
     pub kind: &'a str,
     pub base_url: Option<&'a str>,
     pub openai_base_url: Option<&'a str>,
+    pub reasoning_effort: Option<&'a str>,
     pub auth: &'a AuthPayload,
     /// `None` for Add, `Some(original_index)` for Edit.
     pub editing_index: Option<usize>,
@@ -109,7 +110,15 @@ pub fn validate_provider_form(
             .openai_base_url
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
-        reasoning_effort: None,
+        reasoning_effort: if input.kind == "codex" {
+            input
+                .reasoning_effort
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        } else {
+            None
+        },
     })
 }
 
@@ -190,6 +199,7 @@ mod tests {
             kind: "anthropic",
             base_url: None,
             openai_base_url: None,
+            reasoning_effort: None,
             auth,
             editing_index: None,
             original_name: None,
@@ -280,6 +290,44 @@ mod tests {
         let auth = AuthPayload::Passthrough;
         let p = validate_provider_form(&inputs("foo", &auth), &cfg).unwrap();
         assert!(matches!(p.auth, AuthPayload::Passthrough));
+    }
+
+    #[test]
+    fn codex_provider_preserves_reasoning_effort() {
+        let auth = AuthPayload::CodexAuto;
+        let cfg = empty_cfg();
+        let input = FormInputs {
+            name: "codex-main",
+            kind: "codex",
+            base_url: None,
+            openai_base_url: None,
+            reasoning_effort: Some("high"),
+            auth: &auth,
+            editing_index: None,
+            original_name: None,
+        };
+
+        let provider = validate_provider_form(&input, &cfg).unwrap();
+        assert_eq!(provider.reasoning_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn non_codex_provider_drops_reasoning_effort() {
+        let auth = AuthPayload::Passthrough;
+        let cfg = empty_cfg();
+        let input = FormInputs {
+            name: "anthropic-main",
+            kind: "anthropic",
+            base_url: None,
+            openai_base_url: None,
+            reasoning_effort: Some("high"),
+            auth: &auth,
+            editing_index: None,
+            original_name: None,
+        };
+
+        let provider = validate_provider_form(&input, &cfg).unwrap();
+        assert_eq!(provider.reasoning_effort, None);
     }
 
     #[test]

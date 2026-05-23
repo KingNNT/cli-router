@@ -15,8 +15,8 @@ mod wizard;
 use crate::app::{
     ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal, FormField,
     FormMode, FormState, Modal, PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderAction,
-    ProviderFormModal, QuotaField, QuotaFormModal, RangePreset, RoutingField, RoutingFormModal,
-    TestProviderModal, TestState, View, WizardStep,
+    ProviderFormModal, ProviderKind, QuotaField, QuotaFormModal, RangePreset, ReasoningEffortInput,
+    RoutingField, RoutingFormModal, TestProviderModal, TestState, View, WizardStep,
 };
 use crate::client::AdminClient;
 use chrono::{Datelike, Local, TimeZone};
@@ -977,11 +977,11 @@ fn handle_form_key(
         (_, KeyCode::Esc) => Modal::None,
 
         (FormState::Editing, KeyCode::Tab) => {
-            m.focused = m.focused.next(m.auth_kind);
+            m.focused = m.focused.next(m.auth_kind, m.kind);
             Modal::ProviderForm(m)
         }
         (FormState::Editing, KeyCode::BackTab) => {
-            m.focused = m.focused.prev(m.auth_kind);
+            m.focused = m.focused.prev(m.auth_kind, m.kind);
             Modal::ProviderForm(m)
         }
         (FormState::Editing, KeyCode::Left) => {
@@ -1120,6 +1120,7 @@ fn submit_non_oauth_save(
         kind: m.kind.label(),
         base_url: Some(&m.base_url),
         openai_base_url: Some(&m.openai_base_url),
+        reasoning_effort: m.reasoning_effort.as_option(),
         auth: &auth,
         editing_index,
         original_name,
@@ -1171,6 +1172,16 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
                 m.kind.cycle_next()
             } else {
                 m.kind.cycle_prev()
+            };
+            if m.kind != ProviderKind::Codex {
+                m.reasoning_effort = ReasoningEffortInput::Unset;
+            }
+        }
+        FormField::ReasoningEffort => {
+            m.reasoning_effort = if forward {
+                m.reasoning_effort.cycle_next()
+            } else {
+                m.reasoning_effort.cycle_prev()
             };
         }
         FormField::AuthKind => {
@@ -1236,6 +1247,7 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
             kind: m.kind.label(),
             base_url: Some(&m.base_url),
             openai_base_url: Some(&m.openai_base_url),
+            reasoning_effort: m.reasoning_effort.as_option(),
             auth: &placeholder_auth,
             editing_index: None,
             original_name: None,
@@ -1382,10 +1394,10 @@ fn handle_wizard_form_key(
             return None;
         }
         KeyCode::Tab => {
-            m.focused = m.focused.next(m.auth_kind);
+            m.focused = m.focused.next(m.auth_kind, m.kind);
         }
         KeyCode::BackTab => {
-            m.focused = m.focused.prev(m.auth_kind);
+            m.focused = m.focused.prev(m.auth_kind, m.kind);
         }
         KeyCode::Left => cycle_field_value(&mut m, false),
         KeyCode::Right => cycle_field_value(&mut m, true),
@@ -1817,6 +1829,7 @@ fn submit_oauth_edit(
         kind: m.kind.label(),
         base_url: Some(&m.base_url),
         openai_base_url: Some(&m.openai_base_url),
+        reasoning_effort: m.reasoning_effort.as_option(),
         auth: &original_auth,
         editing_index: Some(original_index),
         original_name: Some(&original_name),
@@ -1836,6 +1849,7 @@ fn submit_oauth_edit(
             || prev.kind != provider.kind
             || prev.base_url != provider.base_url
             || prev.openai_base_url != provider.openai_base_url
+            || prev.reasoning_effort != provider.reasoning_effort
     } else {
         m.error = Some("provider list changed; press Esc and reopen".into());
         return Modal::ProviderForm(m);

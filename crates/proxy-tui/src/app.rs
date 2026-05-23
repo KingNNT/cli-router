@@ -333,24 +333,80 @@ impl ProviderKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReasoningEffortInput {
+    Unset,
+    Low,
+    Medium,
+    High,
+}
+
+impl ReasoningEffortInput {
+    pub fn label(self) -> &'static str {
+        match self {
+            ReasoningEffortInput::Unset => "unset",
+            ReasoningEffortInput::Low => "low",
+            ReasoningEffortInput::Medium => "medium",
+            ReasoningEffortInput::High => "high",
+        }
+    }
+
+    pub fn as_option(self) -> Option<&'static str> {
+        match self {
+            ReasoningEffortInput::Unset => None,
+            ReasoningEffortInput::Low => Some("low"),
+            ReasoningEffortInput::Medium => Some("medium"),
+            ReasoningEffortInput::High => Some("high"),
+        }
+    }
+
+    pub fn from_option(value: Option<&str>) -> Self {
+        match value {
+            Some("low") => ReasoningEffortInput::Low,
+            Some("medium") => ReasoningEffortInput::Medium,
+            Some("high") => ReasoningEffortInput::High,
+            _ => ReasoningEffortInput::Unset,
+        }
+    }
+
+    pub fn cycle_next(self) -> Self {
+        match self {
+            ReasoningEffortInput::Unset => ReasoningEffortInput::Low,
+            ReasoningEffortInput::Low => ReasoningEffortInput::Medium,
+            ReasoningEffortInput::Medium => ReasoningEffortInput::High,
+            ReasoningEffortInput::High => ReasoningEffortInput::Unset,
+        }
+    }
+
+    pub fn cycle_prev(self) -> Self {
+        match self {
+            ReasoningEffortInput::Unset => ReasoningEffortInput::High,
+            ReasoningEffortInput::Low => ReasoningEffortInput::Unset,
+            ReasoningEffortInput::Medium => ReasoningEffortInput::Low,
+            ReasoningEffortInput::High => ReasoningEffortInput::Medium,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormField {
     Name,
     Kind,
     BaseUrl,
     OpenaiBaseUrl,
+    ReasoningEffort,
     AuthKind,
     AuthValue,
     Save,
 }
 
 impl FormField {
-    pub fn next(self, auth_kind: AuthInputKind) -> Self {
-        let order = field_order(auth_kind);
+    pub fn next(self, auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Self {
+        let order = field_order(auth_kind, provider_kind);
         let idx = order.iter().position(|f| *f == self).unwrap_or(0);
         order[(idx + 1) % order.len()]
     }
-    pub fn prev(self, auth_kind: AuthInputKind) -> Self {
-        let order = field_order(auth_kind);
+    pub fn prev(self, auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Self {
+        let order = field_order(auth_kind, provider_kind);
         let idx = order.iter().position(|f| *f == self).unwrap_or(0);
         order[(idx + order.len() - 1) % order.len()]
     }
@@ -358,28 +414,22 @@ impl FormField {
 
 /// Field traversal order. AuthValue is omitted when the auth kind doesn't
 /// need a typed value.
-fn field_order(auth_kind: AuthInputKind) -> &'static [FormField] {
-    match auth_kind {
-        AuthInputKind::Passthrough | AuthInputKind::OAuthAnthropic | AuthInputKind::OAuthOpenAi => {
-            &[
-                FormField::Name,
-                FormField::Kind,
-                FormField::BaseUrl,
-                FormField::OpenaiBaseUrl,
-                FormField::AuthKind,
-                FormField::Save,
-            ]
-        }
-        AuthInputKind::ApiKey | AuthInputKind::Bearer => &[
-            FormField::Name,
-            FormField::Kind,
-            FormField::BaseUrl,
-            FormField::OpenaiBaseUrl,
-            FormField::AuthKind,
-            FormField::AuthValue,
-            FormField::Save,
-        ],
+fn field_order(auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Vec<FormField> {
+    let mut order = vec![
+        FormField::Name,
+        FormField::Kind,
+        FormField::BaseUrl,
+        FormField::OpenaiBaseUrl,
+    ];
+    if provider_kind == ProviderKind::Codex {
+        order.push(FormField::ReasoningEffort);
     }
+    order.push(FormField::AuthKind);
+    if matches!(auth_kind, AuthInputKind::ApiKey | AuthInputKind::Bearer) {
+        order.push(FormField::AuthValue);
+    }
+    order.push(FormField::Save);
+    order
 }
 
 #[derive(Debug, Clone)]
@@ -412,6 +462,7 @@ pub struct ProviderFormModal {
     pub kind: ProviderKind,
     pub base_url: String,
     pub openai_base_url: String,
+    pub reasoning_effort: ReasoningEffortInput,
     pub auth_kind: AuthInputKind,
     pub auth_value: String,
     pub state: FormState,
@@ -429,6 +480,7 @@ impl ProviderFormModal {
             kind: ProviderKind::Anthropic,
             base_url: String::new(),
             openai_base_url: String::new(),
+            reasoning_effort: ReasoningEffortInput::Unset,
             auth_kind: AuthInputKind::Passthrough,
             auth_value: String::new(),
             state: FormState::Editing,
@@ -452,6 +504,7 @@ impl ProviderFormModal {
             kind: ProviderKind::from_str_or_default(&p.kind),
             base_url: p.base_url.clone().unwrap_or_default(),
             openai_base_url: p.openai_base_url.clone().unwrap_or_default(),
+            reasoning_effort: ReasoningEffortInput::from_option(p.reasoning_effort.as_deref()),
             auth_kind,
             auth_value,
             state: FormState::Editing,
@@ -806,25 +859,40 @@ mod form_field_tests {
     #[test]
     fn next_wraps_past_save_back_to_name() {
         let f = FormField::Save;
-        assert_eq!(f.next(AuthInputKind::ApiKey), FormField::Name);
+        assert_eq!(f.next(AuthInputKind::ApiKey, ProviderKind::Anthropic), FormField::Name);
     }
 
     #[test]
     fn prev_wraps_from_name_to_save() {
         let f = FormField::Name;
-        assert_eq!(f.prev(AuthInputKind::ApiKey), FormField::Save);
+        assert_eq!(f.prev(AuthInputKind::ApiKey, ProviderKind::Anthropic), FormField::Save);
     }
 
     #[test]
     fn passthrough_skips_auth_value_field() {
         let f = FormField::AuthKind;
-        assert_eq!(f.next(AuthInputKind::Passthrough), FormField::Save);
+        assert_eq!(
+            f.next(AuthInputKind::Passthrough, ProviderKind::Anthropic),
+            FormField::Save
+        );
     }
 
     #[test]
     fn api_key_includes_auth_value_field() {
         let f = FormField::AuthKind;
-        assert_eq!(f.next(AuthInputKind::ApiKey), FormField::AuthValue);
+        assert_eq!(
+            f.next(AuthInputKind::ApiKey, ProviderKind::Anthropic),
+            FormField::AuthValue
+        );
+    }
+
+    #[test]
+    fn codex_includes_reasoning_effort_field() {
+        let f = FormField::OpenaiBaseUrl;
+        assert_eq!(
+            f.next(AuthInputKind::Passthrough, ProviderKind::Codex),
+            FormField::ReasoningEffort
+        );
     }
 
     #[test]

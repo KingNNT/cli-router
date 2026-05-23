@@ -1017,6 +1017,13 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
         "OpenAI Base URL:",
         show_or_placeholder(&m.openai_base_url),
     ));
+    if m.kind == crate::app::ProviderKind::Codex {
+        lines.push(row(
+            FormField::ReasoningEffort,
+            "Reasoning Effort:",
+            format!("< {} >    [←/→ to cycle]", m.reasoning_effort.label()),
+        ));
+    }
     lines.push(row(
         FormField::AuthKind,
         "Auth Kind:",
