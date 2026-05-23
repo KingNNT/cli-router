@@ -456,7 +456,7 @@ fn translate_request_with_default_reasoning_effort(
     // but the Responses API expects {"type":"function","name":"...","parameters":{...}}
     // (flat structure without the nested "function" envelope).
     if let Some(tools) = chat.get("tools").and_then(|t| t.as_array()) {
-        let translated_tools: Vec<Value> = tools.iter().map(|tool| translate_tool(tool)).collect();
+        let translated_tools: Vec<Value> = tools.iter().map(translate_tool).collect();
         out.insert("tools".into(), Value::Array(translated_tools));
     }
     if let Some(tool_choice) = chat.get("tool_choice") {
@@ -475,7 +475,6 @@ fn translate_request_with_default_reasoning_effort(
 // ---------------------------------------------------------------------------
 
 #[allow(dead_code)]
-
 fn translate_buffered_response(responses_body: &Value) -> Result<Value, String> {
     // Extract output text from the response
     let mut content = String::new();
@@ -489,13 +488,10 @@ fn translate_buffered_response(responses_body: &Value) -> Result<Value, String> 
                 "message" => {
                     if let Some(content_arr) = item.get("content").and_then(|c| c.as_array()) {
                         for c in content_arr {
-                            if c.get("type")
-                                .and_then(|t| t.as_str())
-                                .map_or(false, |t| t == "output_text")
+                            if c.get("type").and_then(|t| t.as_str()) == Some("output_text")
+                                && let Some(text) = c.get("text").and_then(|t| t.as_str())
                             {
-                                if let Some(text) = c.get("text").and_then(|t| t.as_str()) {
-                                    content.push_str(text);
-                                }
+                                content.push_str(text);
                             }
                         }
                     }
@@ -531,9 +527,9 @@ fn translate_buffered_response(responses_body: &Value) -> Result<Value, String> 
         message["tool_calls"] = Value::Array(tool_calls);
     }
 
-    let finish_reason = if !message
+    let finish_reason = if message
         .get("tool_calls")
-        .map_or(false, |tc| tc.as_array().map_or(false, |a| !a.is_empty()))
+        .is_none_or(|tc| tc.as_array().is_none_or(|a| a.is_empty()))
     {
         "stop"
     } else {
@@ -754,8 +750,9 @@ impl ResponsesSseTranslator {
                         // The Codex backend can return 200 OK with content only
                         // in the completed event (no individual deltas), especially
                         // with reasoning models like GPT-5.5.
-                        if !self.first_content_sent {
-                            if let Some(output) = resp.get("output").and_then(|o| o.as_array()) {
+                        if !self.first_content_sent
+                            && let Some(output) = resp.get("output").and_then(|o| o.as_array())
+                        {
                                 let mut collected = String::new();
                                 for item in output {
                                     let item_type = item
@@ -770,12 +767,10 @@ impl ResponsesSseTranslator {
                                                 for c in content {
                                                     if c.get("type").and_then(|t| t.as_str())
                                                         == Some("output_text")
-                                                    {
-                                                        if let Some(text) =
+                                                        && let Some(text) =
                                                             c.get("text").and_then(|t| t.as_str())
-                                                        {
-                                                            collected.push_str(text);
-                                                        }
+                                                    {
+                                                        collected.push_str(text);
                                                     }
                                                 }
                                             }
@@ -795,7 +790,6 @@ impl ResponsesSseTranslator {
                                     );
                                     self.emit_text_delta(&collected);
                                 }
-                            }
                         }
 
                         let mut chunk = self.base_chunk();
