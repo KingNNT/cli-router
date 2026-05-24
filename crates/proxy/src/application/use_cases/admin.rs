@@ -750,9 +750,9 @@ fn payload_to_config(
             let kind = str_to_kind(&pp.kind)?;
             let reasoning_effort = match pp.reasoning_effort.as_deref().map(str::trim) {
                 None | Some("") => None,
-                Some("low" | "medium" | "high") => pp
-                    .reasoning_effort
-                    .map(|s| s.trim().to_string()),
+                Some("low" | "medium" | "high") => {
+                    pp.reasoning_effort.map(|s| s.trim().to_string())
+                }
                 Some(other) => {
                     return Err(ProxyError::BadRequest(format!(
                         "invalid reasoning_effort '{other}' for provider '{}'",
@@ -1261,7 +1261,10 @@ mod tests {
         };
 
         let payload = config_to_payload(&cfg);
-        assert_eq!(payload.providers[0].reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(
+            payload.providers[0].reasoning_effort.as_deref(),
+            Some("high")
+        );
 
         let restored = payload_to_config(
             payload,
@@ -1270,7 +1273,10 @@ mod tests {
             &cfg,
         )
         .unwrap();
-        assert_eq!(restored.providers[0].reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(
+            restored.providers[0].reasoning_effort.as_deref(),
+            Some("high")
+        );
     }
 
     #[test]

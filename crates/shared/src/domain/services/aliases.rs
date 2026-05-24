@@ -180,6 +180,93 @@ pub fn canonicalize(source: &str) -> Option<&'static str> {
     None
 }
 
+/// Candidate lookup keys for pricing a raw model id.
+///
+/// Ordering matters: exact request keys come first, then exact canonical aliases,
+/// then conservative family fallbacks. Keys are deduplicated while preserving the
+/// first occurrence.
+pub fn pricing_lookup_keys(source: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    push_unique(&mut keys, source);
+
+    if let Some(pos) = source.find('/') {
+        let suffix = &source[pos + 1..];
+        if !suffix.is_empty() {
+            push_unique(&mut keys, suffix);
+        }
+    }
+
+    for candidate in keys.clone() {
+        if let Some(canonical) = canonicalize(candidate.as_str()) {
+            push_unique(&mut keys, canonical);
+        }
+        if let Some(family) = family_fallback(candidate.as_str()) {
+            push_unique(&mut keys, family);
+        }
+    }
+
+    keys
+}
+
+fn push_unique(keys: &mut Vec<String>, key: &str) {
+    if !key.is_empty() && !keys.iter().any(|existing| existing == key) {
+        keys.push(key.to_string());
+    }
+}
+
+fn family_fallback(source: &str) -> Option<&'static str> {
+    if is_gpt_51_codex_variant(source) {
+        return Some("gpt5.1-codex");
+    }
+    if is_gpt_5_codex_variant(source) {
+        return Some("gpt5-codex");
+    }
+    if matches!(
+        source,
+        "glm-5.1"
+            | "glm-5-turbo"
+            | "glm-5v-turbo"
+            | "zai/glm-5.1"
+            | "zai/glm-5-turbo"
+            | "zai/glm-5v-turbo"
+            | "z-ai/glm-5.1"
+            | "z-ai/glm-5-turbo"
+            | "z-ai/glm-5v-turbo"
+    ) {
+        return Some("glm5");
+    }
+    None
+}
+
+fn is_gpt_51_codex_variant(source: &str) -> bool {
+    source == "gpt-5.1-codex-latest"
+        || source == "gpt-5.1-codex-preview"
+        || has_date_suffix(source, "gpt-5.1-codex")
+}
+
+fn is_gpt_5_codex_variant(source: &str) -> bool {
+    source == "gpt-5-codex-latest"
+        || source == "gpt-5-codex-preview"
+        || has_date_suffix(source, "gpt-5-codex")
+}
+
+fn has_date_suffix(source: &str, prefix: &str) -> bool {
+    let Some(rest) = source.strip_prefix(prefix) else {
+        return false;
+    };
+    let Some(date) = rest.strip_prefix('-') else {
+        return false;
+    };
+    let bytes = date.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && bytes
+            .iter()
+            .enumerate()
+            .all(|(idx, b)| idx == 4 || idx == 7 || b.is_ascii_digit())
+}
+
 /// Build `ModelPricing` entries from the const list, ready for the
 /// `PricingRepository` port. `today` is stamped into `last_synced`.
 pub fn canonical_pricing(today: NaiveDate) -> Vec<ModelPricing> {
@@ -225,6 +312,52 @@ mod tests {
     fn canonicalize_returns_none_for_unknown_source() {
         assert_eq!(canonicalize("some-unknown-model-xyz"), None);
         assert_eq!(canonicalize(""), None);
+    }
+
+    #[test]
+    fn pricing_lookup_keys_preserves_exact_keys_before_aliases() {
+        assert_eq!(
+            pricing_lookup_keys("openai/gpt-5.1-codex-latest"),
+            vec![
+                "openai/gpt-5.1-codex-latest".to_string(),
+                "gpt-5.1-codex-latest".to_string(),
+                "gpt5.1-codex".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn pricing_lookup_keys_adds_exact_canonical_alias() {
+        assert_eq!(
+            pricing_lookup_keys("anthropic.claude-opus-4-6-v1"),
+            vec![
+                "anthropic.claude-opus-4-6-v1".to_string(),
+                "opus4.6".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn pricing_lookup_keys_deduplicates_without_reordering() {
+        assert_eq!(
+            pricing_lookup_keys("zai/glm-5.1"),
+            vec![
+                "zai/glm-5.1".to_string(),
+                "glm-5.1".to_string(),
+                "glm5".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn pricing_lookup_keys_does_not_guess_unreviewed_models() {
+        assert_eq!(
+            pricing_lookup_keys("some-provider/unknown-model-latest"),
+            vec![
+                "some-provider/unknown-model-latest".to_string(),
+                "unknown-model-latest".to_string(),
+            ]
+        );
     }
 
     #[test]

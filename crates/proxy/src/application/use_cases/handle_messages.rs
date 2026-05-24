@@ -10,7 +10,9 @@ use crate::domain::{RequestStart, RequestUsage, UsageRecord};
 use bytes::Bytes;
 use http::HeaderMap;
 use shared::application::ports::{Clock, PricingRepository};
-use shared::domain::value_objects::{ModelId, PricePerToken};
+use shared::domain::services::aliases::pricing_lookup_keys;
+use shared::domain::services::pricing::calculate_cost;
+use shared::domain::value_objects::{ModelId, TokenBreakdown, TokenCount};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -379,14 +381,12 @@ fn compute_cost(
     model: &str,
     usage: &UsageRecord,
 ) -> Option<f64> {
-    let model_id = match ModelId::new(model.to_string()) {
-        Ok(id) => id,
-        Err(e) => {
-            tracing::warn!(model = %model, error = %e, "invalid model id; cost will be NULL");
-            return None;
-        }
-    };
-    let keys = model_id.lookup_keys();
+    if let Err(e) = ModelId::new(model.to_string()) {
+        tracing::warn!(model = %model, error = %e, "invalid model id; cost will be NULL");
+        return None;
+    }
+
+    let keys = pricing_lookup_keys(model);
     let map = match pricing.find_many(&keys) {
         Ok(m) => m,
         Err(e) => {
@@ -394,30 +394,39 @@ fn compute_cost(
             return None;
         }
     };
-    let p = match keys.iter().find_map(|k| map.get(k)) {
-        Some(p) => p,
-        None => {
-            tracing::warn!(model = %model, "no pricing entry; cost will be NULL");
-            return None;
-        }
+    let Some((pricing_key, p)) = keys
+        .iter()
+        .find_map(|k| map.get(k).map(|pricing| (k, pricing)))
+    else {
+        tracing::warn!(model = %model, pricing_match = "none", "no pricing entry; cost will be NULL");
+        return None;
     };
-    let i = usage.input_tokens.unwrap_or(0) as f64;
-    let o = usage.output_tokens.unwrap_or(0) as f64;
-    let cr = usage.cache_read_tokens.unwrap_or(0) as f64;
-    let cw = usage.cache_creation_tokens.unwrap_or(0) as f64;
-    let cost = i * p.input_rate.value()
-        + o * p.output_rate.value()
-        + cr * p
-            .cache_read_rate
-            .as_ref()
-            .map(PricePerToken::value)
-            .unwrap_or(0.0)
-        + cw * p
-            .cache_write_rate
-            .as_ref()
-            .map(PricePerToken::value)
-            .unwrap_or(0.0);
-    Some(cost)
+
+    let match_kind = if pricing_key == model {
+        "exact"
+    } else if pricing_key.as_str() == "gpt5.1-codex"
+        || pricing_key.as_str() == "gpt5-codex"
+        || pricing_key.as_str() == "glm5"
+    {
+        "family_alias"
+    } else {
+        "alias"
+    };
+    tracing::debug!(
+        model = %model,
+        pricing_key = %pricing_key,
+        pricing_match = match_kind,
+        "pricing entry selected"
+    );
+
+    let tokens = TokenBreakdown {
+        input: TokenCount::new(usage.input_tokens.unwrap_or(0)),
+        output: TokenCount::new(usage.output_tokens.unwrap_or(0)),
+        reasoning: TokenCount::new(0),
+        cache_read: TokenCount::new(usage.cache_read_tokens.unwrap_or(0)),
+        cache_write: TokenCount::new(usage.cache_creation_tokens.unwrap_or(0)),
+    };
+    Some(calculate_cost(&tokens, p).value())
 }
 
 /// Estimate token count from an Anthropic-format request body when the
@@ -497,8 +506,11 @@ mod tests {
     use crate::application::ports::{BoxedByteStream, BoxedError, UpstreamResponse};
     use async_trait::async_trait;
     use bytes::Bytes;
+    use chrono::NaiveDate;
     use http::HeaderMap;
     use shared::application::test_support::{FakePricingRepository, FixedClock};
+    use shared::domain::entities::ModelPricing;
+    use shared::domain::value_objects::{ModelId, PricePerToken};
     use std::sync::Mutex;
 
     #[test]
@@ -646,6 +658,72 @@ mod tests {
 
     fn fake_pricing() -> Arc<dyn PricingRepository> {
         Arc::new(FakePricingRepository::default())
+    }
+
+    fn pricing_row(key: &str, input: f64, output: f64) -> ModelPricing {
+        ModelPricing {
+            lookup_key: key.into(),
+            model: ModelId::new(key).unwrap(),
+            provider_id: "test".into(),
+            input_rate: PricePerToken::new(input).unwrap(),
+            output_rate: PricePerToken::new(output).unwrap(),
+            cache_read_rate: None,
+            cache_write_rate: None,
+            last_synced: NaiveDate::from_ymd_opt(2026, 5, 24).unwrap(),
+        }
+    }
+
+    #[test]
+    fn compute_cost_uses_input_rate_for_missing_cache_rates() {
+        let repo = Arc::new(FakePricingRepository::default());
+        repo.upsert_many(&[pricing_row("m", 0.00001, 0.00003)])
+            .unwrap();
+        let repo_dyn: Arc<dyn PricingRepository> = repo;
+
+        let usage = UsageRecord {
+            input_tokens: Some(100),
+            output_tokens: Some(10),
+            cache_read_tokens: Some(20),
+            cache_creation_tokens: Some(30),
+        };
+
+        let cost = compute_cost(&repo_dyn, "m", &usage).unwrap();
+        // input 100 * .00001 + output 10 * .00003 + cache 50 * .00001
+        assert!((cost - 0.0018).abs() < 1e-12);
+    }
+
+    #[test]
+    fn compute_cost_uses_family_fallback_after_exact_miss() {
+        let repo = Arc::new(FakePricingRepository::default());
+        repo.upsert_many(&[pricing_row("gpt5.1-codex", 0.00000125, 0.00001)])
+            .unwrap();
+        let repo_dyn: Arc<dyn PricingRepository> = repo;
+
+        let usage = UsageRecord {
+            input_tokens: Some(1000),
+            output_tokens: Some(100),
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+        };
+
+        let cost = compute_cost(&repo_dyn, "openai/gpt-5.1-codex-latest", &usage).unwrap();
+        assert!((cost - 0.00225).abs() < 1e-12);
+    }
+
+    #[test]
+    fn compute_cost_returns_none_for_unknown_model() {
+        let repo_dyn: Arc<dyn PricingRepository> = Arc::new(FakePricingRepository::default());
+        let usage = UsageRecord {
+            input_tokens: Some(1000),
+            output_tokens: Some(100),
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+        };
+
+        assert_eq!(
+            compute_cost(&repo_dyn, "unknown-model-latest", &usage),
+            None
+        );
     }
 
     struct NoopQuota;

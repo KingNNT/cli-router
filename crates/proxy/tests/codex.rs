@@ -493,7 +493,10 @@ async fn codex_streaming_returns_tool_calls_to_client() {
         text.contains("\"prompt_tokens\":10"),
         "client stream should contain usage, got: {text}"
     );
-    assert!(text.contains("[DONE]"), "client stream should end with [DONE]");
+    assert!(
+        text.contains("[DONE]"),
+        "client stream should end with [DONE]"
+    );
 }
 
 // ── Test 3: System message is extracted into instructions ─────────────────────
