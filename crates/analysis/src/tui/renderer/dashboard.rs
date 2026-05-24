@@ -77,7 +77,8 @@ pub fn draw(
     // First sub-col is widened to fit the full model name (up to MAX_NAME_WIDTH);
     // the rest keep a narrow numeric budget so compact tokens/costs fit snugly.
     let compute_sub = |mi: usize| -> [u16; 5] {
-        let model_label = vm.model_columns[mi].as_str();
+        let model_label = vm.model_columns[mi].model.as_str();
+        let pricing_note = vm.model_columns[mi].pricing_note.as_str();
         let mut widths = [MIN_SUB_COL_WIDTH; 5];
         for (si, label) in SUB_LABELS.iter().enumerate() {
             widths[si] = widths[si].max(label.chars().count() as u16);
@@ -100,6 +101,7 @@ pub fn draw(
         }
         // First sub-col doubles as model name header — widen to fit.
         widths[0] = widths[0].max(model_label.chars().count() as u16);
+        widths[0] = widths[0].max(pricing_note.chars().count() as u16);
         widths[0] = widths[0].clamp(MIN_SUB_COL_WIDTH, MAX_NAME_WIDTH);
         for w in widths.iter_mut().skip(1) {
             *w = (*w).clamp(MIN_SUB_COL_WIDTH, MAX_NUMERIC_WIDTH);
@@ -173,10 +175,18 @@ pub fn draw(
         header_cells.push(two_line_header_bar(sep_style));
     }
     for (idx, &mi) in visible_models.iter().enumerate() {
-        let model_label = vm.model_columns[mi].as_str();
+        let model_label = vm.model_columns[mi].model.as_str();
+        let pricing_note = vm.model_columns[mi].pricing_note.as_str();
         for (si, sub) in SUB_LABELS.iter().enumerate() {
-            let top = if si == 0 { model_label } else { "" };
-            header_cells.push(two_line_header_sub(top, sub, sub_widths[idx][si] as usize));
+            if si == 0 {
+                header_cells.push(model_header_with_note(
+                    model_label,
+                    pricing_note,
+                    sub_widths[idx][si] as usize,
+                ));
+            } else {
+                header_cells.push(two_line_header_sub("", sub, sub_widths[idx][si] as usize));
+            }
         }
         header_cells.push(two_line_header_bar(sep_style));
     }
@@ -439,20 +449,42 @@ fn two_line_header_bar(style: Style) -> Cell<'static> {
 }
 
 fn two_line_header_sub(top: &str, bottom: &str, budget: usize) -> Cell<'static> {
-    // Truncate the model name to fit within the single sub-column's width.
-    let top_trunc = if top.chars().count() > budget && budget > 0 {
-        let take: String = top.chars().take(budget.saturating_sub(1)).collect();
+    two_line_header(&truncate_for_header(top, budget), bottom)
+}
+
+fn model_header_with_note(model: &str, pricing_note: &str, budget: usize) -> Cell<'static> {
+    let model_trunc = truncate_for_header(model, budget);
+    let note_trunc = truncate_for_header(pricing_note, budget);
+    let text = Text::from(vec![
+        Line::from(Span::styled(
+            model_trunc,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            note_trunc,
+            Style::default().fg(Color::DarkGray),
+        )),
+    ]);
+    Cell::from(text)
+}
+
+fn truncate_for_header(value: &str, budget: usize) -> String {
+    if value.chars().count() > budget && budget > 0 {
+        let take: String = value.chars().take(budget.saturating_sub(1)).collect();
         format!("{}…", take)
     } else {
-        top.to_string()
-    };
-    two_line_header(&top_trunc, bottom)
+        value.to_string()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::view_models::{DashboardViewModel, DayPivotRowVM, ModelBreakdownVM};
+    use crate::adapters::view_models::{
+        DashboardViewModel, DayPivotRowVM, ModelBreakdownVM, ModelColumnVM,
+    };
     use ratatui::{Terminal, backend::TestBackend};
 
     fn sample_vm(model_name: &str) -> DashboardViewModel {
@@ -464,7 +496,7 @@ mod tests {
             cost: "$0.78".into(),
         };
         DashboardViewModel {
-            model_columns: vec![model_name.to_string()],
+            model_columns: vec![model_column(model_name)],
             rows: vec![DayPivotRowVM {
                 date_label: "04-23".into(),
                 model_cells: vec![cell.clone()],
@@ -478,6 +510,13 @@ mod tests {
             selected_window_index: 2,
             empty: false,
             ..DashboardViewModel::default()
+        }
+    }
+
+    fn model_column(model: &str) -> ModelColumnVM {
+        ModelColumnVM {
+            model: model.to_string(),
+            pricing_note: "exact price".to_string(),
         }
     }
 
@@ -534,7 +573,7 @@ mod tests {
             "opus",
         ];
         let vm = DashboardViewModel {
-            model_columns: names.iter().map(|s| s.to_string()).collect(),
+            model_columns: names.iter().map(|s| model_column(s)).collect(),
             rows: vec![DayPivotRowVM {
                 date_label: "04-23".into(),
                 model_cells: vec![cell.clone(); names.len()],
@@ -560,6 +599,24 @@ mod tests {
     }
 
     #[test]
+    fn model_header_shows_pricing_note() {
+        let mut vm = sample_vm("openai/gpt-5.1-codex-latest");
+        vm.model_columns = vec![ModelColumnVM {
+            model: "openai/gpt-5.1-codex-latest".to_string(),
+            pricing_note: "priced as gpt5.1-codex".to_string(),
+        }];
+        vm.column_totals = vec![ModelBreakdownVM::default()];
+        for row in &mut vm.rows {
+            row.model_cells = vec![ModelBreakdownVM::default()];
+        }
+
+        let rendered = render_to_string(&vm, 80, 12);
+
+        assert!(rendered.contains("priced as") || rendered.contains("↦"));
+        assert!(rendered.contains("gpt5.1-codex"));
+    }
+
+    #[test]
     fn vertical_separator_drawn_between_model_groups() {
         // Two models: separator "│" should appear between their sub-col groups.
         let cell = ModelBreakdownVM {
@@ -570,7 +627,7 @@ mod tests {
             cost: "$0.10".into(),
         };
         let vm = DashboardViewModel {
-            model_columns: vec!["alpha".into(), "beta".into()],
+            model_columns: vec![model_column("alpha"), model_column("beta")],
             rows: vec![DayPivotRowVM {
                 date_label: "04-23".into(),
                 model_cells: vec![cell.clone(), cell.clone()],

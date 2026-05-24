@@ -827,14 +827,29 @@ mod tests {
 
     #[test]
     fn shift_arrows_scroll_dashboard_columns() {
-        use crate::adapters::view_models::{DashboardViewModel, DayPivotRowVM, ModelBreakdownVM};
+        use crate::adapters::view_models::{
+            DashboardViewModel, DayPivotRowVM, ModelBreakdownVM, ModelColumnVM,
+        };
         let (controller, _) = ctl_with_source_rows(vec![]);
         let mut state = AppState::new();
         state.view = View::Dashboard;
         state.focus = Focus::Content;
         // Seed a view model with 3 models so scrolling is bounded.
         state.dashboard_vm = Some(DashboardViewModel {
-            model_columns: vec!["a".into(), "b".into(), "c".into()],
+            model_columns: vec![
+                ModelColumnVM {
+                    model: "a".into(),
+                    pricing_note: "exact price".into(),
+                },
+                ModelColumnVM {
+                    model: "b".into(),
+                    pricing_note: "exact price".into(),
+                },
+                ModelColumnVM {
+                    model: "c".into(),
+                    pricing_note: "exact price".into(),
+                },
+            ],
             rows: vec![DayPivotRowVM {
                 date_label: "04-23".into(),
                 model_cells: vec![ModelBreakdownVM::default(); 3],
