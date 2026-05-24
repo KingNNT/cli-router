@@ -1209,6 +1209,7 @@ fn draw_help_modal(f: &mut Frame) {
         Line::from("                    and converted it for an OpenAI-style backend."),
         Line::from(""),
         Line::from(Span::styled("Requests tab", bold)),
+        Line::from("  r                     refresh requests"),
         Line::from("  ↑ / ↓ / j / k         move selection"),
         Line::from("  PgUp / PgDn           scroll page"),
         Line::from("  Home / End            jump to start / end"),

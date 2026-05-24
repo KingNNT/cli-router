@@ -299,6 +299,12 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState, term_area
                     fetch_requests_next_page(client, state);
                 }
             }
+            KeyCode::Char('r') => {
+                state.requests.selected = 0;
+                state.requests.scroll_offset = 0;
+                refresh_view(client, state);
+                state.flash("refreshed");
+            }
             _ => {}
         }
         return;
@@ -1894,7 +1900,7 @@ fn submit_oauth_edit(
 mod modal_key_tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use proxy_admin_api::{AffinityPayload, ConfigPayload};
+    use proxy_admin_api::{AffinityPayload, ConfigPayload, RecentRequestItem, RecentRequestsResponse};
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -1916,6 +1922,47 @@ mod modal_key_tests {
             pricing_db: None,
         }));
         state
+    }
+
+    fn recent_item(id: &str) -> RecentRequestItem {
+        RecentRequestItem {
+            id: id.to_string(),
+            started_at_ms: 1_700_000_000_000,
+            finished_at_ms: None,
+            provider: "anthropic".to_string(),
+            model: "claude-sonnet-4".to_string(),
+            status: "started".to_string(),
+            input_tokens: None,
+            output_tokens: None,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            cost_usd: None,
+            error_message: None,
+            translation_direction: None,
+        }
+    }
+
+    #[test]
+    fn requests_r_reload_resets_selection_and_scroll() {
+        let client = client();
+        let mut state = AppState::new();
+        state.set_view(View::Requests);
+        state.set_recent(Ok(RecentRequestsResponse {
+            items: vec![recent_item("old-1"), recent_item("old-2")],
+            total_count: 2,
+        }));
+        state.requests.selected = 1;
+        state.requests.scroll_offset = 1;
+
+        handle_key(
+            key(KeyCode::Char('r')),
+            &client,
+            &mut state,
+            Rect::new(0, 0, 80, 24),
+        );
+
+        assert_eq!(state.requests.selected, 0);
+        assert_eq!(state.requests.scroll_offset, 0);
     }
 
     #[test]
