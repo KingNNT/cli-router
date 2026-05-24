@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 use chrono::NaiveDate;
 
 use crate::adapters::presenters::formatting::{fmt_cost, fmt_num, fmt_num_compact, format_date_md};
-use crate::adapters::view_models::{DashboardViewModel, DayPivotRowVM, ModelBreakdownVM};
+use crate::adapters::view_models::{
+    DashboardViewModel, DayPivotRowVM, ModelBreakdownVM, ModelColumnVM,
+};
 use crate::application::dto::GetDashboardOutput;
 use shared::domain::value_objects::{ModelId, TokenBreakdown};
 
@@ -20,7 +22,21 @@ pub fn present_dashboard(
     let mut ordered_models: Vec<(ModelId, u64)> = model_totals.into_iter().collect();
     ordered_models.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.as_str().cmp(b.0.as_str())));
     let columns: Vec<ModelId> = ordered_models.into_iter().map(|(m, _)| m).collect();
-    let model_columns: Vec<String> = columns.iter().map(|m| m.as_str().to_string()).collect();
+    let pricing_by_model: BTreeMap<ModelId, Option<String>> = out
+        .model_pricing
+        .iter()
+        .map(|p| (p.model.clone(), p.pricing_key.clone()))
+        .collect();
+    let model_columns: Vec<ModelColumnVM> = columns
+        .iter()
+        .map(|m| {
+            let pricing_key = pricing_by_model.get(m).cloned().unwrap_or(None);
+            ModelColumnVM {
+                model: m.as_str().to_string(),
+                pricing_note: pricing_note_for(m.as_str(), pricing_key.as_deref()),
+            }
+        })
+        .collect();
 
     // (date, model) -> summed (breakdown, cost).
     let mut cell_index: BTreeMap<(NaiveDate, ModelId), (TokenBreakdown, f64)> = BTreeMap::new();
@@ -119,6 +135,14 @@ pub fn present_dashboard(
     }
 }
 
+fn pricing_note_for(model: &str, pricing_key: Option<&str>) -> String {
+    match pricing_key {
+        None => "no price".to_string(),
+        Some(key) if key == model => "exact price".to_string(),
+        Some(key) => format!("priced as {key}"),
+    }
+}
+
 fn fmt_cell(n: u64) -> String {
     if n == 0 {
         "—".to_string()
@@ -165,6 +189,7 @@ fn cost_cell(cost: f64, tokens: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::dto::DashboardModelPricing;
     use crate::application::dto::Filter;
     use shared::domain::entities::{DayModelRow, Overview};
     use shared::domain::value_objects::{Cost, DateRange, ModelId, TokenCount};
@@ -212,6 +237,7 @@ mod tests {
                 ..Overview::default()
             },
             rows,
+            model_pricing: Vec::new(),
             missing_pricing_count: 0,
             unpriced_models: HashSet::new(),
             last_pricing_sync: None,
@@ -248,10 +274,69 @@ mod tests {
             row(2026, 4, 23, "heavy", 5_000, 0.0),
             row(2026, 4, 22, "cheap", 50, 0.0),
         ]));
+        let labels: Vec<&str> = vm.model_columns.iter().map(|c| c.model.as_str()).collect();
+        assert_eq!(labels, vec!["heavy", "cheap"]);
+    }
+
+    #[test]
+    fn model_column_note_shows_exact_price() {
+        let out = GetDashboardOutput {
+            rows: vec![row(2026, 4, 23, "anthropic/opus", 1000, 0.01)],
+            model_pricing: vec![DashboardModelPricing {
+                model: ModelId::new("anthropic/opus").unwrap(),
+                pricing_key: Some("anthropic/opus".to_string()),
+            }],
+            ..output(vec![])
+        };
+
+        let vm = present(&out);
+
+        assert_eq!(vm.model_columns[0].model, "anthropic/opus");
+        assert_eq!(vm.model_columns[0].pricing_note, "exact price");
+    }
+
+    #[test]
+    fn model_column_note_shows_fallback_price() {
+        let out = GetDashboardOutput {
+            rows: vec![row(
+                2026,
+                4,
+                23,
+                "openai/gpt-5.1-codex-latest",
+                1000,
+                0.03,
+            )],
+            model_pricing: vec![DashboardModelPricing {
+                model: ModelId::new("openai/gpt-5.1-codex-latest").unwrap(),
+                pricing_key: Some("gpt5.1-codex".to_string()),
+            }],
+            ..output(vec![])
+        };
+
+        let vm = present(&out);
+
         assert_eq!(
-            vm.model_columns,
-            vec!["heavy".to_string(), "cheap".to_string()]
+            vm.model_columns[0].model,
+            "openai/gpt-5.1-codex-latest"
         );
+        assert_eq!(vm.model_columns[0].pricing_note, "priced as gpt5.1-codex");
+    }
+
+    #[test]
+    fn model_column_note_shows_no_price() {
+        let out = GetDashboardOutput {
+            rows: vec![row(2026, 4, 23, "unknown/model", 1000, 7.77)],
+            model_pricing: vec![DashboardModelPricing {
+                model: ModelId::new("unknown/model").unwrap(),
+                pricing_key: None,
+            }],
+            ..output(vec![])
+        };
+
+        let vm = present(&out);
+
+        assert_eq!(vm.model_columns[0].model, "unknown/model");
+        assert_eq!(vm.model_columns[0].pricing_note, "no price");
     }
 
     #[test]
@@ -298,6 +383,7 @@ mod tests {
             filter_applied: Filter::default(),
             overview: Overview::default(),
             rows: vec![r],
+            model_pricing: Vec::new(),
             missing_pricing_count: 1,
             unpriced_models: unpriced,
             last_pricing_sync: None,
@@ -320,7 +406,8 @@ mod tests {
             row(2026, 4, 22, "b", 200, 0.0),
         ]));
         // columns: b(200), a(100)
-        assert_eq!(vm.model_columns, vec!["b".to_string(), "a".to_string()]);
+        let labels: Vec<&str> = vm.model_columns.iter().map(|c| c.model.as_str()).collect();
+        assert_eq!(labels, vec!["b", "a"]);
         // 04-23 row: b missing, a has input=100
         let r0 = &vm.rows[0];
         assert_eq!(r0.date_label, "04-23");
@@ -365,6 +452,7 @@ mod tests {
             filter_applied: Filter::default(),
             overview: Overview::default(),
             rows: vec![row(2026, 4, 23, "m", 1, 0.0)],
+            model_pricing: Vec::new(),
             missing_pricing_count: 0,
             unpriced_models: HashSet::new(),
             last_pricing_sync: None,
@@ -375,6 +463,7 @@ mod tests {
             filter_applied: Filter::default(),
             overview: Overview::default(),
             rows: vec![row(2026, 4, 23, "m", 1, 0.0)],
+            model_pricing: Vec::new(),
             missing_pricing_count: 2,
             unpriced_models: HashSet::new(),
             last_pricing_sync: None,
@@ -394,6 +483,7 @@ mod tests {
                 ..Overview::default()
             },
             rows: vec![row(2026, 4, 23, "m", 100, 0.0)],
+            model_pricing: Vec::new(),
             missing_pricing_count: 1,
             unpriced_models: {
                 let mut s = HashSet::new();
@@ -414,6 +504,7 @@ mod tests {
                 ..Overview::default()
             },
             rows: vec![row(2026, 4, 23, "m", 100, 1.23)],
+            model_pricing: Vec::new(),
             missing_pricing_count: 0,
             unpriced_models: HashSet::new(),
             last_pricing_sync: None,

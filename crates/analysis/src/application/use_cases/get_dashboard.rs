@@ -1,12 +1,15 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::application::dto::{Filter, GetDashboardInput, GetDashboardOutput};
+use crate::application::dto::{
+    DashboardModelPricing, Filter, GetDashboardInput, GetDashboardOutput,
+};
 use crate::application::ports::UsageRepository;
 use shared::application::errors::ApplicationError;
 use shared::application::ports::{Clock, PricingRepository};
 use shared::domain::entities::Overview;
 use shared::domain::services::aggregation::aggregate_day_model_rows_by_alias;
+use shared::domain::services::aliases::pricing_lookup_keys;
 use shared::domain::services::pricing as pricing_service;
 use shared::domain::value_objects::{Cost, DateRange, ModelId, TokenBreakdown};
 
@@ -46,7 +49,7 @@ impl GetDashboard {
         // Collect lookup candidates across all rows.
         let mut candidates: HashSet<String> = HashSet::new();
         for row in &rows {
-            for key in row.model.lookup_keys() {
+            for key in pricing_lookup_keys(row.model.as_str()) {
                 candidates.insert(key);
             }
         }
@@ -56,19 +59,24 @@ impl GetDashboard {
         // Reconcile each row's cost.
         let mut missing = 0usize;
         let mut unpriced_models: HashSet<ModelId> = HashSet::new();
+        let mut model_pricing = Vec::with_capacity(rows.len());
         for row in rows.iter_mut() {
-            let mut matched = false;
-            for key in row.model.lookup_keys() {
+            let mut matched_key: Option<String> = None;
+            for key in pricing_lookup_keys(row.model.as_str()) {
                 if let Some(p) = pricing_map.get(&key) {
                     row.cost = pricing_service::calculate_cost(&row.tokens, p);
-                    matched = true;
+                    matched_key = Some(key);
                     break;
                 }
             }
-            if !matched {
+            if matched_key.is_none() {
                 missing += 1;
                 unpriced_models.insert(row.model.clone());
             }
+            model_pricing.push(DashboardModelPricing {
+                model: row.model.clone(),
+                pricing_key: matched_key,
+            });
         }
 
         // Aggregation disturbs SQL's ORDER BY; re-sort here.
@@ -97,6 +105,7 @@ impl GetDashboard {
             filter_applied: filter,
             overview,
             rows,
+            model_pricing,
             missing_pricing_count: missing,
             unpriced_models,
             last_pricing_sync,
@@ -195,6 +204,55 @@ mod tests {
         let out = uc.execute(GetDashboardInput::default()).unwrap();
         assert_eq!(out.missing_pricing_count, 0);
         assert!((out.rows[0].cost.value() - 0.02).abs() < 1e-9);
+    }
+
+    #[test]
+    fn model_pricing_records_exact_key() {
+        let (uc, _) = setup(
+            vec![row("anthropic/opus", 1000, 999.99)],
+            vec![pricing_for("anthropic/opus", 0.00001)],
+        );
+
+        let out = uc.execute(GetDashboardInput::default()).unwrap();
+
+        assert_eq!(out.model_pricing.len(), 1);
+        assert_eq!(out.model_pricing[0].model.as_str(), "anthropic/opus");
+        assert_eq!(
+            out.model_pricing[0].pricing_key.as_deref(),
+            Some("anthropic/opus")
+        );
+    }
+
+    #[test]
+    fn model_pricing_records_fallback_key() {
+        let (uc, _) = setup(
+            vec![row("openai/gpt-5.1-codex-latest", 1000, 999.99)],
+            vec![pricing_for("gpt5.1-codex", 0.00003)],
+        );
+
+        let out = uc.execute(GetDashboardInput::default()).unwrap();
+
+        assert_eq!(out.model_pricing.len(), 1);
+        assert_eq!(
+            out.model_pricing[0].model.as_str(),
+            "openai/gpt-5.1-codex-latest"
+        );
+        assert_eq!(
+            out.model_pricing[0].pricing_key.as_deref(),
+            Some("gpt5.1-codex")
+        );
+        assert!((out.rows[0].cost.value() - 0.03).abs() < 1e-9);
+    }
+
+    #[test]
+    fn model_pricing_records_missing_price() {
+        let (uc, _) = setup(vec![row("unknown/model", 1000, 7.77)], vec![]);
+
+        let out = uc.execute(GetDashboardInput::default()).unwrap();
+
+        assert_eq!(out.model_pricing.len(), 1);
+        assert_eq!(out.model_pricing[0].model.as_str(), "unknown/model");
+        assert_eq!(out.model_pricing[0].pricing_key, None);
     }
 
     #[test]

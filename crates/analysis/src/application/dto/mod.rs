@@ -2,7 +2,7 @@ pub mod filter;
 pub use filter::Filter;
 
 pub mod dashboard;
-pub use dashboard::{GetDashboardInput, GetDashboardOutput};
+pub use dashboard::{DashboardModelPricing, GetDashboardInput, GetDashboardOutput};
 
 pub mod models_breakdown;
 pub use models_breakdown::{GetModelsBreakdownInput, GetModelsBreakdownOutput};
