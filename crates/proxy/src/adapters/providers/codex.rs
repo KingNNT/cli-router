@@ -138,9 +138,7 @@ impl Provider for CodexProvider {
             &chat_body,
             self.default_reasoning_effort.as_deref(),
         )
-        .map_err(|e| {
-            ProxyError::BadRequest(format!("codex request translation failed: {e}"))
-        })?;
+        .map_err(|e| ProxyError::BadRequest(format!("codex request translation failed: {e}")))?;
 
         let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
         let serialized = serde_json::to_vec(&responses_body).map_err(|e| {

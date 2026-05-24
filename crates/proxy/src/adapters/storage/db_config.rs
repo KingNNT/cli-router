@@ -470,7 +470,10 @@ mod tests {
         assert_eq!(loaded.providers.len(), 1);
         assert_eq!(loaded.providers[0].name, "test");
         assert_eq!(loaded.providers[0].kind, ProviderKind::Zai);
-        assert_eq!(loaded.providers[0].reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(
+            loaded.providers[0].reasoning_effort.as_deref(),
+            Some("high")
+        );
         assert!(matches!(
             loaded.providers[0].auth,
             AuthConfig::Bearer { .. }
