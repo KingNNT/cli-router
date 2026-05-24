@@ -52,6 +52,19 @@ pub trait Provider: Send + Sync {
         ApiFormat::Anthropic
     }
     fn parse_model(&self, body: &[u8]) -> Result<String, String>;
+
+    /// Parse model and stream flag in a single JSON pass. Default implementation
+    /// parses twice for backward compatibility; providers should override this
+    /// to avoid the redundant parse.
+    fn parse_model_and_stream(&self, body: &[u8]) -> Result<(String, bool), String> {
+        let model = self.parse_model(body)?;
+        let streaming = serde_json::from_slice::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| v.get("stream").and_then(|s| s.as_bool()))
+            .unwrap_or(false);
+        Ok((model, streaming))
+    }
+
     fn usage_parser(&self) -> Box<dyn UsageParser>;
     fn parse_usage_json(&self, body: &[u8]) -> Result<UsageRecord, String>;
 

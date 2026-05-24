@@ -120,7 +120,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))
     };
 
-    let http = reqwest::Client::builder().build()?;
+    let http = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(30))
+        // More idle connections per host so bursts from multiple opencode
+        // instances don't churn TCP connections.
+        .pool_max_idle_per_host(200)
+        // Keep connections alive for 5 minutes — long enough to survive
+        // typical think-time gaps between LLM requests.
+        .pool_idle_timeout(std::time::Duration::from_secs(300))
+        .build()?;
 
     let port = cfg.port;
 
@@ -194,6 +202,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         http.clone(),
         live.clone(),
     );
+
+    // Spawn background stale-request sweeper.  Runs every 5 minutes and marks
+    // any request still in "started" state after 10 minutes as "errored".
+    {
+        let sweeper_log = use_case.request_log().clone();
+        tokio::spawn(async move {
+            let interval = std::time::Duration::from_secs(5 * 60);
+            let stale_threshold = std::time::Duration::from_secs(10 * 60);
+            let mut tick = tokio::time::interval(interval);
+            // First tick completes immediately — skip it so we don't sweep on startup.
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                let cutoff_ms = (std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as i64)
+                    .saturating_sub(stale_threshold.as_millis() as i64);
+                match sweeper_log.sweep_stale(cutoff_ms) {
+                    Ok(0) => {}
+                    Ok(n) => {
+                        tracing::info!(n, n, cutoff_ms, "sweeper: marked stale requests as errored");
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "sweeper: failed to sweep stale requests");
+                    }
+                }
+            }
+        });
+    }
 
     let usage_summary = Arc::new(GetUsageSummary::new(request_read.clone()));
     let quota_status = Arc::new(GetQuotaStatus::new(quota_port.clone()));

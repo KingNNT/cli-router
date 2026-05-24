@@ -41,8 +41,9 @@ utoipa = { workspace = true }
 utoipa-swagger-ui = { workspace = true }
 utoipa-redoc = { workspace = true }
 clap = { version = "4.6.1", features = ["derive"] }
+parking_lot = "0.12.5"
 
 [dev-dependencies]
 wiremock = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
 tower = "0.5"

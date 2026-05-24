@@ -1444,6 +1444,7 @@ dependencies = [
  "futures",
  "globset",
  "http",
+ "parking_lot",
  "proxy-admin-api",
  "reqwest",
  "rusqlite",

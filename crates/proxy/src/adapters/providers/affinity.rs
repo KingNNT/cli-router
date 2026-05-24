@@ -27,6 +27,25 @@ pub fn affinity_hash(headers: &HeaderMap, body: &[u8], header_names: &[String]) 
     Some(siphash_str(&truncated))
 }
 
+/// Compute the affinity hash when the body is already parsed as a JSON Value.
+/// Avoids re-parsing the body if it was already deserialized for model/stream.
+pub fn affinity_hash_from_value(
+    headers: &HeaderMap,
+    value: &serde_json::Value,
+    header_names: &[String],
+) -> Option<u64> {
+    if let Some(h) = header_lookup(headers, header_names) {
+        return Some(siphash_str(&h));
+    }
+    let signal = extract_body_signal_from_value(value)?;
+    let normalized = normalize(&signal);
+    if normalized.is_empty() {
+        return None;
+    }
+    let truncated: String = normalized.chars().take(1024).collect();
+    Some(siphash_str(&truncated))
+}
+
 fn header_lookup(headers: &HeaderMap, names: &[String]) -> Option<String> {
     for name in names {
         if let Some(v) = headers.get(name)
@@ -45,6 +64,11 @@ fn header_lookup(headers: &HeaderMap, names: &[String]) -> Option<String> {
 /// Returns `None` if the body is not parseable JSON or has no signal.
 fn extract_body_signal(body: &[u8]) -> Option<String> {
     let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    extract_body_signal_from_value(&v)
+}
+
+/// Extract system + first two messages from a pre-parsed JSON value.
+fn extract_body_signal_from_value(v: &serde_json::Value) -> Option<String> {
     let mut buf = String::new();
 
     if let Some(sys) = v.get("system") {

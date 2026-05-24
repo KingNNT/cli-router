@@ -28,6 +28,7 @@ use bytes::Bytes;
 use globset::{Glob, GlobMatcher};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use tokio::sync::Semaphore;
 
 /// Default cooldown when upstream doesn't send Retry-After (seconds).
 const DEFAULT_COOLDOWN_SECS: u64 = 60;
@@ -41,12 +42,19 @@ struct Route {
     pool: Vec<PoolEntry>,
 }
 
+/// Default max concurrent requests per provider. Prevents flooding a single
+/// upstream when multiple opencode instances all send requests at once.
+const DEFAULT_MAX_CONCURRENT: usize = 10;
+
 struct PoolEntry {
     provider: Arc<dyn Provider>,
     /// Stable identifier — provider name from config. Used for affinity scoring.
     id: String,
     /// Epoch millis when cooldown expires. 0 = healthy.
     cooldown_until: AtomicU64,
+    /// Limits in-flight upstream requests. Prevents thundering herd and helps
+    /// stay within per-provider rate limits proactively.
+    semaphore: Arc<Semaphore>,
 }
 
 impl PoolEntry {
@@ -55,6 +63,17 @@ impl PoolEntry {
             provider,
             id,
             cooldown_until: AtomicU64::new(0),
+            semaphore: Arc::new(Semaphore::new(DEFAULT_MAX_CONCURRENT)),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn with_concurrency(provider: Arc<dyn Provider>, id: String, max: usize) -> Self {
+        Self {
+            provider,
+            id,
+            cooldown_until: AtomicU64::new(0),
+            semaphore: Arc::new(Semaphore::new(max)),
         }
     }
 
@@ -234,6 +253,10 @@ impl Provider for RoutingProvider {
 
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {
         messages_protocol::parse_model(body)
+    }
+
+    fn parse_model_and_stream(&self, body: &[u8]) -> Result<(String, bool), String> {
+        messages_protocol::parse_model_and_stream(body)
     }
 
     fn usage_parser(&self) -> Box<dyn UsageParser> {
@@ -587,6 +610,26 @@ impl RoutingProvider {
                 continue;
             }
 
+            // Acquire concurrency permit — limits in-flight requests to this provider.
+            let _permit = match entry.semaphore.try_acquire() {
+                Ok(p) => p,
+                Err(_) => {
+                    tracing::warn!(
+                        provider = attempt_name,
+                        "concurrency limit reached; trying next fallback"
+                    );
+                    if i + 1 == total {
+                        return Err(ProxyError::UpstreamRateLimited {
+                            retry_after_secs: 5,
+                            message: format!(
+                                "provider '{attempt_name}' concurrency limit reached ({DEFAULT_MAX_CONCURRENT} in-flight)"
+                            ),
+                        });
+                    }
+                    continue;
+                }
+            };
+
             let direction = Direction::from_pair(client_format, entry.provider.native_format());
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
@@ -705,6 +748,19 @@ impl RoutingProvider {
                 continue;
             }
 
+            // Acquire concurrency permit — limits in-flight requests.
+            let _permit = match entry.semaphore.try_acquire() {
+                Ok(p) => p,
+                Err(_) => {
+                    tracing::debug!(
+                        provider = attempt_name,
+                        idx,
+                        "skipping concurrency-limited provider"
+                    );
+                    continue;
+                }
+            };
+
             let direction = Direction::from_pair(client_format, entry.provider.native_format());
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
@@ -812,6 +868,26 @@ impl RoutingProvider {
                 last_err = Some(e);
                 continue;
             }
+
+            // Acquire concurrency permit.
+            let _permit = match entry.semaphore.try_acquire() {
+                Ok(p) => p,
+                Err(_) => {
+                    tracing::warn!(
+                        provider = attempt_name,
+                        "concurrency limit reached; trying next fallback"
+                    );
+                    if i + 1 == total {
+                        return Err(ProxyError::UpstreamRateLimited {
+                            retry_after_secs: 5,
+                            message: format!(
+                                "provider '{attempt_name}' concurrency limit reached ({DEFAULT_MAX_CONCURRENT} in-flight)"
+                            ),
+                        });
+                    }
+                    continue;
+                }
+            };
 
             let direction = Direction::from_pair(ApiFormat::OpenAI, entry.provider.native_format());
             let native_path = Self::translate_path(path, direction);
@@ -923,6 +999,19 @@ impl RoutingProvider {
                 let _ = e; // try next provider
                 continue;
             }
+
+            // Acquire concurrency permit.
+            let _permit = match entry.semaphore.try_acquire() {
+                Ok(p) => p,
+                Err(_) => {
+                    tracing::debug!(
+                        provider = attempt_name,
+                        idx,
+                        "skipping concurrency-limited provider"
+                    );
+                    continue;
+                }
+            };
 
             let direction = Direction::from_pair(ApiFormat::OpenAI, entry.provider.native_format());
             let native_path = Self::translate_path(path, direction);

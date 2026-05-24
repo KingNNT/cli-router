@@ -14,7 +14,8 @@ use crate::domain::UsageRecord;
 use async_trait::async_trait;
 use axum::http::HeaderMap;
 use bytes::Bytes;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use parking_lot::RwLock;
 
 pub struct LiveProvider {
     inner: RwLock<Arc<dyn Provider>>,
@@ -31,7 +32,7 @@ impl LiveProvider {
 
     /// Replace the active provider with `new`. Subsequent requests use it.
     pub fn swap(&self, new: Arc<dyn Provider>) {
-        let mut g = self.inner.write().expect("LiveProvider rwlock poisoned");
+        let mut g = self.inner.write();
         *g = new;
     }
 
@@ -44,10 +45,7 @@ impl LiveProvider {
     }
 
     fn current(&self) -> Arc<dyn Provider> {
-        self.inner
-            .read()
-            .expect("LiveProvider rwlock poisoned")
-            .clone()
+        self.inner.read().clone()
     }
 }
 
@@ -63,6 +61,10 @@ impl Provider for LiveProvider {
 
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {
         self.current().parse_model(body)
+    }
+
+    fn parse_model_and_stream(&self, body: &[u8]) -> Result<(String, bool), String> {
+        self.current().parse_model_and_stream(body)
     }
 
     fn usage_parser(&self) -> Box<dyn UsageParser> {

@@ -97,6 +97,24 @@ impl RequestLogPort for SqliteRequestLogRepository {
         )?;
         Ok(())
     }
+
+    fn sweep_stale(&self, cutoff_ms: i64) -> Result<u64, ProxyError> {
+        let conn = self.conn.lock().expect("repo mutex poisoned");
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let rows = conn.execute(
+            "UPDATE requests \
+             SET status = 'errored', \
+                 finished_at = ?1, \
+                 error_message = 'request timed out (stale sweeper)' \
+             WHERE status = 'started' \
+               AND started_at < ?2",
+            params![now_ms, cutoff_ms],
+        )?;
+        Ok(rows as u64)
+    }
 }
 
 impl crate::application::ports::RequestLogReadPort for SqliteRequestLogRepository {

@@ -76,6 +76,11 @@ impl HandleMessages {
         }
     }
 
+    /// Expose the request log port for the stale-request sweeper.
+    pub fn request_log(&self) -> &Arc<dyn RequestLogPort> {
+        &self.request_log
+    }
+
     /// Forward a `/v1/messages/count_tokens` request to the upstream provider.
     /// This endpoint is required by Claude Code and other Anthropic clients
     /// for pre-flight token counting.
@@ -149,9 +154,10 @@ impl HandleMessages {
         &self,
         input: HandleMessagesInput,
     ) -> Result<HandleMessagesOutput, ProxyError> {
-        let model = self
+        // Parse model + stream flag in a single JSON pass (was two separate parses).
+        let (model, streaming) = self
             .provider
-            .parse_model(&input.body)
+            .parse_model_and_stream(&input.body)
             .map_err(ProxyError::BadRequest)?;
         let request_id = Uuid::new_v4().to_string();
         let started_at = self.clock.now_ms();
@@ -164,8 +170,7 @@ impl HandleMessages {
             started_at,
         })?;
 
-        let streaming = is_streaming(&input.body);
-        let upstream = match input.api_format {
+        let upstream_result = match input.api_format {
             ApiFormat::Anthropic => {
                 self.provider
                     .forward(
@@ -174,7 +179,7 @@ impl HandleMessages {
                         input.body.clone(),
                         streaming,
                     )
-                    .await?
+                    .await
             }
             ApiFormat::OpenAI => {
                 // OpenAI providers only emit `usage` in the stream when the
@@ -193,7 +198,28 @@ impl HandleMessages {
                         outbound_body,
                         streaming,
                     )
-                    .await?
+                    .await
+            }
+        };
+
+        let upstream = match upstream_result {
+            Ok(resp) => resp,
+            Err(e) => {
+                // Record the failure so the row doesn't stay "started" forever.
+                let msg = e.to_string();
+                if let Err(log_err) = self.request_log.fail(
+                    &request_id,
+                    self.clock.now_ms(),
+                    &msg,
+                    &RequestUsage::default(),
+                ) {
+                    tracing::error!(
+                        request_id = %request_id,
+                        error = %log_err,
+                        "failed to record errored row for forward failure"
+                    );
+                }
+                return Err(e);
             }
         };
 
@@ -334,13 +360,6 @@ impl HandleMessages {
             on_finish,
         }
     }
-}
-
-fn is_streaming(body: &[u8]) -> bool {
-    serde_json::from_slice::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| v.get("stream").and_then(|s| s.as_bool()))
-        .unwrap_or(false)
 }
 
 /// Inject `stream_options: {"include_usage": true}` into an OpenAI-format
@@ -649,6 +668,9 @@ mod tests {
                 usage.clone(),
             ));
             Ok(())
+        }
+        fn sweep_stale(&self, _cutoff_ms: i64) -> Result<u64, ProxyError> {
+            Ok(0)
         }
     }
 
@@ -989,9 +1011,17 @@ mod tests {
         // Started row WAS inserted before forward was attempted; that's correct behavior.
         assert_eq!(log.started.lock().unwrap().len(), 1);
         assert!(log.completed.lock().unwrap().is_empty());
+        // Fix 1: forward errors now record a fail row so the request doesn't
+        // stay "started" forever.
+        assert_eq!(
+            log.failed.lock().unwrap().len(),
+            1,
+            "forward error should record a fail row"
+        );
+        let (_, _, msg, _) = log.failed.lock().unwrap().pop().unwrap();
         assert!(
-            log.failed.lock().unwrap().is_empty(),
-            "no fail row when forward errors before response"
+            msg.contains("simulated"),
+            "fail message should contain the original error: {msg}"
         );
     }
 }

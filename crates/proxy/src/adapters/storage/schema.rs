@@ -105,6 +105,13 @@ ALTER TABLE providers ADD COLUMN reasoning_effort TEXT;
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
+    // WAL mode is safe with NORMAL — much faster writes without risking corruption.
+    // The DB file may lose the last few transactions on power loss, but WAL itself
+    // is durable and the proxy's request log is not mission-critical data.
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    // Wait up to 5 seconds if the DB is locked by another writer instead of
+    // failing immediately with SQLITE_BUSY. Critical under high concurrency.
+    conn.pragma_update(None, "busy_timeout", 5000)?;
 
     let mut current: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     for (target, sql) in MIGRATIONS {
@@ -114,6 +121,15 @@ pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
             current = *target;
         }
     }
+    Ok(())
+}
+
+/// Apply read-performance PRAGMAs to a read-only connection.
+/// WAL mode allows concurrent reads while another connection is writing.
+pub fn configure_readonly(conn: &Connection) -> Result<(), Error> {
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    conn.pragma_update(None, "busy_timeout", 5000)?;
     Ok(())
 }
 

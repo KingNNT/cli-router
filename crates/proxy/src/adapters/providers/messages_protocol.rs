@@ -75,6 +75,23 @@ pub(super) fn parse_model(body: &[u8]) -> Result<String, String> {
         .ok_or_else(|| "missing 'model' field".to_string())
 }
 
+/// Parse model and stream flag from the body in a single JSON pass.
+/// Returns `(model, is_streaming)`.
+pub fn parse_model_and_stream(body: &[u8]) -> Result<(String, bool), String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(body).map_err(|e| format!("invalid json: {e}"))?;
+    let model = value
+        .get("model")
+        .and_then(|m| m.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "missing 'model' field".to_string())?;
+    let streaming = value
+        .get("stream")
+        .and_then(|s| s.as_bool())
+        .unwrap_or(false);
+    Ok((model, streaming))
+}
+
 pub(super) fn parse_usage_json(body: &[u8]) -> Result<UsageRecord, String> {
     let value: serde_json::Value =
         serde_json::from_slice(body).map_err(|e| format!("invalid json: {e}"))?;
