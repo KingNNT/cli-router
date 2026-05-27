@@ -66,14 +66,39 @@ fn translate_value(v: &Value) -> Result<Value, ProxyError> {
 }
 
 fn translate_tool_def(tool: &Value) -> Value {
+    let parameters = strip_schema_keywords(tool.get("input_schema").cloned().unwrap_or(json!({})));
     json!({
         "type": "function",
         "function": {
             "name": tool.get("name").cloned().unwrap_or(Value::Null),
             "description": tool.get("description").cloned().unwrap_or(Value::Null),
-            "parameters": tool.get("input_schema").cloned().unwrap_or(json!({})),
+            "parameters": parameters,
         }
     })
+}
+
+/// Recursively strip `$schema` and other JSON Schema meta-keywords that have no
+/// meaning in OpenAI's function parameter schemas.  Claude Code sends
+/// `$schema: "https://json-schema.org/draft/2020-12/schema"` at the root and
+/// sometimes nested inside property definitions.  The Codex Responses API may
+/// misinterpret these as constraint violations, so we remove them before
+/// forwarding.
+fn strip_schema_keywords(mut v: Value) -> Value {
+    if let Some(obj) = v.as_object_mut() {
+        obj.remove("$schema");
+        obj.remove("$id");
+        obj.remove("$comment");
+        // Recurse into nested objects (properties, items, etc.)
+        for (_, child) in obj.iter_mut() {
+            *child = strip_schema_keywords(child.clone());
+        }
+    }
+    if let Some(arr) = v.as_array_mut() {
+        for child in arr.iter_mut() {
+            *child = strip_schema_keywords(child.clone());
+        }
+    }
+    v
 }
 
 fn translate_tool_choice(tc: &Value) -> Value {
@@ -281,6 +306,55 @@ mod tests {
         assert_eq!(out["tools"][0]["type"], "function");
         assert_eq!(out["tools"][0]["function"]["name"], "search");
         assert_eq!(out["tools"][0]["function"]["parameters"]["type"], "object");
+    }
+
+    #[test]
+    fn strip_schema_keywords_removes_dollar_schema() {
+        let body = r#"{"model":"x","max_tokens":10,"messages":[],"tools":[
+            {"name":"Read","description":"Read a file","input_schema":{
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": {
+                    "filePath": {"$schema": "nested", "type": "string"}
+                },
+                "required": ["filePath"],
+                "additionalProperties": false
+            }}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let params = &out["tools"][0]["function"]["parameters"];
+        // $schema must be removed at root level
+        assert!(
+            params.get("$schema").is_none(),
+            "$schema should be stripped from parameters"
+        );
+        // $schema must be removed from nested properties
+        let file_path_prop = &params["properties"]["filePath"];
+        assert!(
+            file_path_prop.get("$schema").is_none(),
+            "$schema should be stripped from nested properties"
+        );
+        // But actual schema fields must remain intact
+        assert_eq!(params["type"], "object");
+        assert_eq!(params["required"], json!(["filePath"]));
+        assert_eq!(file_path_prop["type"], "string");
+    }
+
+    #[test]
+    fn strip_schema_keywords_removes_dollar_id_and_comment() {
+        let body = r#"{"model":"x","max_tokens":10,"messages":[],"tools":[
+            {"name":"test","description":"test","input_schema":{
+                "$id": "urn:test",
+                "$comment": "a comment",
+                "type": "object",
+                "properties": {}
+            }}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let params = &out["tools"][0]["function"]["parameters"];
+        assert!(params.get("$id").is_none(), "$id should be stripped");
+        assert!(params.get("$comment").is_none(), "$comment should be stripped");
+        assert_eq!(params["type"], "object");
     }
 
     #[test]

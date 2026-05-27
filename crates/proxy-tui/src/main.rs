@@ -1,22 +1,19 @@
 //! Ratatui client for the proxy admin API. Connects to a localhost daemon
 //! and lets the user watch status, browse recent requests, edit provider
-//! credentials, and ping a provider — all without touching the config file
-//! by hand.
+//! credentials, and ping a provider through the proxy admin API.
 
 mod app;
 mod client;
-mod config_writer;
 mod terminal;
 mod ui;
 mod validate;
 mod views;
-mod wizard;
 
 use crate::app::{
     ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal, FormField,
     FormMode, FormState, Modal, PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderAction,
     ProviderFormModal, ProviderKind, QuotaField, QuotaFormModal, RangePreset, ReasoningEffortInput,
-    RoutingField, RoutingFormModal, TestProviderModal, TestState, View, WizardStep,
+    RoutingField, RoutingFormModal, TestProviderModal, TestState, View,
 };
 use crate::client::AdminClient;
 use chrono::{Datelike, Local, TimeZone};
@@ -37,35 +34,46 @@ impl Drop for TermGuard {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StartupFlow {
+    Connected,
+    ProxyRequired,
+}
+
+fn decide_startup_flow(proxy_available: bool) -> StartupFlow {
+    match proxy_available {
+        true => StartupFlow::Connected,
+        false => StartupFlow::ProxyRequired,
+    }
+}
+
+fn proxy_required_message() -> String {
+    "Proxy is not running. Config is stored in the SQLite database managed by the proxy daemon. Start `cli-router proxy` first, then reopen the TUI to configure providers.".into()
+}
+
 fn main() -> std::io::Result<()> {
     let base =
         std::env::var("CLI_ROUTER_PROXY_URL").unwrap_or_else(|_| "http://127.0.0.1:8787".into());
     let client = AdminClient::new(base);
     let mut state = AppState::new();
 
-    // Startup flow: try connecting to the proxy daemon.
-    let config_path = config_writer::resolved_config_path();
-    let config_exists = config_path.exists();
+    let status_result = client.get_status();
+    let flow = decide_startup_flow(status_result.is_ok());
 
-    match client.get_status() {
-        Ok(status) => {
-            // Connected to running proxy.
+    match flow {
+        StartupFlow::Connected => {
+            // Connected to running proxy. Config edits go through the admin API
+            // and persist to SQLite via the proxy daemon.
             state.mode = AppMode::Connected;
-            state.set_status(Ok(status));
+            state.set_status(status_result.map_err(|e| e.to_string()));
             refresh_all(&client, &mut state);
         }
-        Err(_) if config_exists => {
-            // Offline but config file exists — read from file.
-            state.mode = AppMode::Offline;
-            match config_writer::read_from_file(&config_path) {
-                Ok(cfg) => state.set_config(Ok(cfg)),
-                Err(e) => state.set_config(Err(e)),
-            }
-        }
-        Err(_) => {
-            // No proxy, no config — launch the first-run wizard.
-            state.mode = AppMode::Offline;
-            state.wizard = Some(wizard::new_wizard());
+        StartupFlow::ProxyRequired => {
+            // DB-backed config is managed by the proxy daemon, so the TUI must
+            // not create or edit config files when the proxy is unavailable.
+            state.mode = AppMode::ProxyRequired;
+            state.set_view(View::Config);
+            state.set_config(Err(proxy_required_message()));
         }
     }
 
@@ -132,12 +140,6 @@ fn refresh_view(client: &AdminClient, state: &mut AppState) {
 fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState, term_area: Rect) {
     if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
         state.should_quit = true;
-        return;
-    }
-
-    // Wizard: all key events go to wizard handler when active.
-    if state.wizard.is_some() {
-        handle_wizard_key(k, client, state);
         return;
     }
 
@@ -316,21 +318,11 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState, term_area
         KeyCode::Char('2') => state.set_view(View::Config),
         KeyCode::Char('3') => state.set_view(View::Requests),
         KeyCode::Char('r') => {
-            if state.mode == AppMode::Offline {
-                // Offline refresh: re-read config from file.
-                let path = config_writer::resolved_config_path();
-                match config_writer::read_from_file(&path) {
-                    Ok(cfg) => {
-                        state.set_config(Ok(cfg));
-                        state.flash("config reloaded from file");
-                    }
-                    Err(e) => {
-                        state.set_config(Err(e));
-                    }
-                }
-            } else {
+            if state.mode == AppMode::Connected {
                 refresh_view(client, state);
                 state.flash("refreshed");
+            } else {
+                state.set_config(Err(proxy_required_message()));
             }
         }
         KeyCode::Down | KeyCode::Char('j') => state.move_selection_down(),
@@ -346,7 +338,7 @@ fn handle_key(k: KeyEvent, client: &AdminClient, state: &mut AppState, term_area
 
 // ---- Config tab key handling ----
 
-fn handle_config_key(k: KeyEvent, _client: &AdminClient, state: &mut AppState) {
+fn handle_config_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
     match k.code {
         // Section switching
         KeyCode::Left | KeyCode::Char('[') | KeyCode::BackTab => {
@@ -357,6 +349,11 @@ fn handle_config_key(k: KeyEvent, _client: &AdminClient, state: &mut AppState) {
         }
         // Up/Down handled by move_selection_up/down above
         _ => {}
+    }
+
+    if state.mode == AppMode::ProxyRequired {
+        state.set_config(Err(proxy_required_message()));
+        return;
     }
 
     // Section-specific actions
@@ -376,7 +373,7 @@ fn handle_config_key(k: KeyEvent, _client: &AdminClient, state: &mut AppState) {
                 open_routing_edit_modal(state);
             }
             KeyCode::Char('d') => {
-                delete_routing_rule(state);
+                delete_routing_rule(client, state);
             }
             _ => {}
         },
@@ -388,13 +385,13 @@ fn handle_config_key(k: KeyEvent, _client: &AdminClient, state: &mut AppState) {
                 open_quota_edit_modal(state);
             }
             KeyCode::Char('d') => {
-                delete_quota_rule(state);
+                delete_quota_rule(client, state);
             }
             _ => {}
         },
         ConfigSection::Settings => {
             if k.code == KeyCode::Char('e') {
-                toggle_affinity(state);
+                toggle_affinity(client, state);
             }
         }
     }
@@ -714,7 +711,11 @@ fn handle_mouse(m: MouseEvent, term_area: Rect, client: &AdminClient, state: &mu
                         return;
                     }
                     if let Some(action) = provider_toolbar_hit(m.column, m.row, body_area) {
-                        dispatch_provider_action(action, client, state);
+                        if state.mode == AppMode::ProxyRequired {
+                            state.set_config(Err(proxy_required_message()));
+                        } else {
+                            dispatch_provider_action(action, client, state);
+                        }
                         return;
                     }
                     if let Some(idx) =
@@ -1314,141 +1315,6 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
     Modal::ProviderForm(m)
 }
 
-// ---- Wizard handling ----
-
-fn handle_wizard_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
-    let mut wizard = match state.wizard.take() {
-        Some(w) => w,
-        None => return,
-    };
-
-    match (&wizard.step, k.code) {
-        // Ctrl+C always quits
-        _ if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') => {
-            state.should_quit = true;
-        }
-        // Welcome step
-        (WizardStep::Welcome, KeyCode::Enter) => {
-            let mut w = wizard;
-            w.step = WizardStep::AddProvider;
-            state.wizard = Some(w);
-        }
-        (WizardStep::Welcome, KeyCode::Char('q')) => {
-            state.should_quit = true;
-        }
-        // Add Provider step — delegate to form key handling
-        (WizardStep::AddProvider, _) => {
-            let m = std::mem::replace(&mut wizard.form, ProviderFormModal::new_for_add());
-            let modal = handle_wizard_form_key(k, client, state, m);
-            match modal {
-                Some(Modal::ProviderForm(updated_form)) => {
-                    // Still editing — put back
-                    let mut w = wizard;
-                    w.form = updated_form;
-                    state.wizard = Some(w);
-                }
-                None => {
-                    // Form was submitted or cancelled
-                    if !state.should_quit {
-                        let mut w = wizard;
-                        w.step = WizardStep::Done;
-                        state.wizard = Some(w);
-                    }
-                }
-                _ => unreachable!(),
-            }
-        }
-        // Done step
-        (WizardStep::Done, KeyCode::Char('e')) | (WizardStep::Done, KeyCode::Char('E')) => {
-            state.should_quit = true;
-        }
-        (WizardStep::Done, KeyCode::Char('t'))
-        | (WizardStep::Done, KeyCode::Char('T'))
-        | (WizardStep::Done, KeyCode::Enter) => {
-            // Dismiss wizard, load config, show normal TUI.
-            dismiss_wizard(state);
-        }
-        _ => {
-            // Unhandled key in wizard — put state back
-            state.wizard = Some(wizard);
-        }
-    }
-}
-
-/// Handle form keys within the wizard's Add Provider step.
-/// Returns `Some(Modal::ProviderForm)` if still editing (to put back into wizard state),
-/// or `None` if the form was submitted/cancelled.
-fn handle_wizard_form_key(
-    k: KeyEvent,
-    _client: &AdminClient,
-    state: &mut AppState,
-    mut m: ProviderFormModal,
-) -> Option<Modal> {
-    match k.code {
-        KeyCode::Esc => {
-            // In wizard context, Esc on the form means skip (save minimal config)
-            let cfg = wizard::build_minimal_config();
-            let path = config_writer::resolved_config_path();
-            match config_writer::write_to_file(&cfg, &path) {
-                Ok(()) => {
-                    state.set_config(Ok(cfg));
-                }
-                Err(e) => {
-                    state.set_config(Err(e));
-                }
-            }
-            return None;
-        }
-        KeyCode::Down => {
-            m.focused = m.focused.next(m.auth_kind, m.kind);
-        }
-        KeyCode::Up => {
-            m.focused = m.focused.prev(m.auth_kind, m.kind);
-        }
-        KeyCode::Left => cycle_field_value(&mut m, false),
-        KeyCode::Right => cycle_field_value(&mut m, true),
-        KeyCode::Enter if m.focused == FormField::Save => {
-            // Submit: build config and write to file
-            if m.auth_kind == AuthInputKind::OAuthAnthropic
-                || m.auth_kind == AuthInputKind::OAuthOpenAi
-            {
-                // OAuth not supported in wizard — skip
-                m.error = Some("OAuth not supported in wizard. Use passthrough or api_key.".into());
-                return Some(Modal::ProviderForm(m));
-            }
-            let cfg = wizard::build_config_from_form(&m);
-            let path = config_writer::resolved_config_path();
-            match config_writer::write_to_file(&cfg, &path) {
-                Ok(()) => {
-                    state.set_config(Ok(cfg));
-                    return None;
-                }
-                Err(e) => {
-                    m.error = Some(format!("failed to save config: {e}"));
-                    return Some(Modal::ProviderForm(m));
-                }
-            }
-        }
-        KeyCode::Backspace => {
-            edit_focused_text(&mut m, |s| {
-                s.pop();
-            });
-        }
-        KeyCode::Char(c) => {
-            edit_focused_text(&mut m, |s| s.push(c));
-        }
-        _ => {}
-    }
-    Some(Modal::ProviderForm(m))
-}
-
-/// Dismiss the wizard and enter normal TUI mode.
-fn dismiss_wizard(state: &mut AppState) {
-    state.wizard = None;
-    state.set_view(View::Config);
-    // Config was already loaded during wizard submission
-}
-
 // ---- Routing / Quota form handlers ----
 
 fn open_routing_edit_modal(state: &mut AppState) {
@@ -1477,7 +1343,7 @@ fn open_quota_edit_modal(state: &mut AppState) {
     state.modal = Modal::QuotaForm(QuotaFormModal::from_rule(idx, quota));
 }
 
-fn delete_routing_rule(state: &mut AppState) {
+fn delete_routing_rule(client: &AdminClient, state: &mut AppState) {
     let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
         Some(c) => c,
         None => return,
@@ -1491,7 +1357,7 @@ fn delete_routing_rule(state: &mut AppState) {
     if state.routing_selected >= cfg.routing.len() {
         state.routing_selected = cfg.routing.len().saturating_sub(1);
     }
-    match save_config_state(&cfg, state) {
+    match save_config_state(client, &cfg, state) {
         Ok(updated) => {
             state.set_config(Ok(updated));
             state.flash("routing rule deleted");
@@ -1500,7 +1366,7 @@ fn delete_routing_rule(state: &mut AppState) {
     }
 }
 
-fn delete_quota_rule(state: &mut AppState) {
+fn delete_quota_rule(client: &AdminClient, state: &mut AppState) {
     let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
         Some(c) => c,
         None => return,
@@ -1514,7 +1380,7 @@ fn delete_quota_rule(state: &mut AppState) {
     if state.quota_selected >= cfg.quota.len() {
         state.quota_selected = cfg.quota.len().saturating_sub(1);
     }
-    match save_config_state(&cfg, state) {
+    match save_config_state(client, &cfg, state) {
         Ok(updated) => {
             state.set_config(Ok(updated));
             state.flash("quota rule deleted");
@@ -1523,13 +1389,13 @@ fn delete_quota_rule(state: &mut AppState) {
     }
 }
 
-fn toggle_affinity(state: &mut AppState) {
+fn toggle_affinity(client: &AdminClient, state: &mut AppState) {
     let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
         Some(c) => c,
         None => return,
     };
     cfg.affinity.enabled = !cfg.affinity.enabled;
-    match save_config_state(&cfg, state) {
+    match save_config_state(client, &cfg, state) {
         Ok(updated) => {
             let enabled = updated.affinity.enabled;
             state.set_config(Ok(updated));
@@ -1557,7 +1423,7 @@ fn handle_routing_form_key(
             Modal::RoutingForm(m)
         }
         KeyCode::Enter if m.focused == RoutingField::Strategy => {
-            m.strategy = wizard::strategy_cycle(&m.strategy);
+            m.strategy = strategy_cycle(&m.strategy);
             Modal::RoutingForm(m)
         }
         KeyCode::Enter if m.focused == RoutingField::Save => {
@@ -1752,25 +1618,20 @@ fn edit_quota_text(m: &mut QuotaFormModal, f: impl FnOnce(&mut String)) {
 
 // ---- Dual-mode save helpers ----
 
-/// Save config: connected → API, offline → file.
+/// Save config through the admin API when connected; otherwise require proxy.
 fn save_config_state(
+    client: &AdminClient,
     cfg: &proxy_admin_api::ConfigPayload,
     state: &AppState,
 ) -> Result<proxy_admin_api::ConfigPayload, String> {
     if state.mode == AppMode::Connected {
-        // For offline operations that already have client context,
-        // use the direct file path instead
-        let path = config_writer::resolved_config_path();
-        config_writer::write_to_file(cfg, &path)?;
-        Ok(cfg.clone())
+        client.put_config(cfg).map_err(|e| e.to_string())
     } else {
-        let path = config_writer::resolved_config_path();
-        config_writer::write_to_file(cfg, &path)?;
-        Ok(cfg.clone())
+        Err(proxy_required_message())
     }
 }
 
-/// Save config via AdminClient when connected, or to file when offline.
+/// Save config through the admin API when connected; otherwise require proxy.
 fn save_config_via_client(
     client: &AdminClient,
     cfg: &proxy_admin_api::ConfigPayload,
@@ -1779,9 +1640,20 @@ fn save_config_via_client(
     if state.mode == AppMode::Connected {
         client.put_config(cfg).map_err(|e| e.to_string())
     } else {
-        let path = config_writer::resolved_config_path();
-        config_writer::write_to_file(cfg, &path)?;
-        Ok(cfg.clone())
+        Err(proxy_required_message())
+    }
+}
+
+fn strategy_cycle(
+    s: &proxy_admin_api::RoutingStrategyPayload,
+) -> proxy_admin_api::RoutingStrategyPayload {
+    match s {
+        proxy_admin_api::RoutingStrategyPayload::Failover => {
+            proxy_admin_api::RoutingStrategyPayload::RoundRobin
+        }
+        proxy_admin_api::RoutingStrategyPayload::RoundRobin => {
+            proxy_admin_api::RoutingStrategyPayload::Failover
+        }
     }
 }
 
@@ -1897,10 +1769,35 @@ fn submit_oauth_edit(
 }
 
 #[cfg(test)]
+mod startup_flow_tests {
+    use super::*;
+
+    #[test]
+    fn connected_proxy_uses_connected_flow() {
+        assert_eq!(decide_startup_flow(true), StartupFlow::Connected);
+    }
+
+    #[test]
+    fn offline_requires_proxy() {
+        assert_eq!(decide_startup_flow(false), StartupFlow::ProxyRequired);
+    }
+
+    #[test]
+    fn proxy_required_message_mentions_sqlite_and_proxy() {
+        let msg = proxy_required_message();
+        assert!(msg.contains("SQLite database"));
+        assert!(msg.contains("proxy daemon"));
+        assert!(msg.contains("cli-router proxy"));
+    }
+}
+
+#[cfg(test)]
 mod modal_key_tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use proxy_admin_api::{AffinityPayload, ConfigPayload, RecentRequestItem, RecentRequestsResponse};
+    use proxy_admin_api::{
+        AffinityPayload, ConfigPayload, RecentRequestItem, RecentRequestsResponse,
+    };
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)

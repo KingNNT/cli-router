@@ -195,9 +195,9 @@ impl UpdateConfig {
         }
     }
 
-    /// Validate, persist to disk, swap in-memory config, then rebuild the
-    /// live provider tree so subsequent requests use the new config without
-    /// requiring a daemon restart.
+    /// Validate, persist to the config repository, swap in-memory config,
+    /// then rebuild the live provider tree so subsequent requests use the new
+    /// config without requiring a daemon restart.
     pub fn execute(&self, payload: ConfigPayload) -> Result<(), ProxyError> {
         let existing = {
             let cur = self.config.read().expect("config rwlock poisoned");
@@ -224,7 +224,7 @@ impl UpdateConfig {
 
         // Hot reload: build a fresh provider tree, swap atomically. If the
         // build fails (bad routing rule somehow slipped past validate), we
-        // surface that to the caller — the on-disk file is already updated
+        // surface that to the caller — the persistent config is already updated
         // but the live provider keeps serving the previous config.
         self.live
             .reload(&new_cfg, self.http.clone())

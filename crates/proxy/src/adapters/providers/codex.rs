@@ -221,6 +221,10 @@ impl Provider for CodexProvider {
             // Buffer the translated SSE stream into a single Chat Completions response.
             use futures::StreamExt;
             let mut collected_content = String::new();
+            let mut tool_calls: Vec<Value> = Vec::new();
+            let mut tool_args_accum: std::collections::HashMap<usize, String> =
+                std::collections::HashMap::new();
+            let mut finish_reason = "stop".to_string();
             let mut usage: Option<Value> = None;
             let mut model = chat_body
                 .get("model")
@@ -242,15 +246,62 @@ impl Provider for CodexProvider {
                         continue;
                     }
                     if let Ok(val) = serde_json::from_str::<Value>(data) {
+                        let choice = val.get("choices").and_then(|c| c.get(0));
                         // Accumulate content deltas
-                        if let Some(content) = val
-                            .get("choices")
-                            .and_then(|c| c.get(0))
+                        if let Some(content) = choice
                             .and_then(|c| c.get("delta"))
                             .and_then(|d| d.get("content"))
                             .and_then(|c| c.as_str())
                         {
                             collected_content.push_str(content);
+                        }
+                        // Accumulate tool_call deltas (streaming chunks split
+                        // name+id and arguments across separate deltas).
+                        if let Some(tcs) = choice
+                            .and_then(|c| c.get("delta"))
+                            .and_then(|d| d.get("tool_calls"))
+                            .and_then(|v| v.as_array())
+                        {
+                            for tc in tcs {
+                                let idx = tc
+                                    .get("index")
+                                    .and_then(|i| i.as_u64())
+                                    .unwrap_or(0) as usize;
+                                // Ensure slot exists
+                                while tool_calls.len() <= idx {
+                                    tool_calls.push(json!({
+                                        "index": tool_calls.len(),
+                                        "id": "",
+                                        "type": "function",
+                                        "function": {"name": "", "arguments": ""}
+                                    }));
+                                }
+                                // Fill id / name on first appearance
+                                if let Some(id) =
+                                    tc.get("id").and_then(|v| v.as_str())
+                                {
+                                    tool_calls[idx]["id"] = json!(id);
+                                }
+                                if let Some(name) =
+                                    tc.pointer("/function/name").and_then(|v| v.as_str())
+                                {
+                                    tool_calls[idx]["function"]["name"] = json!(name);
+                                }
+                                // Accumulate arguments
+                                if let Some(args) =
+                                    tc.pointer("/function/arguments").and_then(|v| v.as_str())
+                                {
+                                    let entry = tool_args_accum.entry(idx).or_default();
+                                    entry.push_str(args);
+                                }
+                            }
+                        }
+                        // Capture finish_reason from final chunk
+                        if let Some(fr) = choice
+                            .and_then(|c| c.get("finish_reason"))
+                            .and_then(|v| v.as_str())
+                        {
+                            finish_reason = fr.to_string();
                         }
                         // Capture usage from final chunk
                         if let Some(u) = val.get("usage").cloned() {
@@ -260,7 +311,14 @@ impl Provider for CodexProvider {
                 }
             }
 
-            let message = json!({
+            // Merge accumulated arguments into tool_call slots
+            for (idx, args) in tool_args_accum {
+                if idx < tool_calls.len() {
+                    tool_calls[idx]["function"]["arguments"] = json!(args);
+                }
+            }
+
+            let mut message = json!({
                 "role": "assistant",
                 "content": if collected_content.is_empty() {
                     Value::Null
@@ -268,6 +326,9 @@ impl Provider for CodexProvider {
                     Value::String(collected_content)
                 }
             });
+            if !tool_calls.is_empty() {
+                message["tool_calls"] = Value::Array(tool_calls);
+            }
             // Strip the namespace prefix from the model for the response.
             if let Some(slash_pos) = model.find('/') {
                 model = model[slash_pos + 1..].to_string();
@@ -280,7 +341,7 @@ impl Provider for CodexProvider {
                 "choices": [{
                     "index": 0,
                     "message": message,
-                    "finish_reason": "stop"
+                    "finish_reason": finish_reason
                 }]
             });
             if let Some(u) = usage {
@@ -323,16 +384,49 @@ fn translate_tool(tool: &Value) -> Value {
                 .unwrap_or("");
             let parameters = func.get("parameters").cloned().unwrap_or(json!({}));
 
+            // Use explicit `strict` if provided; otherwise auto-detect from the
+            // schema shape.  Clients sending OpenAI Chat Completions format set
+            // `strict` explicitly (e.g. OpenCode sends `true`).  Clients that
+            // arrive via Anthropic→OpenAI translation do not have a `strict`
+            // field (Anthropic has no equivalent), so we infer it from the
+            // schema: `type: "object"` + `additionalProperties: false` +
+            // `required` present → strict.  This ensures the Codex Responses
+            // API enforces schema conformance for tool-call arguments, which is
+            // critical for Claude Code clients that validate tool inputs against
+            // the original `input_schema`.
+            let strict = func.get("strict").cloned().unwrap_or_else(|| {
+                json!(schema_looks_strict(&parameters))
+            });
+
             json!({
                 "type": "function",
                 "name": name,
                 "description": description,
                 "parameters": parameters,
-                "strict": func.get("strict").cloned().unwrap_or(json!(false)),
+                "strict": strict,
             })
         }
         _ => tool.clone(), // Pass through unknown tool types unchanged.
     }
+}
+
+/// Heuristic: does this JSON Schema look like it enforces strict conformance?
+///
+/// Returns `true` when the schema has all three traits that make Structured
+/// Outputs safe: `type: "object"`, `additionalProperties: false`, and a
+/// non-empty `required` array.  This covers the schemas emitted by Claude
+/// Code (Anthropic) which always include these constraints.
+fn schema_looks_strict(schema: &Value) -> bool {
+    let is_object = schema.get("type").and_then(|v| v.as_str()) == Some("object");
+    let no_additional = schema
+        .get("additionalProperties")
+        .and_then(|v| v.as_bool())
+        == Some(false);
+    let has_required = schema
+        .get("required")
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| !a.is_empty());
+    is_object && no_additional && has_required
 }
 
 fn text_content_to_string(content: Option<&Value>) -> String {
@@ -575,8 +669,16 @@ fn translate_buffered_response(responses_body: &Value) -> Result<Value, String> 
 
     // Map usage: input_tokens -> prompt_tokens, output_tokens -> completion_tokens
     if let Some(usage) = responses_body.get("usage") {
+        let input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        if input_tokens == 0 {
+            tracing::warn!(
+                target: "codex::usage",
+                usage = %usage,
+                "codex buffered response reported zero input tokens"
+            );
+        }
         result["usage"] = json!({
-            "prompt_tokens": usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+            "prompt_tokens": input_tokens,
             "completion_tokens": usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
             "total_tokens": usage.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
         });
@@ -815,8 +917,16 @@ impl ResponsesSseTranslator {
                             "finish_reason": if self.tool_call_started { "tool_calls" } else { "stop" }
                         }]);
                         if let Some(usage) = resp.get("usage") {
+                            let input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            if input_tokens == 0 {
+                                tracing::warn!(
+                                    target: "codex::usage",
+                                    usage = %usage,
+                                    "codex completed response reported zero input tokens"
+                                );
+                            }
                             chunk["usage"] = json!({
-                                "prompt_tokens": usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+                                "prompt_tokens": input_tokens,
                                 "completion_tokens": usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                                 "total_tokens": usage.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
                             });
@@ -1309,7 +1419,141 @@ mod tests {
         assert_eq!(tools[0]["parameters"]["required"], json!(["name"]));
     }
 
+    // -- Auto-detect strict from schema tests --
+
     #[test]
+    fn schema_looks_strict_detects_typical_claude_code_schema() {
+        let schema = json!({
+            "type": "object",
+            "properties": {"filePath": {"type": "string"}},
+            "required": ["filePath"],
+            "additionalProperties": false
+        });
+        assert!(schema_looks_strict(&schema));
+    }
+
+    #[test]
+    fn schema_looks_strict_returns_false_when_no_additional_properties() {
+        let schema = json!({
+            "type": "object",
+            "properties": {"filePath": {"type": "string"}},
+            "required": ["filePath"]
+        });
+        assert!(!schema_looks_strict(&schema));
+    }
+
+    #[test]
+    fn schema_looks_strict_returns_false_when_no_required() {
+        let schema = json!({
+            "type": "object",
+            "properties": {"filePath": {"type": "string"}},
+            "additionalProperties": false
+        });
+        assert!(!schema_looks_strict(&schema));
+    }
+
+    #[test]
+    fn schema_looks_strict_returns_false_when_empty_required() {
+        let schema = json!({
+            "type": "object",
+            "properties": {"filePath": {"type": "string"}},
+            "required": [],
+            "additionalProperties": false
+        });
+        assert!(!schema_looks_strict(&schema));
+    }
+
+    #[test]
+    fn schema_looks_strict_returns_false_when_not_object() {
+        let schema = json!({
+            "type": "string",
+            "required": ["x"],
+            "additionalProperties": false
+        });
+        assert!(!schema_looks_strict(&schema));
+    }
+
+    #[test]
+    fn translate_tool_auto_detects_strict_from_schema() {
+        // Simulates what arrives via Anthropic→OpenAI translation: no explicit
+        // `strict` field, but the schema has additionalProperties:false +
+        // required → should auto-detect as strict.
+        let chat = json!({
+            "model": "codex-mini",
+            "messages": [],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "Read",
+                    "description": "Read a file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "filePath": {"type": "string", "description": "Path to read"}
+                        },
+                        "required": ["filePath"],
+                        "additionalProperties": false
+                    }
+                }
+            }]
+        });
+        let result = translate_request(&chat).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["strict"], true, "should auto-detect strict from schema");
+    }
+
+    #[test]
+    fn translate_tool_no_strict_when_schema_is_loose() {
+        // Schema without additionalProperties:false → should not be strict.
+        let chat = json!({
+            "model": "codex-mini",
+            "messages": [],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "search",
+                    "description": "Search",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }]
+        });
+        let result = translate_request(&chat).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["strict"], false, "should not be strict for loose schema");
+    }
+
+    #[test]
+    fn translate_tool_explicit_strict_overrides_auto_detect() {
+        // Even if schema looks strict, explicit strict:false should win.
+        let chat = json!({
+            "model": "codex-mini",
+            "messages": [],
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "test",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"x": {"type": "string"}},
+                        "required": ["x"],
+                        "additionalProperties": false
+                    },
+                    "strict": false
+                }
+            }]
+        });
+        let result = translate_request(&chat).unwrap();
+        let tools = result["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["strict"], false, "explicit strict:false must override auto-detect");
+    }
+
+#[test]
     fn translate_tool_call_messages_to_responses_function_items() {
         let chat = json!({
             "model": "codex-mini",

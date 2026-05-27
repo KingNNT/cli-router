@@ -8,11 +8,11 @@ use proxy_admin_api::{
     StatusResponse, TestProviderResponse, UsageSummaryResponse,
 };
 
-/// Whether the TUI is connected to a running proxy or operating offline.
+/// Whether the TUI is connected to a running proxy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
     Connected,
-    Offline,
+    ProxyRequired,
 }
 
 /// Sub-sections within the Config tab.
@@ -690,21 +690,6 @@ impl QuotaFormModal {
     }
 }
 
-/// First-run wizard state.
-#[derive(Debug, Clone)]
-pub struct WizardState {
-    pub step: WizardStep,
-    pub form: ProviderFormModal,
-    pub saved_path: Option<std::path::PathBuf>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WizardStep {
-    Welcome,
-    AddProvider,
-    Done,
-}
-
 pub struct AppState {
     pub mode: AppMode,
     pub view: View,
@@ -713,7 +698,6 @@ pub struct AppState {
     pub config: Option<Result<ConfigPayload, String>>,
     pub quota: Option<Result<QuotaStatusListDto, String>>,
     pub config_section: ConfigSection,
-    pub wizard: Option<WizardState>,
     pub providers_selected: usize,
     pub routing_selected: usize,
     pub quota_selected: usize,
@@ -731,14 +715,13 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Self {
         Self {
-            mode: AppMode::Offline,
+            mode: AppMode::ProxyRequired,
             view: View::Status,
             modal: Modal::None,
             status: None,
             config: None,
             quota: None,
             config_section: ConfigSection::Providers,
-            wizard: None,
             providers_selected: 0,
             routing_selected: 0,
             quota_selected: 0,
