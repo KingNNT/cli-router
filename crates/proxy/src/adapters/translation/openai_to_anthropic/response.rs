@@ -19,6 +19,26 @@ pub fn translate(body: &[u8]) -> Result<Vec<u8>, ProxyError> {
 }
 
 fn translate_value(v: &Value) -> Result<Value, ProxyError> {
+    // Detect Anthropic error responses (e.g. {"type":"error","error":{…}}).
+    // These have no content/message structure — convert to OpenAI error format
+    // instead of producing garbage through the success path.
+    if v.get("type").and_then(|t| t.as_str()) == Some("error") {
+        let err = v.get("error").unwrap_or(&Value::Null);
+        tracing::debug!(
+            target: "translation",
+            direction = "anthropic_to_openai",
+            error_type = err.get("type").and_then(|t| t.as_str()).unwrap_or("unknown"),
+            error_message = err.get("message").and_then(|m| m.as_str()).unwrap_or(""),
+            "translating Anthropic error response to OpenAI error format"
+        );
+        return Ok(json!({
+            "error": {
+                "message": err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error"),
+                "type": err.get("type").and_then(|t| t.as_str()).unwrap_or("api_error"),
+            }
+        }));
+    }
+
     // 1. Split content[] into text blocks and tool_use blocks
     let content_arr = v.get("content").and_then(|c| c.as_array());
 
@@ -354,10 +374,31 @@ mod tests {
             "model",
             json!({"input_tokens": 5, "output_tokens": 5}),
         );
+         let out = run(&body);
+         assert_eq!(
+             out["choices"][0]["message"]["content"],
+             "part one\npart two"
+         );
+     }
+
+    #[test]
+    fn anthropic_error_response_converts_to_openai_error() {
+        let body = serde_json::to_vec(&json!({
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "message": "model not found"
+            }
+        }))
+        .unwrap();
         let out = run(&body);
-        assert_eq!(
-            out["choices"][0]["message"]["content"],
-            "part one\npart two"
+        assert!(out.get("error").is_some());
+        assert_eq!(out["error"]["type"], "invalid_request_error");
+        assert_eq!(out["error"]["message"], "model not found");
+        // Must NOT produce garbage through the success path
+        assert!(
+            out.get("choices").is_none(),
+            "error should not have 'choices' field"
         );
     }
 }

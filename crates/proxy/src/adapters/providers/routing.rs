@@ -293,6 +293,15 @@ impl Provider for RoutingProvider {
             let rewritten_body = Bytes::from(rewritten);
             let direction = Direction::from_pair(ApiFormat::Anthropic, provider.native_format());
             let native_path = Self::translate_path(path, direction);
+            tracing::debug!(
+                target: "routing",
+                model = %model,
+                provider = provider.name(),
+                bare_model = %bare_model,
+                direction = direction.as_label().unwrap_or("passthrough"),
+                native_path = native_path,
+                "namespace route: translating request"
+            );
             let send_body = Self::translate_request(&rewritten_body, direction)?;
             let raw_resp = match provider.native_format() {
                 ApiFormat::Anthropic => {
@@ -357,6 +366,15 @@ impl Provider for RoutingProvider {
             let rewritten_body = Bytes::from(rewritten);
             let direction = Direction::from_pair(ApiFormat::OpenAI, provider.native_format());
             let native_path = Self::translate_path(path, direction);
+            tracing::debug!(
+                target: "routing",
+                model = %model,
+                provider = provider.name(),
+                bare_model = %bare_model,
+                direction = direction.as_label().unwrap_or("passthrough"),
+                native_path = native_path,
+                "namespace route: translating request (OpenAI client)"
+            );
             let send_body = Self::translate_request(&rewritten_body, direction)?;
             let raw_resp = match provider.native_format() {
                 ApiFormat::OpenAI => {

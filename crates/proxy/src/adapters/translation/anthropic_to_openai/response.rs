@@ -18,6 +18,28 @@ pub fn translate(body: &[u8]) -> Result<Vec<u8>, ProxyError> {
 }
 
 fn translate_value(v: &Value) -> Result<Value, ProxyError> {
+    // Detect OpenAI error responses (e.g. 400 "invalid_function_parameters").
+    // These have an "error" object but no "choices" array — feeding them through
+    // the success path produces garbage like {"id":"msg_unknown","model":null,…}.
+    // Convert to Anthropic error format instead.
+    if v.get("error").is_some() && v.get("choices").is_none() {
+        let err = &v["error"];
+        tracing::debug!(
+            target: "translation",
+            direction = "openai_to_anthropic",
+            error_type = err.get("type").and_then(|t| t.as_str()).unwrap_or("unknown"),
+            error_message = err.get("message").and_then(|m| m.as_str()).unwrap_or(""),
+            "translating OpenAI error response to Anthropic error format"
+        );
+        return Ok(json!({
+            "type": "error",
+            "error": {
+                "type": err.get("type").and_then(|t| t.as_str()).unwrap_or("api_error"),
+                "message": err.get("message").and_then(|m| m.as_str()).unwrap_or("unknown error"),
+            }
+        }));
+    }
+
     // 1. Build content array: text from message.content + tool_use blocks from message.tool_calls
     let choice0 = v
         .get("choices")
@@ -351,5 +373,32 @@ mod tests {
         assert_eq!(out["stop_sequence"], Value::Null);
         assert!(out.get("model").is_some());
         assert!(out.get("usage").is_some());
+    }
+
+    #[test]
+    fn openai_error_response_converts_to_anthropic_error() {
+        // Simulates the 400 error Codex returns for invalid tool schemas
+        let body = serde_json::to_vec(&json!({
+            "error": {
+                "message": "Invalid schema for function 'playwright_browser_click': Missing 'button'.",
+                "type": "invalid_request_error",
+                "param": "tools[4].parameters",
+                "code": "invalid_function_parameters"
+            }
+        }))
+        .unwrap();
+        let out = run(&body);
+        assert_eq!(out["type"], "error");
+        assert_eq!(out["error"]["type"], "invalid_request_error");
+        assert!(out["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("playwright_browser_click"));
+        // Must NOT produce the old garbage: {"id":"msg_unknown","model":null,…}
+        assert!(out.get("id").is_none(), "error should not have 'id' field");
+        assert!(
+            out.get("model").is_none(),
+            "error should not have 'model' field"
+        );
     }
 }

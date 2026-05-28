@@ -66,7 +66,21 @@ fn translate_value(v: &Value) -> Result<Value, ProxyError> {
 }
 
 fn translate_tool_def(tool: &Value) -> Value {
-    let parameters = strip_schema_keywords(tool.get("input_schema").cloned().unwrap_or(json!({})));
+    let name = tool
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("<unnamed>");
+    let raw_params = tool.get("input_schema").cloned().unwrap_or(json!({}));
+    let parameters = strip_schema_keywords(raw_params.clone());
+
+    if parameters != raw_params {
+        tracing::debug!(
+            target: "translation",
+            tool = name,
+            "tool schema was modified by strip_schema_keywords"
+        );
+    }
+
     json!({
         "type": "function",
         "function": {
@@ -77,20 +91,86 @@ fn translate_tool_def(tool: &Value) -> Value {
     })
 }
 
-/// Recursively strip `$schema` and other JSON Schema meta-keywords that have no
-/// meaning in OpenAI's function parameter schemas.  Claude Code sends
-/// `$schema: "https://json-schema.org/draft/2020-12/schema"` at the root and
-/// sometimes nested inside property definitions.  The Codex Responses API may
-/// misinterpret these as constraint violations, so we remove them before
-/// forwarding.
+/// Recursively sanitise a JSON Schema for OpenAI's function-calling API.
+///
+/// Two transforms:
+/// 1. **Strip unsupported keywords** — OpenAI rejects keywords like `$schema`,
+///    `propertyNames`, `title`, `default`, etc. with a 400.
+/// 2. **Synthesise `required`** — OpenAI strict mode requires every key in
+///    `properties` to appear in `required`.  Anthropic tools often omit
+///    optional params (e.g. `button`, `notes`).  We fill `required` at every
+///    level — top-level, nested `properties`, `additionalProperties`, `items`,
+///    `anyOf` entries — so no level is missed.
+///
+/// We use a blocklist (not an allowlist) so that user-defined property names
+/// inside `properties` objects are preserved.
 fn strip_schema_keywords(mut v: Value) -> Value {
     if let Some(obj) = v.as_object_mut() {
-        obj.remove("$schema");
-        obj.remove("$id");
-        obj.remove("$comment");
-        // Recurse into nested objects (properties, items, etc.)
+        // JSON Schema keywords that OpenAI does NOT support.
+        const UNSUPPORTED: &[&str] = &[
+            // Meta-keywords
+            "$schema", "$id", "$comment", "$defs", "definitions",
+            // Metadata
+            "title", "examples", "default", "deprecated",
+            // Object constraints
+            "propertyNames", "patternProperties", "minProperties", "maxProperties",
+            // Array constraints
+            "minItems", "maxItems", "uniqueItems", "contains", "minContains", "maxContains",
+            // String constraints
+            "minLength", "maxLength", "pattern", "format",
+            // Number constraints
+            "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+            // Composition (OpenAI only supports `anyOf`)
+            "allOf", "oneOf",
+            // Conditional
+            "if", "then", "else", "not",
+            // Referencing
+            "$ref", "$dynamicRef", "$recursiveRef",
+            // Content
+            "contentEncoding", "contentMediaType",
+            // Other
+            "readOnly", "writeOnly",
+        ];
+        for keyword in UNSUPPORTED {
+            obj.remove(*keyword);
+        }
+        // Recurse into remaining values FIRST (depth-first) so that nested
+        // objects are already clean before we fix `required` below.
         for (_, child) in obj.iter_mut() {
             *child = strip_schema_keywords(child.clone());
+        }
+        // Flatten `additionalProperties` that is an object schema (not a boolean).
+        // Codex Responses API only accepts `additionalProperties: false` (boolean).
+        // An object-valued `additionalProperties` like `{"type":"string"}` or
+        // `{"type":"object","properties":{...}}` causes a schema rejection.
+        // We collapse it to `false`.
+        if let Some(ap) = obj.get("additionalProperties") {
+            if !ap.is_boolean() {
+                obj.insert("additionalProperties".into(), json!(false));
+            }
+        }
+        // OpenAI strict mode requires every `type: "object"` with
+        // `additionalProperties: false` to also have `properties` and `required`.
+        // If an object property ends up with `additionalProperties: false` but
+        // no `properties` (e.g. `answers` had only `additionalProperties:
+        // {"type":"string"}`), inject empty ones so strict validation passes.
+        if obj.get("type").and_then(|v| v.as_str()) == Some("object")
+            && obj.get("additionalProperties").and_then(|v| v.as_bool()) == Some(false)
+            && !obj.contains_key("properties")
+        {
+            obj.insert("properties".into(), json!({}));
+            obj.insert("required".into(), json!([]));
+        }
+        // After recursion: ensure `required` exactly matches `properties` keys.
+        // OpenAI strict mode requires a bidirectional match: every key in
+        // properties must be in required AND every key in required must be in
+        // properties.
+        if let Some(props) = obj.get("properties").and_then(|p| p.as_object()) {
+            let all_keys: Vec<Value> = props.keys().map(|k| Value::String(k.clone())).collect();
+            obj.insert("required".into(), Value::Array(all_keys));
+        } else {
+            // No properties — remove required to avoid referencing phantom keys.
+            obj.remove("required");
         }
     }
     if let Some(arr) = v.as_array_mut() {
@@ -403,5 +483,164 @@ mod tests {
         let out: Value = serde_json::from_slice(&translate(body).unwrap()).unwrap();
         assert_eq!(out["user"], "u42");
         assert!(out.get("metadata").is_none());
+    }
+
+    #[test]
+    fn required_synthesised_from_properties_for_openai_strict_mode() {
+        // Mimics Playwright's playwright_browser_click: `button` is in
+        // properties but intentionally omitted from required.
+        let body = r#"{"model":"x","max_tokens":10,"messages":[],"tools":[
+            {"name":"click","description":"click","input_schema":{
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string"},
+                    "button": {"type": "string", "default": "left"}
+                },
+                "required": ["target"]
+            }}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let required = out["tools"][0]["function"]["parameters"]["required"]
+            .as_array()
+            .unwrap();
+        let required_strs: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        // Must contain BOTH target and button — OpenAI strict mode requires it
+        assert!(
+            required_strs.contains(&"target"),
+            "required should contain 'target'"
+        );
+        assert!(
+            required_strs.contains(&"button"),
+            "required should contain 'button' (was missing in Anthropic schema)"
+        );
+    }
+
+    #[test]
+    fn required_synthesised_when_missing_entirely() {
+        // Tool with properties but no required array at all
+        let body = r#"{"model":"x","max_tokens":10,"messages":[],"tools":[
+            {"name":"foo","description":"bar","input_schema":{
+                "type": "object",
+                "properties": {
+                    "a": {"type": "string"},
+                    "b": {"type": "integer"}
+                }
+            }}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let required = out["tools"][0]["function"]["parameters"]["required"]
+            .as_array()
+            .unwrap();
+        let required_strs: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(required_strs.contains(&"a"));
+        assert!(required_strs.contains(&"b"));
+    }
+
+    #[test]
+    fn strips_unsupported_keywords_like_property_names() {
+        // Mimics Claude Code's AskUserQuestion tool which has `propertyNames`
+        // — rejected by OpenAI with "is not permitted".
+        let body = r#"{"model":"x","max_tokens":10,"messages":[],"tools":[
+            {"name":"AskUserQuestion","description":"ask","input_schema":{
+                "type": "object",
+                "properties": {
+                    "questions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "question": {"type": "string"},
+                                "options": {"type": "array", "items": {"type": "string"}}
+                            }
+                        }
+                    }
+                },
+                "propertyNames": {"type": "string"},
+                "title": "Questions",
+                "default": {},
+                "minProperties": 1,
+                "examples": [{"questions": []}]
+            }}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let params = &out["tools"][0]["function"]["parameters"];
+        // Unsupported keywords must be stripped
+        assert!(params.get("propertyNames").is_none(), "propertyNames must be stripped");
+        assert!(params.get("title").is_none(), "title must be stripped");
+        assert!(params.get("default").is_none(), "default must be stripped");
+        assert!(params.get("minProperties").is_none(), "minProperties must be stripped");
+        assert!(params.get("examples").is_none(), "examples must be stripped");
+        // Supported keywords must remain
+        assert_eq!(params["type"], "object");
+        assert!(params.get("properties").is_some());
+        assert!(params["properties"]["questions"]["items"].get("properties").is_some());
+    }
+
+    #[test]
+    fn additionalProperties_object_schema_collapsed_to_false() {
+        // Codex Responses API only accepts `additionalProperties: false` (boolean).
+        // Object-valued `additionalProperties` causes schema rejection.
+        let body = r#"{"model":"x","max_tokens":10,"messages":[],"tools":[
+            {"name":"AskUserQuestion","description":"ask","input_schema":{
+                "type": "object",
+                "properties": {
+                    "annotations": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "type": "object",
+                            "properties": {
+                                "value": {"type": "string"},
+                                "notes": {"type": "string"}
+                            },
+                            "required": ["value"]
+                        }
+                    }
+                }
+            }}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let ap = &out["tools"][0]["function"]["parameters"]
+            ["properties"]["annotations"]["additionalProperties"];
+        // Must be collapsed to false, not an object schema
+        assert_eq!(ap, &json!(false), "additionalProperties object schema must be collapsed to false");
+    }
+
+    #[test]
+    fn phantom_required_keys_removed_when_not_in_properties() {
+        // Anthropic schema has `annotations` in `required` but it's defined via
+        // `patternProperties` (which we strip), not `properties`.  OpenAI:
+        // "Extra required key 'annotations' supplied."
+        let body = r#"{"model":"x","max_tokens":10,"messages":[],"tools":[
+            {"name":"AskUserQuestion","description":"ask","input_schema":{
+                "type": "object",
+                "properties": {
+                    "questions": {
+                        "type": "array",
+                        "items": {"type": "string"}
+                    }
+                },
+                "patternProperties": {
+                    "annotations": {"type": "object"}
+                },
+                "required": ["questions", "annotations"]
+            }}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let params = &out["tools"][0]["function"]["parameters"];
+        let required = params["required"].as_array().unwrap();
+        let required_strs: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            required_strs.contains(&"questions"),
+            "required should contain 'questions'"
+        );
+        assert!(
+            !required_strs.contains(&"annotations"),
+            "annotations must NOT be in required (phantom key from patternProperties)"
+        );
+        // patternProperties itself must also be stripped
+        assert!(
+            params.get("patternProperties").is_none(),
+            "patternProperties must be stripped"
+        );
     }
 }

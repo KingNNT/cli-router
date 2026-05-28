@@ -384,19 +384,24 @@ fn translate_tool(tool: &Value) -> Value {
                 .unwrap_or("");
             let parameters = func.get("parameters").cloned().unwrap_or(json!({}));
 
-            // Use explicit `strict` if provided; otherwise auto-detect from the
-            // schema shape.  Clients sending OpenAI Chat Completions format set
-            // `strict` explicitly (e.g. OpenCode sends `true`).  Clients that
-            // arrive via Anthropic→OpenAI translation do not have a `strict`
-            // field (Anthropic has no equivalent), so we infer it from the
-            // schema: `type: "object"` + `additionalProperties: false` +
-            // `required` present → strict.  This ensures the Codex Responses
-            // API enforces schema conformance for tool-call arguments, which is
-            // critical for Claude Code clients that validate tool inputs against
-            // the original `input_schema`.
-            let strict = func.get("strict").cloned().unwrap_or_else(|| {
-                json!(schema_looks_strict(&parameters))
-            });
+            // Use explicit `strict` if the client set it AND it is true.
+            // When strict is true, the Responses API validates that tool-call
+            // arguments match the schema exactly.  This only works when the
+            // schema is the ORIGINAL schema — not after we've sanitised it
+            // (stripping keywords, collapsing additionalProperties, etc.).
+            //
+            // When translating from Anthropic format, the schema has been
+            // through strip_schema_keywords() which may have changed it
+            // significantly (e.g. collapsing additionalProperties objects to
+            // false, stripping propertyNames, synthesising required arrays).
+            // In that case strict mode will REJECT the call because Codex
+            // can't produce arguments matching a schema it never saw the
+            // original form of.
+            //
+            // Rule: only enable strict when the client explicitly set it to
+            // true (i.e. the schema is untouched, coming from a native OpenAI
+            // client like OpenCode).  Never auto-detect after translation.
+            let strict = func.get("strict").and_then(|s| s.as_bool()).unwrap_or(false);
 
             json!({
                 "type": "function",
@@ -410,24 +415,6 @@ fn translate_tool(tool: &Value) -> Value {
     }
 }
 
-/// Heuristic: does this JSON Schema look like it enforces strict conformance?
-///
-/// Returns `true` when the schema has all three traits that make Structured
-/// Outputs safe: `type: "object"`, `additionalProperties: false`, and a
-/// non-empty `required` array.  This covers the schemas emitted by Claude
-/// Code (Anthropic) which always include these constraints.
-fn schema_looks_strict(schema: &Value) -> bool {
-    let is_object = schema.get("type").and_then(|v| v.as_str()) == Some("object");
-    let no_additional = schema
-        .get("additionalProperties")
-        .and_then(|v| v.as_bool())
-        == Some(false);
-    let has_required = schema
-        .get("required")
-        .and_then(|v| v.as_array())
-        .is_some_and(|a| !a.is_empty());
-    is_object && no_additional && has_required
-}
 
 fn text_content_to_string(content: Option<&Value>) -> String {
     let Some(content) = content else {
@@ -1419,65 +1406,11 @@ mod tests {
         assert_eq!(tools[0]["parameters"]["required"], json!(["name"]));
     }
 
-    // -- Auto-detect strict from schema tests --
-
     #[test]
-    fn schema_looks_strict_detects_typical_claude_code_schema() {
-        let schema = json!({
-            "type": "object",
-            "properties": {"filePath": {"type": "string"}},
-            "required": ["filePath"],
-            "additionalProperties": false
-        });
-        assert!(schema_looks_strict(&schema));
-    }
-
-    #[test]
-    fn schema_looks_strict_returns_false_when_no_additional_properties() {
-        let schema = json!({
-            "type": "object",
-            "properties": {"filePath": {"type": "string"}},
-            "required": ["filePath"]
-        });
-        assert!(!schema_looks_strict(&schema));
-    }
-
-    #[test]
-    fn schema_looks_strict_returns_false_when_no_required() {
-        let schema = json!({
-            "type": "object",
-            "properties": {"filePath": {"type": "string"}},
-            "additionalProperties": false
-        });
-        assert!(!schema_looks_strict(&schema));
-    }
-
-    #[test]
-    fn schema_looks_strict_returns_false_when_empty_required() {
-        let schema = json!({
-            "type": "object",
-            "properties": {"filePath": {"type": "string"}},
-            "required": [],
-            "additionalProperties": false
-        });
-        assert!(!schema_looks_strict(&schema));
-    }
-
-    #[test]
-    fn schema_looks_strict_returns_false_when_not_object() {
-        let schema = json!({
-            "type": "string",
-            "required": ["x"],
-            "additionalProperties": false
-        });
-        assert!(!schema_looks_strict(&schema));
-    }
-
-    #[test]
-    fn translate_tool_auto_detects_strict_from_schema() {
-        // Simulates what arrives via Anthropic→OpenAI translation: no explicit
-        // `strict` field, but the schema has additionalProperties:false +
-        // required → should auto-detect as strict.
+    fn translate_tool_no_auto_detect_strict_without_explicit_flag() {
+        // After schema sanitization, the schema may look strict but we should
+        // NOT auto-detect strict mode because the schema has been modified.
+        // Only explicit `strict: true` from the client enables strict mode.
         let chat = json!({
             "model": "codex-mini",
             "messages": [],
@@ -1499,7 +1432,7 @@ mod tests {
         });
         let result = translate_request(&chat).unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools[0]["strict"], true, "should auto-detect strict from schema");
+        assert_eq!(tools[0]["strict"], false, "strict should be false without explicit flag");
     }
 
     #[test]
