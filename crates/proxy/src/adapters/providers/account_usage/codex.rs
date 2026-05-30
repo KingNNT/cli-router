@@ -62,18 +62,9 @@ fn resolve_token(auth: &AuthConfig) -> Result<Option<String>, ProxyError> {
     }
 }
 
-impl AccountUsagePort for CodexAccountUsage {
-    fn fetch_usage(&self) -> Option<Result<ProviderAccountUsage, ProxyError>> {
-        let token = match resolve_token(&self.auth) {
-            Ok(Some(token)) => token,
-            Ok(None) => return None,
-            Err(e) => return Some(Err(e)),
-        };
-
-        if token.trim().is_empty() {
-            return None;
-        }
-
+impl CodexAccountUsage {
+    /// Send the probe request and return the parsed usage or error.
+    fn probe_once(&self, token: &str) -> ProbeOutcome {
         let url = probe_url(&self.base_url);
         let body = codex_probe_body();
         let response = self
@@ -88,26 +79,78 @@ impl AccountUsagePort for CodexAccountUsage {
             Ok(resp) => {
                 let headers = ureq_headers_to_http(resp.headers_names(), &resp);
                 match provider_usage_from_headers(&self.provider_name, &headers) {
-                    Some(usage) => Some(Ok(usage)),
-                    None => Some(Err(ProxyError::UpstreamUsage {
-                        provider: self.provider_name.clone(),
-                        message: "Codex response did not include rate-limit headers".to_string(),
-                    })),
+                    Some(usage) => ProbeOutcome::Success(usage),
+                    None => ProbeOutcome::NoRateLimitHeaders,
                 }
             }
             Err(ureq::Error::Status(_, resp)) => {
                 let headers = ureq_headers_to_http(resp.headers_names(), &resp);
                 if let Some(usage) = provider_usage_from_headers(&self.provider_name, &headers) {
-                    return Some(Ok(usage));
+                    return ProbeOutcome::Success(usage);
                 }
-
-                Some(Err(ProxyError::UpstreamUsage {
-                    provider: self.provider_name.clone(),
-                    message: "Codex probe failed and response did not include rate-limit headers"
-                        .to_string(),
-                }))
+                ProbeOutcome::HttpErrorNoHeaders
             }
-            Err(e) => Some(Err(ProxyError::UpstreamUsage {
+            Err(e) => ProbeOutcome::TransportError(e),
+        }
+    }
+}
+
+/// Outcome of a single probe attempt.
+enum ProbeOutcome {
+    Success(ProviderAccountUsage),
+    /// 200 OK but no x-codex-* headers — retrying won't help.
+    NoRateLimitHeaders,
+    /// HTTP error with no parseable rate-limit headers — worth retrying with a fresh token.
+    HttpErrorNoHeaders,
+    /// Network/transport error — retrying won't help.
+    TransportError(ureq::Error),
+}
+
+impl AccountUsagePort for CodexAccountUsage {
+    fn fetch_usage(&self) -> Option<Result<ProviderAccountUsage, ProxyError>> {
+        let token = match resolve_token(&self.auth) {
+            Ok(Some(token)) => token,
+            Ok(None) => return None,
+            Err(e) => return Some(Err(e)),
+        };
+
+        if token.trim().is_empty() {
+            return None;
+        }
+
+        let outcome = self.probe_once(&token);
+
+        // If the first probe failed with an HTTP error and no rate-limit
+        // headers, the token may be stale. Re-read ~/.codex/auth.json (for
+        // CodexAuto) and retry once before giving up.
+        let outcome = match outcome {
+            ProbeOutcome::HttpErrorNoHeaders if matches!(self.auth, AuthConfig::CodexAuto) => {
+                tracing::info!(
+                    provider = %self.provider_name,
+                    "Codex account probe failed; re-reading ~/.codex/auth.json and retrying"
+                );
+                match resolve_token(&self.auth) {
+                    Ok(Some(fresh_token)) if fresh_token != token => {
+                        self.probe_once(&fresh_token)
+                    }
+                    _ => outcome, // Same token or resolve failed — return original result.
+                }
+            }
+            other => other,
+        };
+
+        match outcome {
+            ProbeOutcome::Success(usage) => Some(Ok(usage)),
+            ProbeOutcome::NoRateLimitHeaders => Some(Err(ProxyError::UpstreamUsage {
+                provider: self.provider_name.clone(),
+                message: "Codex response did not include rate-limit headers".to_string(),
+            })),
+            ProbeOutcome::HttpErrorNoHeaders => Some(Err(ProxyError::UpstreamUsage {
+                provider: self.provider_name.clone(),
+                message: "Codex probe failed and response did not include rate-limit headers"
+                    .to_string(),
+            })),
+            ProbeOutcome::TransportError(e) => Some(Err(ProxyError::UpstreamUsage {
                 provider: self.provider_name.clone(),
                 message: format!("Codex probe: {e}"),
             })),

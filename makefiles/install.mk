@@ -42,4 +42,4 @@ uninstall-proxy-tui: ## Uninstall the proxy-tui binary
 	$(CARGO) uninstall proxy-tui
 
 uninstall-analysis: ## Uninstall the cli-router-analysis binary
-	-$(CARGO) uninstall cli-router-analysis
+	-$(CARGO) uninstall analysis
