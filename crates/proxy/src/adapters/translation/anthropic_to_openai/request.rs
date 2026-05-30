@@ -193,6 +193,194 @@ fn translate_tool_choice(tc: &Value) -> Value {
     }
 }
 
+/// Ensure every assistant message with `tool_calls` is followed by a `tool`
+/// message for each `tool_call_id`.  DeepSeek (and OpenAI) reject requests
+/// where tool_calls are not answered.
+///
+/// This handles the case where Claude Code sends a conversation that ends
+/// with an assistant message containing tool_calls, but the tool_result
+/// messages have not been sent yet (the current request IS the response).
+fn fill_missing_tool_responses(messages: &mut Vec<Value>) {
+    // Collect all tool_call_ids that already have responses.
+    let mut answered_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for msg in messages.iter() {
+        if msg.get("role").and_then(|r| r.as_str()) == Some("tool") {
+            if let Some(id) = msg.get("tool_call_id").and_then(|i| i.as_str()) {
+                answered_ids.insert(id.to_string());
+            }
+        }
+    }
+
+    // Walk through and inject missing tool responses after each assistant
+    // message that has tool_calls.
+    let mut i = 0;
+    while i < messages.len() {
+        let msg = &messages[i];
+        if msg.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+            i += 1;
+            continue;
+        }
+        let Some(tool_calls) = msg.get("tool_calls").and_then(|tc| tc.as_array()) else {
+            i += 1;
+            continue;
+        };
+
+        // Collect tool_call_ids from this assistant message.
+        let call_ids: Vec<String> = tool_calls
+            .iter()
+            .filter_map(|tc| tc.get("id").and_then(|id| id.as_str()).map(|s| s.to_string()))
+            .collect();
+
+        // Find which ids are missing responses.
+        let missing: Vec<&str> = call_ids
+            .iter()
+            .filter(|id| !answered_ids.contains(id.as_str()))
+            .map(|s| s.as_str())
+            .collect();
+
+        if missing.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        // Check if the messages immediately following already answer these.
+        // If the next message is a tool message for one of these ids, skip it.
+        let mut insert_pos = i + 1;
+        while insert_pos < messages.len() {
+            let next = &messages[insert_pos];
+            if next.get("role").and_then(|r| r.as_str()) == Some("tool") {
+                // This is a tool response — mark it as answered and continue.
+                if let Some(id) = next.get("tool_call_id").and_then(|i| i.as_str()) {
+                    answered_ids.insert(id.to_string());
+                }
+                insert_pos += 1;
+            } else {
+                // Not a tool message — stop scanning.
+                break;
+            }
+        }
+
+        // Re-check which ids are still missing after accounting for
+        // tool messages that follow immediately.
+        let still_missing: Vec<&str> = call_ids
+            .iter()
+            .filter(|id| !answered_ids.contains(id.as_str()))
+            .map(|s| s.as_str())
+            .collect();
+
+        if still_missing.is_empty() {
+            i = insert_pos;
+            continue;
+        }
+
+        // Inject dummy tool responses for missing ids.
+        tracing::debug!(
+            missing_ids = ?still_missing,
+            "injecting dummy tool responses for unanswered tool_calls"
+        );
+        for id in &still_missing {
+            let dummy = json!({
+                "role": "tool",
+                "tool_call_id": id,
+                "content": ""
+            });
+            messages.insert(insert_pos, dummy);
+            answered_ids.insert(id.to_string());
+            insert_pos += 1;
+        }
+
+        // Skip past the inserted messages.
+        i = insert_pos;
+    }
+}
+
+/// Ensure every assistant message with `tool_calls` is immediately followed by
+/// its corresponding `tool` response messages.
+///
+/// In Anthropic format, a single `user` message can contain both `tool_result`
+/// blocks AND regular text content.  When translated to OpenAI format these
+/// become separate messages — but the tool messages may end up *after* a user
+/// text message, violating the ordering constraint that tool responses must
+/// immediately follow the assistant tool_calls.
+///
+/// Example of the problem:
+/// ```text
+/// [2] assistant  →  tool_calls=['call_00_abc']
+/// [3] user       →  "Base directory for this skill..."
+/// [4] tool       →  tool_call_id='call_00_abc' "Launching skill: doctor"
+/// ```
+/// DeepSeek rejects this because [3] sits between the tool_calls and the response.
+///
+/// This function reorders so that all `tool` messages answering a given
+/// assistant's `tool_calls` are pulled up to immediately follow that assistant.
+fn reorder_tool_responses(messages: &mut Vec<Value>) {
+    let mut i = 0;
+    while i < messages.len() {
+        // Only care about assistant messages with tool_calls.
+        let is_assistant_with_calls = {
+            let msg = &messages[i];
+            msg.get("role").and_then(|r| r.as_str()) == Some("assistant")
+                && msg.get("tool_calls").and_then(|tc| tc.as_array()).map_or(false, |a| !a.is_empty())
+        };
+        if !is_assistant_with_calls {
+            i += 1;
+            continue;
+        }
+
+        // Collect the tool_call_ids from this assistant message.
+        let call_ids: Vec<String> = messages[i]
+            .get("tool_calls")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tc| tc.get("id").and_then(|id| id.as_str()).map(|s| s.to_string()))
+            .collect();
+
+        // Scan messages after this assistant to find tool responses that answer
+        // these call_ids.  Pull them up to be immediately after position i.
+        let mut insert_pos = i + 1;
+        let mut j = insert_pos;
+        while j < messages.len() {
+            let is_matching_tool = {
+                let cur = &messages[j];
+                cur.get("role").and_then(|r| r.as_str()) == Some("tool")
+                    && cur
+                        .get("tool_call_id")
+                        .and_then(|id| id.as_str())
+                        .map_or(false, |tid| call_ids.iter().any(|c| c == tid))
+            };
+            if is_matching_tool {
+                if j == insert_pos {
+                    // Already in the correct position — no need to move.
+                    insert_pos += 1;
+                    j += 1;
+                } else {
+                    let tid = messages[j]
+                        .get("tool_call_id")
+                        .and_then(|id| id.as_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    tracing::debug!(
+                        tool_call_id = tid,
+                        "reordering tool response to be immediately after tool_calls"
+                    );
+                    let tool_msg = messages.remove(j);
+                    messages.insert(insert_pos, tool_msg);
+                    // insert_pos advances because we inserted a message here.
+                    insert_pos += 1;
+                    // Do NOT advance j — the array shifted, so j now points to
+                    // the next element.
+                }
+            } else {
+                j += 1;
+            }
+        }
+
+        i = insert_pos;
+    }
+}
+
 fn build_openai_messages(req: &Value) -> Result<Vec<Value>, ProxyError> {
     let mut out = Vec::new();
 
@@ -212,6 +400,16 @@ fn build_openai_messages(req: &Value) -> Result<Vec<Value>, ProxyError> {
             }
         }
     }
+
+    // Post-process step 1: reorder tool responses so they immediately follow
+    // their assistant tool_calls.  DeepSeek (and OpenAI) require this ordering.
+    reorder_tool_responses(&mut out);
+
+    // Post-process step 2: ensure every assistant message with tool_calls is
+    // followed by a tool response for each tool_call_id.  Claude Code may send
+    // a conversation that ends with an assistant tool_calls but no tool_result
+    // (the current request IS the response).
+    fill_missing_tool_responses(&mut out);
 
     Ok(out)
 }
@@ -642,5 +840,344 @@ mod tests {
             params.get("patternProperties").is_none(),
             "patternProperties must be stripped"
         );
+    }
+
+    #[test]
+    fn tool_responses_reordered_after_assistant_tool_calls() {
+        // Reproduces the exact bug: when a user message contains BOTH tool_result
+        // and text, translation produces tool messages AFTER user text messages.
+        // DeepSeek rejects this because tool responses must immediately follow
+        // the assistant tool_calls.
+        //
+        // Anthropic sends:
+        //   [0] assistant: tool_use(id="call_00_abc")
+        //   [1] user: [tool_result(call_00_abc, "..."), text("some text")]
+        //
+        // Without reordering, translation produces:
+        //   [0] assistant: tool_calls=[call_00_abc]
+        //   [1] tool: tool_call_id=call_00_abc   ← correct position
+        //   [2] user: "some text"
+        //
+        // But when the Anthropic input is split across messages like:
+        //   [0] assistant: tool_use(id="call_00_abc")
+        //   [1] user: [text("Base directory..."), tool_result(call_00_abc, "result")]
+        //
+        // translate_message produces (text first, then tool):
+        //   [0] assistant: tool_calls=[call_00_abc]
+        //   [1] user: "Base directory..."
+        //   [2] tool: tool_call_id=call_00_abc     ← WRONG position!
+        //
+        // reorder_tool_responses must fix this to:
+        //   [0] assistant: tool_calls=[call_00_abc]
+        //   [1] tool: tool_call_id=call_00_abc     ← moved up!
+        //   [2] user: "Base directory..."
+        let body = r#"{"model":"x","max_tokens":10,"messages":[
+            {"role":"assistant","content":[
+                {"type":"text","text":"I'll help you."},
+                {"type":"tool_use","id":"call_00_abc","name":"skill","input":{"name":"doctor"}}
+            ]},
+            {"role":"user","content":[
+                {"type":"text","text":"Base directory for this skill"},
+                {"type":"tool_result","tool_use_id":"call_00_abc","content":"Launching skill: doctor"}
+            ]}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let msgs = out["messages"].as_array().unwrap();
+
+        // Expected order after reordering:
+        // [0] assistant with tool_calls
+        // [1] tool (moved up to immediately follow assistant)
+        // [2] user text (pushed down)
+        assert_eq!(msgs[0]["role"], "assistant", "first msg should be assistant");
+        assert!(msgs[0].get("tool_calls").is_some(), "assistant should have tool_calls");
+
+        assert_eq!(msgs[1]["role"], "tool", "second msg should be tool (reordered)");
+        assert_eq!(msgs[1]["tool_call_id"], "call_00_abc");
+
+        assert_eq!(msgs[2]["role"], "user", "third msg should be user text");
+        assert_eq!(msgs[2]["content"], "Base directory for this skill");
+    }
+
+    #[test]
+    fn multiple_tool_responses_reordered_together() {
+        // Assistant with 2 tool_calls, user message with 2 tool_results + text.
+        let body = r#"{"model":"x","max_tokens":10,"messages":[
+            {"role":"assistant","content":[
+                {"type":"tool_use","id":"call_1","name":"Read","input":{}},
+                {"type":"tool_use","id":"call_2","name":"Write","input":{}}
+            ]},
+            {"role":"user","content":[
+                {"type":"text","text":"some instructions"},
+                {"type":"tool_result","tool_use_id":"call_1","content":"file contents"},
+                {"type":"tool_result","tool_use_id":"call_2","content":"written ok"}
+            ]}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let msgs = out["messages"].as_array().unwrap();
+
+        // [0] assistant with tool_calls
+        assert_eq!(msgs[0]["role"], "assistant");
+        // [1] tool call_1
+        assert_eq!(msgs[1]["role"], "tool");
+        assert_eq!(msgs[1]["tool_call_id"], "call_1");
+        // [2] tool call_2
+        assert_eq!(msgs[2]["role"], "tool");
+        assert_eq!(msgs[2]["tool_call_id"], "call_2");
+        // [3] user text (pushed after tool responses)
+        assert_eq!(msgs[3]["role"], "user");
+    }
+
+    // ── reorder_tool_responses edge cases ────────────────────────────
+
+    /// When tool responses are already in the correct order (immediately
+    /// after the assistant tool_calls), no reordering should happen.
+    #[test]
+    fn no_reorder_when_already_correct() {
+        let body = r#"{"model":"x","max_tokens":10,"messages":[
+            {"role":"assistant","content":[
+                {"type":"tool_use","id":"call_1","name":"Read","input":{}}
+            ]},
+            {"role":"user","content":[
+                {"type":"tool_result","tool_use_id":"call_1","content":"file contents"}
+            ]},
+            {"role":"user","content":"now do something else"}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let msgs = out["messages"].as_array().unwrap();
+
+        assert_eq!(msgs[0]["role"], "assistant");
+        assert_eq!(msgs[1]["role"], "tool");
+        assert_eq!(msgs[1]["tool_call_id"], "call_1");
+        assert_eq!(msgs[2]["role"], "user");
+        assert_eq!(msgs[2]["content"], "now do something else");
+    }
+
+    /// When a conversation has multiple rounds of tool use, each round's
+    /// tool responses must be reordered to follow their own assistant message.
+    #[test]
+    fn multiple_rounds_of_tool_use_reorder_independently() {
+        let body = r#"{"model":"x","max_tokens":10,"messages":[
+            {"role":"assistant","content":[
+                {"type":"tool_use","id":"call_A","name":"Read","input":{}}
+            ]},
+            {"role":"user","content":[
+                {"type":"text","text":"context A"},
+                {"type":"tool_result","tool_use_id":"call_A","content":"result A"}
+            ]},
+            {"role":"assistant","content":[
+                {"type":"tool_use","id":"call_B","name":"Write","input":{}}
+            ]},
+            {"role":"user","content":[
+                {"type":"text","text":"context B"},
+                {"type":"tool_result","tool_use_id":"call_B","content":"result B"}
+            ]}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let msgs = out["messages"].as_array().unwrap();
+
+        // Round 1: assistant → tool (reordered) → user text
+        assert_eq!(msgs[0]["role"], "assistant");
+        let tc_a = msgs[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(tc_a[0]["id"], "call_A");
+
+        assert_eq!(msgs[1]["role"], "tool");
+        assert_eq!(msgs[1]["tool_call_id"], "call_A");
+
+        assert_eq!(msgs[2]["role"], "user");
+        assert_eq!(msgs[2]["content"], "context A");
+
+        // Round 2: assistant → tool (reordered) → user text
+        assert_eq!(msgs[3]["role"], "assistant");
+        let tc_b = msgs[3]["tool_calls"].as_array().unwrap();
+        assert_eq!(tc_b[0]["id"], "call_B");
+
+        assert_eq!(msgs[4]["role"], "tool");
+        assert_eq!(msgs[4]["tool_call_id"], "call_B");
+
+        assert_eq!(msgs[5]["role"], "user");
+        assert_eq!(msgs[5]["content"], "context B");
+    }
+
+    /// When there are no tool_calls at all, messages should pass through
+    /// unchanged — no reordering logic triggers.
+    #[test]
+    fn no_tool_calls_passes_through_unchanged() {
+        let body = r#"{"model":"x","max_tokens":10,"messages":[
+            {"role":"user","content":"hello"},
+            {"role":"assistant","content":"hi there"},
+            {"role":"user","content":"how are you"}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let msgs = out["messages"].as_array().unwrap();
+
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[1]["role"], "assistant");
+        assert_eq!(msgs[2]["role"], "user");
+    }
+
+    /// When a tool_result exists but its tool_call_id doesn't match any
+    /// assistant's tool_calls, it should NOT be moved (orphan tool response).
+    #[test]
+    fn orphan_tool_response_not_moved() {
+        // tool_result references "call_ORPHAN" which has no assistant tool_calls.
+        // It should remain in place.
+        let body = r#"{"model":"x","max_tokens":10,"messages":[
+            {"role":"user","content":[
+                {"type":"text","text":"some text"},
+                {"type":"tool_result","tool_use_id":"call_ORPHAN","content":"orphan result"}
+            ]}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let msgs = out["messages"].as_array().unwrap();
+
+        // The text comes first in translate_message, then tool_result.
+        // No assistant with tool_calls, so no reordering happens.
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[0]["content"], "some text");
+        assert_eq!(msgs[1]["role"], "tool");
+        assert_eq!(msgs[1]["tool_call_id"], "call_ORPHAN");
+    }
+
+    /// Conversation ends with an assistant tool_calls but no tool_result
+    /// sent yet — fill_missing_tool_responses should inject dummy responses.
+    #[test]
+    fn missing_tool_response_injected_at_conversation_end() {
+        let body = r#"{"model":"x","max_tokens":10,"messages":[
+            {"role":"user","content":"do something"},
+            {"role":"assistant","content":[
+                {"type":"tool_use","id":"call_END","name":"Tool","input":{}}
+            ]}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let msgs = out["messages"].as_array().unwrap();
+
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[1]["role"], "assistant");
+        assert!(msgs[1].get("tool_calls").is_some());
+
+        // fill_missing_tool_responses injects a dummy tool response
+        assert_eq!(msgs[2]["role"], "tool");
+        assert_eq!(msgs[2]["tool_call_id"], "call_END");
+        assert_eq!(msgs[2]["content"], "");
+    }
+
+    /// Full realistic conversation: system, multiple rounds of tool use,
+    /// and a final assistant text response.  Messages should be properly
+    /// ordered throughout.
+    #[test]
+    fn full_conversation_with_multiple_tool_rounds_and_system() {
+        let body = r#"{"model":"x","max_tokens":10,
+            "system":"You are a helpful assistant.",
+            "messages":[
+                {"role":"user","content":"read file.txt"},
+                {"role":"assistant","content":[
+                    {"type":"text","text":"Let me read that file."},
+                    {"type":"tool_use","id":"call_r1","name":"Read","input":{"path":"file.txt"}}
+                ]},
+                {"role":"user","content":[
+                    {"type":"text","text":"file.txt contents received"},
+                    {"type":"tool_result","tool_use_id":"call_r1","content":"hello world"}
+                ]},
+                {"role":"assistant","content":[
+                    {"type":"text","text":"Now I'll write a summary."},
+                    {"type":"tool_use","id":"call_r2","name":"Write","input":{"path":"summary.txt"}}
+                ]},
+                {"role":"user","content":[
+                    {"type":"text","text":"additional context"},
+                    {"type":"tool_result","tool_use_id":"call_r2","content":"written successfully"}
+                ]},
+                {"role":"assistant","content":"Done! I've read file.txt and written summary.txt."}
+            ]
+        }"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let msgs = out["messages"].as_array().unwrap();
+
+        // [0] system
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[0]["content"], "You are a helpful assistant.");
+        // [1] user: "read file.txt"
+        assert_eq!(msgs[1]["role"], "user");
+        assert_eq!(msgs[1]["content"], "read file.txt");
+        // [2] assistant with tool_calls for call_r1
+        assert_eq!(msgs[2]["role"], "assistant");
+        assert_eq!(msgs[2]["tool_calls"][0]["id"], "call_r1");
+        // [3] tool response for call_r1 (reordered before user text)
+        assert_eq!(msgs[3]["role"], "tool");
+        assert_eq!(msgs[3]["tool_call_id"], "call_r1");
+        // [4] user text "file.txt contents received" (pushed after tool)
+        assert_eq!(msgs[4]["role"], "user");
+        assert_eq!(msgs[4]["content"], "file.txt contents received");
+        // [5] assistant with tool_calls for call_r2
+        assert_eq!(msgs[5]["role"], "assistant");
+        assert_eq!(msgs[5]["tool_calls"][0]["id"], "call_r2");
+        // [6] tool response for call_r2 (reordered before user text)
+        assert_eq!(msgs[6]["role"], "tool");
+        assert_eq!(msgs[6]["tool_call_id"], "call_r2");
+        // [7] user text "additional context" (pushed after tool)
+        assert_eq!(msgs[7]["role"], "user");
+        assert_eq!(msgs[7]["content"], "additional context");
+        // [8] final assistant text (no tool_calls)
+        assert_eq!(msgs[8]["role"], "assistant");
+        assert_eq!(msgs[8]["content"], "Done! I've read file.txt and written summary.txt.");
+    }
+
+    /// When only tool_result (no text) is in the user message, the
+    /// translation already produces tool in the right place — verify
+    /// reorder doesn't break this.
+    #[test]
+    fn pure_tool_result_user_message_no_text() {
+        let body = r#"{"model":"x","max_tokens":10,"messages":[
+            {"role":"assistant","content":[
+                {"type":"tool_use","id":"call_1","name":"Tool","input":{}}
+            ]},
+            {"role":"user","content":[
+                {"type":"tool_result","tool_use_id":"call_1","content":"result only"}
+            ]}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let msgs = out["messages"].as_array().unwrap();
+
+        assert_eq!(msgs[0]["role"], "assistant");
+        assert_eq!(msgs[1]["role"], "tool");
+        assert_eq!(msgs[1]["tool_call_id"], "call_1");
+        assert_eq!(msgs[1]["content"], "result only");
+        assert_eq!(msgs.len(), 2, "should only be 2 messages");
+    }
+
+    /// Verify that an assistant message with tool_calls followed by
+    /// another assistant message (no user in between) still gets its
+    /// tool responses pulled from later in the conversation.
+    #[test]
+    fn tool_response_pulled_from_later_in_conversation() {
+        // Edge case: tool response is far from its assistant tool_calls
+        let body = r#"{"model":"x","max_tokens":10,"messages":[
+            {"role":"assistant","content":[
+                {"type":"tool_use","id":"call_far","name":"Tool","input":{}}
+            ]},
+            {"role":"user","content":"intermediate message 1"},
+            {"role":"assistant","content":"intermediate assistant"},
+            {"role":"user","content":"intermediate message 2"},
+            {"role":"user","content":[
+                {"type":"tool_result","tool_use_id":"call_far","content":"delayed result"}
+            ]}
+        ]}"#;
+        let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+        let msgs = out["messages"].as_array().unwrap();
+
+        // tool response for call_far should be moved to position [1]
+        assert_eq!(msgs[0]["role"], "assistant");
+        assert_eq!(msgs[0]["tool_calls"][0]["id"], "call_far");
+
+        assert_eq!(msgs[1]["role"], "tool");
+        assert_eq!(msgs[1]["tool_call_id"], "call_far");
+
+        // The remaining messages shift down
+        assert_eq!(msgs[2]["role"], "user");
+        assert_eq!(msgs[2]["content"], "intermediate message 1");
+        assert_eq!(msgs[3]["role"], "assistant");
+        assert_eq!(msgs[3]["content"], "intermediate assistant");
+        assert_eq!(msgs[4]["role"], "user");
+        assert_eq!(msgs[4]["content"], "intermediate message 2");
     }
 }

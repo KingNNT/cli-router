@@ -295,6 +295,16 @@ impl HandleMessages {
                 body,
             })
         } else {
+            let preview = String::from_utf8_lossy(&body[..body.len().min(500)]).to_string();
+            tracing::warn!(
+                request_id = %request_id,
+                provider = %provider_id,
+                model = %model,
+                status,
+                translation_direction = translation_direction.as_deref().unwrap_or("none"),
+                body = %preview,
+                "upstream returned non-2xx response"
+            );
             let msg = String::from_utf8_lossy(&body).to_string();
             if let Err(e) = self.request_log.fail(
                 &request_id,
@@ -324,6 +334,16 @@ impl HandleMessages {
         provider_id: String,
         translation_direction: Option<String>,
     ) -> HandleMessagesOutput {
+        if !(200..300).contains(&status) {
+            tracing::warn!(
+                request_id = %request_id,
+                provider = %provider_id,
+                model = %model,
+                status,
+                translation_direction = translation_direction.as_deref().unwrap_or("none"),
+                "upstream returned non-2xx streaming response (body will be forwarded as-is)"
+            );
+        }
         let parser = match api_format {
             ApiFormat::Anthropic => self.provider.usage_parser(),
             ApiFormat::OpenAI => self.provider.usage_parser_openai(),

@@ -246,6 +246,14 @@ async fn send_request(
     provider_id: &str,
 ) -> Result<UpstreamResponse, ProxyError> {
     let url = format!("{base_url}{path}");
+    let body_preview = String::from_utf8_lossy(&body[..body.len().min(2000)]).to_string();
+    tracing::debug!(
+        provider = provider_id,
+        url = %url,
+        streaming,
+        body = %body_preview,
+        "sending request to upstream"
+    );
     let mut req = http.post(&url).body(body.to_vec());
     let strip_auth = !matches!(auth, AuthHeader::Passthrough);
     for (k, v) in headers {
@@ -273,6 +281,14 @@ async fn send_request(
     }
     let resp = req.send().await?;
     let status = resp.status().as_u16();
+    if status >= 400 {
+        tracing::warn!(
+            provider = provider_id,
+            url = %url,
+            status,
+            "upstream returned error status"
+        );
+    }
     let mut headers_out = HeaderMap::new();
     for (k, v) in resp.headers() {
         if HOP_BY_HOP.contains(&k.as_str()) {
@@ -280,7 +296,9 @@ async fn send_request(
         }
         headers_out.insert(k.clone(), v.clone());
     }
-    if streaming {
+    // For error status >= 400, buffer the full response body so we can log and
+    // forward it (instead of streaming it opaquely).
+    if streaming && status < 400 {
         let stream = resp.bytes_stream().map(|res| {
             res.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })
         });
@@ -294,6 +312,16 @@ async fn send_request(
         })
     } else {
         let body = resp.bytes().await?;
+        if status >= 400 {
+            let preview = String::from_utf8_lossy(&body[..body.len().min(2000)]).to_string();
+            tracing::warn!(
+                provider = provider_id,
+                url = %url,
+                status,
+                body = %preview,
+                "upstream error response body"
+            );
+        }
         Ok(UpstreamResponse::Buffered {
             status,
             headers: headers_out,
