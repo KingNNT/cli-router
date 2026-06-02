@@ -36,6 +36,10 @@ pub struct UsageWindow {
     pub resets_at_ms: Option<i64>,
     /// Sub-items (e.g. individual MCP tool counts under the MCP window).
     pub sub_items: Vec<UsageSubItem>,
+    /// True when this window represents a balance snapshot (e.g. DeepSeek)
+    /// rather than a usage quota. Balance windows are rendered as text
+    /// instead of a progress bar.
+    pub is_balance_info: bool,
 }
 
 /// A sub-item within a quota window (e.g. "Network Searches: 5678").

@@ -290,6 +290,7 @@ fn payload_to_usage(provider: String, p: UsagePayload) -> ProviderAccountUsage {
             limit: eu.monthly_limit.map(|v| v as u64),
             resets_at_ms: None,
             sub_items: vec![],
+            is_balance_info: false,
         });
     }
 
@@ -310,6 +311,7 @@ fn window_from(label: String, w: WindowField) -> UsageWindow {
         limit: None,
         resets_at_ms: w.resets_at.as_deref().and_then(parse_rfc3339_to_ms),
         sub_items: vec![],
+        is_balance_info: false,
     }
 }
 

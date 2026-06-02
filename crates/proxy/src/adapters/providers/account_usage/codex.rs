@@ -258,6 +258,7 @@ fn parse_window(
         limit: None,
         resets_at_ms: reset_at_ms,
         sub_items: vec![],
+        is_balance_info: false,
     })
 }
 

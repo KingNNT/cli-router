@@ -9,7 +9,9 @@ use serde::Deserialize;
 
 use crate::application::errors::ProxyError;
 use crate::application::ports::AccountUsagePort;
-use crate::domain::account_usage::{AccountUsageStatus, ProviderAccountUsage, UsageWindow};
+use crate::domain::account_usage::{
+    AccountUsageStatus, ProviderAccountUsage, UsageSubItem, UsageWindow,
+};
 
 /// DeepSeek account usage adapter. Queries balance API.
 pub struct DeepSeekAccountUsage {
@@ -29,6 +31,38 @@ impl DeepSeekAccountUsage {
             auth_token,
             agent,
         }
+    }
+}
+
+/// Converts a DeepSeek balance info into a usage window showing the remaining
+/// balance breakdown. DeepSeek does not expose spending history, so we display
+/// the raw balance values as sub-items instead of a progress bar.
+fn balance_to_window(info: &BalanceInfo) -> UsageWindow {
+    let total: f64 = info.total_balance.parse().unwrap_or(0.0);
+    let granted: f64 = info.granted_balance.parse().unwrap_or(0.0);
+    let topped_up: f64 = info.topped_up_balance.parse().unwrap_or(0.0);
+
+    UsageWindow {
+        label: format!("Balance ({})", info.currency),
+        used_pct: 0.0, // DeepSeek only exposes remaining balance, not spending
+        used: None,
+        limit: None,
+        resets_at_ms: None,
+        sub_items: vec![
+            UsageSubItem {
+                label: format!("total: {:.2}", total),
+                used: 0,
+            },
+            UsageSubItem {
+                label: format!("topped-up: {:.2}", topped_up),
+                used: 0,
+            },
+            UsageSubItem {
+                label: format!("granted: {:.2}", granted),
+                used: 0,
+            },
+        ],
+        is_balance_info: true,
     }
 }
 
@@ -67,28 +101,11 @@ impl AccountUsagePort for DeepSeekAccountUsage {
             }
         };
 
-        let mut windows = Vec::new();
-
-        for info in &envelope.balance_infos {
-            let total: f64 = info.total_balance.parse().unwrap_or(0.0);
-            let topped_up: f64 = info.topped_up_balance.parse().unwrap_or(0.0);
-            let used = ((total - topped_up) * 100.0).max(0.0) as u64;
-            let limit = (total * 100.0).max(0.0) as u64;
-            let used_pct = if limit > 0 {
-                (used as f64 / limit as f64) * 100.0
-            } else {
-                0.0
-            };
-
-            windows.push(UsageWindow {
-                label: format!("Top-up Balance ({})", info.currency),
-                used_pct,
-                used: Some(used),
-                limit: Some(limit),
-                resets_at_ms: None,
-                sub_items: vec![],
-            });
-        }
+        let windows: Vec<UsageWindow> = envelope
+            .balance_infos
+            .iter()
+            .map(balance_to_window)
+            .collect();
 
         Some(Ok(ProviderAccountUsage {
             provider: self.provider_name.clone(),
@@ -176,5 +193,60 @@ mod tests {
         let resp: BalanceResponse = serde_json::from_str(json).unwrap();
         assert!(!resp.is_available);
         assert_eq!(resp.balance_infos[0].total_balance, "0.00");
+    }
+
+    // ── balance_to_window tests ──
+
+    #[test]
+    fn balance_to_window_shows_total_topped_up_granted() {
+        let info = BalanceInfo {
+            currency: "CNY".to_string(),
+            total_balance: "110.00".to_string(),
+            granted_balance: "10.00".to_string(),
+            topped_up_balance: "100.00".to_string(),
+        };
+        let w = balance_to_window(&info);
+        assert_eq!(w.label, "Balance (CNY)");
+        assert_eq!(w.used_pct, 0.0);
+        assert!(w.used.is_none());
+        assert!(w.limit.is_none());
+        assert!(w.resets_at_ms.is_none());
+        assert_eq!(w.sub_items.len(), 3);
+        assert_eq!(w.sub_items[0].label, "total: 110.00");
+        assert_eq!(w.sub_items[1].label, "topped-up: 100.00");
+        assert_eq!(w.sub_items[2].label, "granted: 10.00");
+        assert!(w.is_balance_info);
+    }
+
+    #[test]
+    fn balance_to_window_only_topped_up() {
+        // Most common case: user only topped up, no granted balance.
+        let info = BalanceInfo {
+            currency: "CNY".to_string(),
+            total_balance: "50.00".to_string(),
+            granted_balance: "0.00".to_string(),
+            topped_up_balance: "50.00".to_string(),
+        };
+        let w = balance_to_window(&info);
+        assert_eq!(w.sub_items[0].label, "total: 50.00");
+        assert_eq!(w.sub_items[1].label, "topped-up: 50.00");
+        assert_eq!(w.sub_items[2].label, "granted: 0.00");
+        // used_pct should be 0 — we cannot derive spending from balance alone.
+        assert_eq!(w.used_pct, 0.0);
+        assert!(w.is_balance_info);
+    }
+
+    #[test]
+    fn balance_to_window_handles_zero_balance() {
+        let info = BalanceInfo {
+            currency: "USD".to_string(),
+            total_balance: "0.00".to_string(),
+            granted_balance: "0.00".to_string(),
+            topped_up_balance: "0.00".to_string(),
+        };
+        let w = balance_to_window(&info);
+        assert_eq!(w.label, "Balance (USD)");
+        assert_eq!(w.sub_items[0].label, "total: 0.00");
+        assert!(w.is_balance_info);
     }
 }

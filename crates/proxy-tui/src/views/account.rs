@@ -172,6 +172,32 @@ fn render_provider(
 }
 
 fn render_window(lines: &mut Vec<ratatui::text::Line>, w: &UsageWindowDto) {
+    // Balance-only mode (e.g. DeepSeek): show label + sub-items as text.
+    if w.is_balance_info {
+        lines.push(ratatui::text::Line::from(vec![
+            ratatui::text::Span::raw(format!("│  {:16} ", w.label)),
+            ratatui::text::Span::styled(
+                "balance info",
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]));
+        // Sub-items carry the balance details.
+        if !w.sub_items.is_empty() {
+            let sub_line: String = w
+                .sub_items
+                .iter()
+                .map(|s| s.label.clone())
+                .collect::<Vec<_>>()
+                .join("  ");
+            lines.push(ratatui::text::Line::raw(format!(
+                "│  {:16} {}",
+                "", sub_line,
+            )));
+        }
+        return;
+    }
+
+    // Normal quota window: progress bar + percentage.
     let bar = progress_bar(w.used_pct);
     let color = if w.used_pct >= 80.0 {
         Color::Red

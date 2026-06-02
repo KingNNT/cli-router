@@ -157,6 +157,7 @@ impl AccountUsagePort for ZaiAccountUsage {
                                     limit: limit.total,
                                     resets_at_ms: limit.next_reset_time,
                                     sub_items: vec![],
+                                    is_balance_info: false,
                                 };
 
                                 if is_five_hour {
@@ -183,6 +184,7 @@ impl AccountUsagePort for ZaiAccountUsage {
                                     limit: limit.usage,
                                     resets_at_ms: limit.next_reset_time,
                                     sub_items,
+                                    is_balance_info: false,
                                 });
                             }
                             _ => {}

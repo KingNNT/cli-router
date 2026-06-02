@@ -383,6 +383,9 @@ pub struct UsageWindowDto {
     pub limit: Option<u64>,
     pub resets_at_ms: Option<i64>,
     pub sub_items: Vec<UsageSubItemDto>,
+    /// True when this window shows balance info (text) instead of a quota bar.
+    #[serde(default)]
+    pub is_balance_info: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
@@ -466,6 +469,7 @@ mod account_usage_tests {
                         limit: Some(40_000_000),
                         resets_at_ms: Some(1_746_300_000_000),
                         sub_items: vec![],
+                        is_balance_info: false,
                     }],
                     model_usage: Some(ModelUsageDto {
                         total_tokens: 12_500_000,

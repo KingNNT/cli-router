@@ -1058,6 +1058,7 @@ fn account_usage_to_dto(u: ProviderAccountUsage) -> ProviderAccountUsageDto {
                         used: s.used,
                     })
                     .collect(),
+                is_balance_info: w.is_balance_info,
             })
             .collect(),
         model_usage: u.model_usage.map(|m| ModelUsageDto {
@@ -1444,6 +1445,7 @@ mod tests {
                 limit: Some(40_000_000),
                 resets_at_ms: Some(1_746_300_000_000),
                 sub_items: vec![],
+                is_balance_info: false,
             }],
             model_usage: None,
         };

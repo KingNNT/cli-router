@@ -775,7 +775,7 @@ mod tests {
     }
 
     #[test]
-    fn additionalProperties_object_schema_collapsed_to_false() {
+    fn additional_properties_object_schema_collapsed_to_false() {
         // Codex Responses API only accepts `additionalProperties: false` (boolean).
         // Object-valued `additionalProperties` causes schema rejection.
         let body = r#"{"model":"x","max_tokens":10,"messages":[],"tools":[

@@ -96,6 +96,7 @@ async fn account_usage_endpoint_returns_merged_providers() {
             limit: Some(40_000_000),
             resets_at_ms: Some(1_746_300_000_000),
             sub_items: vec![],
+            is_balance_info: false,
         }],
         model_usage: Some(ModelUsageSnapshot {
             total_tokens: 12_500_000,
