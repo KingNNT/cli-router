@@ -48,6 +48,7 @@ pub enum ProviderKind {
     #[serde(alias = "openai")]
     OpenAi,
     Codex,
+    Minimax,
 }
 
 /// How the proxy authenticates *to* the upstream when forwarding a request.

@@ -291,6 +291,7 @@ pub enum ProviderKind {
     DeepSeek,
     OpenAi,
     Codex,
+    Minimax,
 }
 
 impl ProviderKind {
@@ -301,6 +302,7 @@ impl ProviderKind {
             ProviderKind::DeepSeek => "deepseek",
             ProviderKind::OpenAi => "openai",
             ProviderKind::Codex => "codex",
+            ProviderKind::Minimax => "minimax",
         }
     }
     pub fn cycle_next(self) -> Self {
@@ -309,16 +311,18 @@ impl ProviderKind {
             ProviderKind::Zai => ProviderKind::DeepSeek,
             ProviderKind::DeepSeek => ProviderKind::OpenAi,
             ProviderKind::OpenAi => ProviderKind::Codex,
-            ProviderKind::Codex => ProviderKind::Anthropic,
+            ProviderKind::Codex => ProviderKind::Minimax,
+            ProviderKind::Minimax => ProviderKind::Anthropic,
         }
     }
     pub fn cycle_prev(self) -> Self {
         match self {
-            ProviderKind::Anthropic => ProviderKind::Codex,
+            ProviderKind::Anthropic => ProviderKind::Minimax,
             ProviderKind::Zai => ProviderKind::Anthropic,
             ProviderKind::DeepSeek => ProviderKind::Zai,
             ProviderKind::OpenAi => ProviderKind::DeepSeek,
             ProviderKind::Codex => ProviderKind::OpenAi,
+            ProviderKind::Minimax => ProviderKind::Codex,
         }
     }
     pub fn from_str_or_default(s: &str) -> Self {
@@ -327,6 +331,7 @@ impl ProviderKind {
             "deepseek" => ProviderKind::DeepSeek,
             "openai" => ProviderKind::OpenAi,
             "codex" => ProviderKind::Codex,
+            "minimax" => ProviderKind::Minimax,
             _ => ProviderKind::Anthropic,
         }
     }
@@ -921,9 +926,11 @@ mod form_field_tests {
         assert_eq!(ProviderKind::Zai.cycle_next(), ProviderKind::DeepSeek);
         assert_eq!(ProviderKind::DeepSeek.cycle_next(), ProviderKind::OpenAi);
         assert_eq!(ProviderKind::OpenAi.cycle_next(), ProviderKind::Codex);
-        assert_eq!(ProviderKind::Codex.cycle_next(), ProviderKind::Anthropic);
+        assert_eq!(ProviderKind::Codex.cycle_next(), ProviderKind::Minimax);
+        assert_eq!(ProviderKind::Minimax.cycle_next(), ProviderKind::Anthropic);
         // prev direction
-        assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::Codex);
+        assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::Minimax);
+        assert_eq!(ProviderKind::Minimax.cycle_prev(), ProviderKind::Codex);
         assert_eq!(ProviderKind::Codex.cycle_prev(), ProviderKind::OpenAi);
         assert_eq!(ProviderKind::OpenAi.cycle_prev(), ProviderKind::DeepSeek);
         assert_eq!(ProviderKind::DeepSeek.cycle_prev(), ProviderKind::Zai);

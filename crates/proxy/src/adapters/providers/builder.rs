@@ -3,11 +3,12 @@
 //! (`LiveProvider::reload`) call the same code.
 
 use super::account_usage::{
-    AnthropicAccountUsage, CodexAccountUsage, DeepSeekAccountUsage, ZaiAccountUsage,
+    AnthropicAccountUsage, CodexAccountUsage, DeepSeekAccountUsage, MinimaxAccountUsage,
+    ZaiAccountUsage,
 };
 use super::{
-    AnthropicProvider, AuthHeader, CodexProvider, DeepSeekProvider, OpenAiProvider,
-    RoutingProvider, ZaiProvider,
+    AnthropicProvider, AuthHeader, CodexProvider, DeepSeekProvider, MinimaxProvider,
+    OpenAiProvider, RoutingProvider, ZaiProvider,
 };
 use crate::application::ports::{AccountUsagePort, Provider, QuotaPort};
 use crate::config::{AuthConfig, Config, ProviderConfig, ProviderKind};
@@ -88,6 +89,12 @@ pub fn build_leaf(
             p.base_url.clone(),
             auth,
             p.reasoning_effort.clone(),
+        )),
+        ProviderKind::Minimax => Arc::new(MinimaxProvider::configure(
+            http,
+            p.base_url.clone(),
+            p.openai_base_url.clone(),
+            auth,
         )),
     })
 }
@@ -202,6 +209,10 @@ pub fn build_account_usage(
                     p.base_url.clone(),
                     p.auth.clone(),
                 )),
+                ProviderKind::Minimax => {
+                    let token = resolve_auth_token(&p.auth);
+                    Arc::new(MinimaxAccountUsage::new(p.name.clone(), token, p.base_url.clone()))
+                }
             };
             (p.name.clone(), adapter)
         })
