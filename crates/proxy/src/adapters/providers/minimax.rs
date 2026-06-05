@@ -142,18 +142,76 @@ impl Provider for MinimaxProvider {
             AuthHeader::ApiKey(v) => AuthHeader::Bearer(v.clone()),
             other => other.clone(),
         };
-        messages_protocol::forward(
+
+        // Inject `reasoning_split: true` so MiniMax separates thinking content
+        // into `reasoning_content` / `reasoning_details` fields instead of embedding
+        // 思绪...半数 tags inside `content`. This makes it easier to strip cleanly.
+        let outbound_body = inject_reasoning_split(&body);
+
+        let resp = messages_protocol::forward(
             &self.http,
             openai_base,
             &openai_auth,
             path,
             headers,
-            body,
+            outbound_body,
             streaming,
             self.name(),
         )
-        .await
+        .await?;
+
+        // Strip thinking content from the response.
+        match resp {
+            UpstreamResponse::Buffered {
+                status,
+                headers,
+                body,
+                provider_id,
+                translation_direction,
+            } => {
+                let cleaned =
+                    super::minimax_stream::strip_thinking_buffered(&body).unwrap_or(body);
+                Ok(UpstreamResponse::Buffered {
+                    status,
+                    headers,
+                    body: cleaned,
+                    provider_id,
+                    translation_direction,
+                })
+            }
+            UpstreamResponse::Streaming {
+                status,
+                headers,
+                body,
+                provider_id,
+                translation_direction,
+            } => Ok(UpstreamResponse::Streaming {
+                status,
+                headers,
+                body: super::minimax_stream::strip_thinking_stream(body),
+                provider_id,
+                translation_direction,
+            }),
+        }
     }
+}
+
+/// Inject `reasoning_split: true` into an OpenAI-format request body.
+/// Non-JSON or non-object bodies are returned verbatim.
+fn inject_reasoning_split(body: &Bytes) -> Bytes {
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return body.clone();
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return body.clone();
+    };
+    obj.insert(
+        "reasoning_split".to_string(),
+        serde_json::Value::Bool(true),
+    );
+    serde_json::to_vec(&value)
+        .map(Bytes::from)
+        .unwrap_or_else(|_| body.clone())
 }
 
 #[cfg(test)]
@@ -221,5 +279,52 @@ mod tests {
             p.openai_base_url,
             Some("https://api.minimaxi.com/v1".into())
         );
+    }
+
+    #[test]
+    fn inject_reasoning_split_adds_field() {
+        let body = Bytes::from(r#"{"model":"MiniMax-M3","messages":[]}"#);
+        let result = inject_reasoning_split(&body);
+        let parsed: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(parsed["reasoning_split"], true);
+    }
+
+    #[test]
+    fn inject_reasoning_split_preserves_existing_fields() {
+        let body = Bytes::from(r#"{"model":"MiniMax-M3","messages":[],"stream":true}"#);
+        let result = inject_reasoning_split(&body);
+        let parsed: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(parsed["model"], "MiniMax-M3");
+        assert_eq!(parsed["stream"], true);
+        assert_eq!(parsed["reasoning_split"], true);
+    }
+
+    #[test]
+    fn inject_reasoning_split_overwrites_false() {
+        let body = Bytes::from(r#"{"model":"MiniMax-M3","reasoning_split":false}"#);
+        let result = inject_reasoning_split(&body);
+        let parsed: serde_json::Value = serde_json::from_slice(&result).unwrap();
+        assert_eq!(parsed["reasoning_split"], true);
+    }
+
+    #[test]
+    fn inject_reasoning_split_returns_non_json_unchanged() {
+        let body = Bytes::from("not json");
+        let result = inject_reasoning_split(&body);
+        assert_eq!(result, body);
+    }
+
+    #[test]
+    fn forward_openai_strips_thinking_from_buffered_response() {
+        // Simulate what MiniMax returns with reasoning_split: true
+        let fake_response = r#"{"id":"chatcmpl-1","object":"chat.completion","model":"MiniMax-M3","choices":[{"index":0,"message":{"role":"assistant","content":"Hello!","reasoning_content":"The user said hi.","reasoning_details":[{"type":"text","text":"The user said hi."}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#;
+        let body = Bytes::from(fake_response);
+        let cleaned = crate::adapters::providers::minimax_stream::strip_thinking_buffered(&body).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&cleaned).unwrap();
+        assert_eq!(parsed["choices"][0]["message"]["content"], "Hello!");
+        assert!(parsed["choices"][0]["message"].get("reasoning_content").is_none());
+        assert!(parsed["choices"][0]["message"].get("reasoning_details").is_none());
+        assert_eq!(parsed["model"], "MiniMax-M3");
+        assert_eq!(parsed["usage"]["total_tokens"], 15);
     }
 }
