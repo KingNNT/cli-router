@@ -78,7 +78,10 @@ fn strip_thinking_tags(content: &str) -> String {
 }
 
 /// Check if the peekable iterator starts with the given char sequence.
-fn starts_with_chars<I: Iterator<Item = char> + Clone>(chars: &std::iter::Peekable<I>, prefix: &[char]) -> bool {
+fn starts_with_chars<I: Iterator<Item = char> + Clone>(
+    chars: &std::iter::Peekable<I>,
+    prefix: &[char],
+) -> bool {
     let cloned = chars.clone();
     let mut count = 0;
     for (actual, expected) in cloned.zip(prefix.iter()) {
@@ -93,9 +96,13 @@ fn starts_with_chars<I: Iterator<Item = char> + Clone>(chars: &std::iter::Peekab
 /// Skip characters until the end tag sequence is found. Returns the number of
 /// end tag chars consumed if found, or 0 if the end of string is reached without
 /// finding the tag.
-fn skip_until_end_tag<I: Iterator<Item = char> + Clone>(chars: &mut std::iter::Peekable<I>, tag_end: &[char]) -> usize {
+fn skip_until_end_tag<I: Iterator<Item = char> + Clone>(
+    chars: &mut std::iter::Peekable<I>,
+    tag_end: &[char],
+) -> usize {
     let end_len = tag_end.len();
-    let mut buffer: std::collections::VecDeque<char> = std::collections::VecDeque::with_capacity(end_len);
+    let mut buffer: std::collections::VecDeque<char> =
+        std::collections::VecDeque::with_capacity(end_len);
 
     while let Some(c) = chars.next() {
         buffer.push_back(c);
@@ -233,11 +240,12 @@ mod tests {
     #[test]
     fn stream_strips_reasoning_from_sse_chunk() {
         use futures::stream;
-        let chunks: Vec<Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> = vec![
-            Ok(Bytes::from("data: {\"choices\":[{\"delta\":{\"content\":\"Hi\",\"reasoning_content\":\"thinking...\",\"reasoning_details\":[{\"text\":\"thinking...\"}]}}]}\n\n")),
-        ];
-        let upstream: crate::application::ports::BoxedByteStream =
-            Box::pin(stream::iter(chunks));
+        let chunks: Vec<Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> = vec![Ok(
+            Bytes::from(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\",\"reasoning_content\":\"thinking...\",\"reasoning_details\":[{\"text\":\"thinking...\"}]}}]}\n\n",
+            ),
+        )];
+        let upstream: crate::application::ports::BoxedByteStream = Box::pin(stream::iter(chunks));
         let filtered = strip_thinking_stream(upstream);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -253,11 +261,9 @@ mod tests {
     #[test]
     fn stream_passes_done_sentinel_through() {
         use futures::stream;
-        let chunks: Vec<Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> = vec![
-            Ok(Bytes::from("data: [DONE]\n\n")),
-        ];
-        let upstream: crate::application::ports::BoxedByteStream =
-            Box::pin(stream::iter(chunks));
+        let chunks: Vec<Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> =
+            vec![Ok(Bytes::from("data: [DONE]\n\n"))];
+        let upstream: crate::application::ports::BoxedByteStream = Box::pin(stream::iter(chunks));
         let filtered = strip_thinking_stream(upstream);
 
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -270,11 +276,11 @@ mod tests {
     #[test]
     fn stream_strips_thinking_tags_from_chunk_content() {
         use futures::stream;
-        let chunks: Vec<Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> = vec![
-            Ok(Bytes::from("data: {\"choices\":[{\"delta\":{\"content\":\"思绪hmm...半数real text\"}}]}\n\n")),
-        ];
-        let upstream: crate::application::ports::BoxedByteStream =
-            Box::pin(stream::iter(chunks));
+        let chunks: Vec<Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> =
+            vec![Ok(Bytes::from(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"思绪hmm...半数real text\"}}]}\n\n",
+            ))];
+        let upstream: crate::application::ports::BoxedByteStream = Box::pin(stream::iter(chunks));
         let filtered = strip_thinking_stream(upstream);
 
         let rt = tokio::runtime::Runtime::new().unwrap();

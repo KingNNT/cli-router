@@ -169,8 +169,7 @@ impl Provider for MinimaxProvider {
                 provider_id,
                 translation_direction,
             } => {
-                let cleaned =
-                    super::minimax_stream::strip_thinking_buffered(&body).unwrap_or(body);
+                let cleaned = super::minimax_stream::strip_thinking_buffered(&body).unwrap_or(body);
                 Ok(UpstreamResponse::Buffered {
                     status,
                     headers,
@@ -205,10 +204,7 @@ fn inject_reasoning_split(body: &Bytes) -> Bytes {
     let Some(obj) = value.as_object_mut() else {
         return body.clone();
     };
-    obj.insert(
-        "reasoning_split".to_string(),
-        serde_json::Value::Bool(true),
-    );
+    obj.insert("reasoning_split".to_string(), serde_json::Value::Bool(true));
     serde_json::to_vec(&value)
         .map(Bytes::from)
         .unwrap_or_else(|_| body.clone())
@@ -273,7 +269,8 @@ mod tests {
 
     #[test]
     fn configure_uses_default_urls_when_none() {
-        let p = MinimaxProvider::configure(reqwest::Client::new(), None, None, AuthHeader::Passthrough);
+        let p =
+            MinimaxProvider::configure(reqwest::Client::new(), None, None, AuthHeader::Passthrough);
         assert_eq!(p.base_url, "https://api.minimaxi.com/anthropic");
         assert_eq!(
             p.openai_base_url,
@@ -315,15 +312,31 @@ mod tests {
     }
 
     #[test]
+    fn inject_reasoning_split_returns_json_non_object_unchanged() {
+        let body = Bytes::from("[1, 2, 3]");
+        let result = inject_reasoning_split(&body);
+        assert_eq!(result, body);
+    }
+
+    #[test]
     fn forward_openai_strips_thinking_from_buffered_response() {
         // Simulate what MiniMax returns with reasoning_split: true
         let fake_response = r#"{"id":"chatcmpl-1","object":"chat.completion","model":"MiniMax-M3","choices":[{"index":0,"message":{"role":"assistant","content":"Hello!","reasoning_content":"The user said hi.","reasoning_details":[{"type":"text","text":"The user said hi."}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#;
         let body = Bytes::from(fake_response);
-        let cleaned = crate::adapters::providers::minimax_stream::strip_thinking_buffered(&body).unwrap();
+        let cleaned =
+            crate::adapters::providers::minimax_stream::strip_thinking_buffered(&body).unwrap();
         let parsed: serde_json::Value = serde_json::from_slice(&cleaned).unwrap();
         assert_eq!(parsed["choices"][0]["message"]["content"], "Hello!");
-        assert!(parsed["choices"][0]["message"].get("reasoning_content").is_none());
-        assert!(parsed["choices"][0]["message"].get("reasoning_details").is_none());
+        assert!(
+            parsed["choices"][0]["message"]
+                .get("reasoning_content")
+                .is_none()
+        );
+        assert!(
+            parsed["choices"][0]["message"]
+                .get("reasoning_details")
+                .is_none()
+        );
         assert_eq!(parsed["model"], "MiniMax-M3");
         assert_eq!(parsed["usage"]["total_tokens"], 15);
     }
