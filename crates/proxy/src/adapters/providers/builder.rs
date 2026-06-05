@@ -90,12 +90,23 @@ pub fn build_leaf(
             auth,
             p.reasoning_effort.clone(),
         )),
-        ProviderKind::Minimax => Arc::new(MinimaxProvider::configure(
-            http,
-            p.base_url.clone(),
-            p.openai_base_url.clone(),
-            auth,
-        )),
+        ProviderKind::Minimax => {
+            let mode = match p.thinking_mode {
+                crate::config::ThinkingMode::SplitOnly => {
+                    crate::adapters::providers::minimax_stream::ThinkingMode::SplitOnly
+                }
+                crate::config::ThinkingMode::StripAll => {
+                    crate::adapters::providers::minimax_stream::ThinkingMode::StripAll
+                }
+            };
+            Arc::new(MinimaxProvider::configure(
+                http,
+                p.base_url.clone(),
+                p.openai_base_url.clone(),
+                auth,
+                mode,
+            ))
+        }
     })
 }
 

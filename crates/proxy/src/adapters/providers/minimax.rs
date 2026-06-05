@@ -20,6 +20,7 @@ pub struct MinimaxProvider {
     openai_base_url: Option<String>,
     http: reqwest::Client,
     auth: AuthHeader,
+    thinking_mode: super::minimax_stream::ThinkingMode,
 }
 
 impl MinimaxProvider {
@@ -29,11 +30,18 @@ impl MinimaxProvider {
             DEFAULT_BASE_URL.into(),
             Some(DEFAULT_OPENAI_BASE_URL.into()),
             AuthHeader::Passthrough,
+            super::minimax_stream::ThinkingMode::SplitOnly,
         )
     }
 
     pub fn with_base_url(http: reqwest::Client, base_url: impl Into<String>) -> Self {
-        Self::build(http, base_url.into(), None, AuthHeader::Passthrough)
+        Self::build(
+            http,
+            base_url.into(),
+            None,
+            AuthHeader::Passthrough,
+            super::minimax_stream::ThinkingMode::SplitOnly,
+        )
     }
 
     pub fn with_auth(http: reqwest::Client, auth: AuthHeader) -> Self {
@@ -42,6 +50,7 @@ impl MinimaxProvider {
             DEFAULT_BASE_URL.into(),
             Some(DEFAULT_OPENAI_BASE_URL.into()),
             auth,
+            super::minimax_stream::ThinkingMode::SplitOnly,
         )
     }
 
@@ -50,12 +59,14 @@ impl MinimaxProvider {
         base_url: Option<String>,
         openai_base_url: Option<String>,
         auth: AuthHeader,
+        thinking_mode: super::minimax_stream::ThinkingMode,
     ) -> Self {
         Self::build(
             http,
             base_url.unwrap_or_else(|| DEFAULT_BASE_URL.into()),
             Some(openai_base_url.unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.into())),
             auth,
+            thinking_mode,
         )
     }
 
@@ -64,12 +75,14 @@ impl MinimaxProvider {
         base_url: String,
         openai_base_url: Option<String>,
         auth: AuthHeader,
+        thinking_mode: super::minimax_stream::ThinkingMode,
     ) -> Self {
         Self {
             base_url,
             openai_base_url,
             http,
             auth,
+            thinking_mode,
         }
     }
 }
@@ -160,7 +173,8 @@ impl Provider for MinimaxProvider {
         )
         .await?;
 
-        // Strip thinking content from the response.
+        // Strip thinking content from the response according to configured mode.
+        let mode = self.thinking_mode;
         match resp {
             UpstreamResponse::Buffered {
                 status,
@@ -169,7 +183,8 @@ impl Provider for MinimaxProvider {
                 provider_id,
                 translation_direction,
             } => {
-                let cleaned = super::minimax_stream::strip_thinking_buffered(&body).unwrap_or(body);
+                let cleaned =
+                    super::minimax_stream::clean_thinking_buffered(&body, mode).unwrap_or(body);
                 Ok(UpstreamResponse::Buffered {
                     status,
                     headers,
@@ -187,7 +202,7 @@ impl Provider for MinimaxProvider {
             } => Ok(UpstreamResponse::Streaming {
                 status,
                 headers,
-                body: super::minimax_stream::strip_thinking_stream(body),
+                body: super::minimax_stream::clean_thinking_stream(body, mode),
                 provider_id,
                 translation_direction,
             }),
@@ -255,12 +270,21 @@ mod tests {
     }
 
     #[test]
+    fn default_thinking_mode_is_split_only() {
+        assert_eq!(
+            provider().thinking_mode,
+            super::super::minimax_stream::ThinkingMode::SplitOnly
+        );
+    }
+
+    #[test]
     fn configure_sets_base_url_openai_base_url_and_auth() {
         let p = MinimaxProvider::configure(
             reqwest::Client::new(),
             Some("http://localhost:1234".into()),
             Some("http://localhost:9999".into()),
             AuthHeader::ApiKey("minimax-test".into()),
+            super::super::minimax_stream::ThinkingMode::SplitOnly,
         );
         assert_eq!(p.base_url, "http://localhost:1234");
         assert_eq!(p.openai_base_url, Some("http://localhost:9999".into()));
@@ -269,8 +293,13 @@ mod tests {
 
     #[test]
     fn configure_uses_default_urls_when_none() {
-        let p =
-            MinimaxProvider::configure(reqwest::Client::new(), None, None, AuthHeader::Passthrough);
+        let p = MinimaxProvider::configure(
+            reqwest::Client::new(),
+            None,
+            None,
+            AuthHeader::Passthrough,
+            super::super::minimax_stream::ThinkingMode::SplitOnly,
+        );
         assert_eq!(p.base_url, "https://api.minimaxi.com/anthropic");
         assert_eq!(
             p.openai_base_url,
