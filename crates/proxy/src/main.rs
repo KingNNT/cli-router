@@ -223,7 +223,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match sweeper_log.sweep_stale(cutoff_ms) {
                     Ok(0) => {}
                     Ok(n) => {
-                        tracing::info!(n, n, cutoff_ms, "sweeper: marked stale requests as errored");
+                        tracing::info!(
+                            n,
+                            n,
+                            cutoff_ms,
+                            "sweeper: marked stale requests as errored"
+                        );
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "sweeper: failed to sweep stale requests");

@@ -14,8 +14,8 @@ use crate::domain::UsageRecord;
 use async_trait::async_trait;
 use axum::http::HeaderMap;
 use bytes::Bytes;
-use std::sync::Arc;
 use parking_lot::RwLock;
+use std::sync::Arc;
 
 pub struct LiveProvider {
     inner: RwLock<Arc<dyn Provider>>,

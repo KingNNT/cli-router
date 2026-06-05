@@ -263,10 +263,8 @@ impl Provider for CodexProvider {
                             .and_then(|v| v.as_array())
                         {
                             for tc in tcs {
-                                let idx = tc
-                                    .get("index")
-                                    .and_then(|i| i.as_u64())
-                                    .unwrap_or(0) as usize;
+                                let idx =
+                                    tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
                                 // Ensure slot exists
                                 while tool_calls.len() <= idx {
                                     tool_calls.push(json!({
@@ -277,9 +275,7 @@ impl Provider for CodexProvider {
                                     }));
                                 }
                                 // Fill id / name on first appearance
-                                if let Some(id) =
-                                    tc.get("id").and_then(|v| v.as_str())
-                                {
+                                if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
                                     tool_calls[idx]["id"] = json!(id);
                                 }
                                 if let Some(name) =
@@ -401,7 +397,10 @@ fn translate_tool(tool: &Value) -> Value {
             // Rule: only enable strict when the client explicitly set it to
             // true (i.e. the schema is untouched, coming from a native OpenAI
             // client like OpenCode).  Never auto-detect after translation.
-            let strict = func.get("strict").and_then(|s| s.as_bool()).unwrap_or(false);
+            let strict = func
+                .get("strict")
+                .and_then(|s| s.as_bool())
+                .unwrap_or(false);
 
             json!({
                 "type": "function",
@@ -414,7 +413,6 @@ fn translate_tool(tool: &Value) -> Value {
         _ => tool.clone(), // Pass through unknown tool types unchanged.
     }
 }
-
 
 fn text_content_to_string(content: Option<&Value>) -> String {
     let Some(content) = content else {
@@ -656,7 +654,10 @@ fn translate_buffered_response(responses_body: &Value) -> Result<Value, String> 
 
     // Map usage: input_tokens -> prompt_tokens, output_tokens -> completion_tokens
     if let Some(usage) = responses_body.get("usage") {
-        let input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let input_tokens = usage
+            .get("input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         if input_tokens == 0 {
             tracing::warn!(
                 target: "codex::usage",
@@ -1432,7 +1433,10 @@ mod tests {
         });
         let result = translate_request(&chat).unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools[0]["strict"], false, "strict should be false without explicit flag");
+        assert_eq!(
+            tools[0]["strict"], false,
+            "strict should be false without explicit flag"
+        );
     }
 
     #[test]
@@ -1458,7 +1462,10 @@ mod tests {
         });
         let result = translate_request(&chat).unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools[0]["strict"], false, "should not be strict for loose schema");
+        assert_eq!(
+            tools[0]["strict"], false,
+            "should not be strict for loose schema"
+        );
     }
 
     #[test]
@@ -1483,10 +1490,13 @@ mod tests {
         });
         let result = translate_request(&chat).unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools[0]["strict"], false, "explicit strict:false must override auto-detect");
+        assert_eq!(
+            tools[0]["strict"], false,
+            "explicit strict:false must override auto-detect"
+        );
     }
 
-#[test]
+    #[test]
     fn translate_tool_call_messages_to_responses_function_items() {
         let chat = json!({
             "model": "codex-mini",

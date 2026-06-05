@@ -194,9 +194,14 @@ mod tests {
         let captured_clone = captured.clone();
 
         let parser: Box<dyn UsageParser> = Box::new(TestParser(AnthropicSseParser::new()));
-        let mut s = TeedStream::with_idle_timeout(upstream, parser, move |rec, normal| {
-            *captured_clone.lock().unwrap() = Some((rec, normal));
-        }, Duration::from_secs(3600));
+        let mut s = TeedStream::with_idle_timeout(
+            upstream,
+            parser,
+            move |rec, normal| {
+                *captured_clone.lock().unwrap() = Some((rec, normal));
+            },
+            Duration::from_secs(3600),
+        );
 
         // Read the first chunk, then drop the stream simulating a client disconnect.
         let _ = s.next().await.unwrap().unwrap();
@@ -226,9 +231,14 @@ mod tests {
         let captured_clone = captured.clone();
 
         let parser: Box<dyn UsageParser> = Box::new(TestParser(AnthropicSseParser::new()));
-        let mut s = TeedStream::with_idle_timeout(upstream, parser, move |rec, normal| {
-            *captured_clone.lock().unwrap() = Some((rec, normal));
-        }, Duration::from_millis(50));
+        let mut s = TeedStream::with_idle_timeout(
+            upstream,
+            parser,
+            move |rec, normal| {
+                *captured_clone.lock().unwrap() = Some((rec, normal));
+            },
+            Duration::from_millis(50),
+        );
 
         // Read the first chunk (resets deadline).
         let _ = s.next().await.unwrap().unwrap();
@@ -241,10 +251,7 @@ mod tests {
         // The next poll should detect the idle timeout and return None.
         use futures::stream::StreamExt;
         let next = s.next().await;
-        assert!(
-            next.is_none(),
-            "stream should terminate on idle timeout"
-        );
+        assert!(next.is_none(), "stream should terminate on idle timeout");
 
         let (rec, normal) = captured
             .lock()

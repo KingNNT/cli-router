@@ -130,9 +130,7 @@ impl AccountUsagePort for CodexAccountUsage {
                     "Codex account probe failed; re-reading ~/.codex/auth.json and retrying"
                 );
                 match resolve_token(&self.auth) {
-                    Ok(Some(fresh_token)) if fresh_token != token => {
-                        self.probe_once(&fresh_token)
-                    }
+                    Ok(Some(fresh_token)) if fresh_token != token => self.probe_once(&fresh_token),
                     _ => outcome, // Same token or resolve failed — return original result.
                 }
             }

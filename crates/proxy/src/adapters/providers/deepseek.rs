@@ -231,12 +231,13 @@ mod tests {
 
     #[test]
     fn strip_tool_choice_removes_from_reasoner_model() {
-        let body = Bytes::from(
-            r#"{"model":"deepseek-v4-pro","messages":[],"tool_choice":"auto"}"#,
-        );
+        let body = Bytes::from(r#"{"model":"deepseek-v4-pro","messages":[],"tool_choice":"auto"}"#);
         let stripped = DeepSeekProvider::strip_tool_choice_if_unsupported(body);
         let v: Value = serde_json::from_slice(&stripped).unwrap();
-        assert!(v.get("tool_choice").is_none(), "tool_choice should be removed");
+        assert!(
+            v.get("tool_choice").is_none(),
+            "tool_choice should be removed"
+        );
         assert_eq!(v["model"], "deepseek-v4-pro");
     }
 
@@ -252,12 +253,13 @@ mod tests {
 
     #[test]
     fn strip_tool_choice_keeps_for_deepseek_chat() {
-        let body = Bytes::from(
-            r#"{"model":"deepseek-chat","messages":[],"tool_choice":"auto"}"#,
-        );
+        let body = Bytes::from(r#"{"model":"deepseek-chat","messages":[],"tool_choice":"auto"}"#);
         let stripped = DeepSeekProvider::strip_tool_choice_if_unsupported(body);
         let v: Value = serde_json::from_slice(&stripped).unwrap();
-        assert_eq!(v["tool_choice"], "auto", "tool_choice should be kept for deepseek-chat");
+        assert_eq!(
+            v["tool_choice"], "auto",
+            "tool_choice should be kept for deepseek-chat"
+        );
     }
 
     #[test]

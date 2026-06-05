@@ -211,7 +211,11 @@ pub fn build_account_usage(
                 )),
                 ProviderKind::Minimax => {
                     let token = resolve_auth_token(&p.auth);
-                    Arc::new(MinimaxAccountUsage::new(p.name.clone(), token, p.base_url.clone()))
+                    Arc::new(MinimaxAccountUsage::new(
+                        p.name.clone(),
+                        token,
+                        p.base_url.clone(),
+                    ))
                 }
             };
             (p.name.clone(), adapter)

@@ -45,7 +45,11 @@ pub struct MinimaxAccountUsage {
 }
 
 impl MinimaxAccountUsage {
-    pub fn new(provider_name: String, auth_token: String, provider_base_url: Option<String>) -> Self {
+    pub fn new(
+        provider_name: String,
+        auth_token: String,
+        provider_base_url: Option<String>,
+    ) -> Self {
         let agent = ureq::AgentBuilder::new()
             .timeout_read(Duration::from_secs(10))
             .timeout_write(Duration::from_secs(10))

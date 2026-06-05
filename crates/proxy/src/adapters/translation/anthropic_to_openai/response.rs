@@ -390,10 +390,12 @@ mod tests {
         let out = run(&body);
         assert_eq!(out["type"], "error");
         assert_eq!(out["error"]["type"], "invalid_request_error");
-        assert!(out["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("playwright_browser_click"));
+        assert!(
+            out["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("playwright_browser_click")
+        );
         // Must NOT produce the old garbage: {"id":"msg_unknown","model":null,…}
         assert!(out.get("id").is_none(), "error should not have 'id' field");
         assert!(

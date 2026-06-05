@@ -374,12 +374,12 @@ mod tests {
             "model",
             json!({"input_tokens": 5, "output_tokens": 5}),
         );
-         let out = run(&body);
-         assert_eq!(
-             out["choices"][0]["message"]["content"],
-             "part one\npart two"
-         );
-     }
+        let out = run(&body);
+        assert_eq!(
+            out["choices"][0]["message"]["content"],
+            "part one\npart two"
+        );
+    }
 
     #[test]
     fn anthropic_error_response_converts_to_openai_error() {

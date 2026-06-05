@@ -109,27 +109,57 @@ fn strip_schema_keywords(mut v: Value) -> Value {
         // JSON Schema keywords that OpenAI does NOT support.
         const UNSUPPORTED: &[&str] = &[
             // Meta-keywords
-            "$schema", "$id", "$comment", "$defs", "definitions",
+            "$schema",
+            "$id",
+            "$comment",
+            "$defs",
+            "definitions",
             // Metadata
-            "title", "examples", "default", "deprecated",
+            "title",
+            "examples",
+            "default",
+            "deprecated",
             // Object constraints
-            "propertyNames", "patternProperties", "minProperties", "maxProperties",
+            "propertyNames",
+            "patternProperties",
+            "minProperties",
+            "maxProperties",
             // Array constraints
-            "minItems", "maxItems", "uniqueItems", "contains", "minContains", "maxContains",
+            "minItems",
+            "maxItems",
+            "uniqueItems",
+            "contains",
+            "minContains",
+            "maxContains",
             // String constraints
-            "minLength", "maxLength", "pattern", "format",
+            "minLength",
+            "maxLength",
+            "pattern",
+            "format",
             // Number constraints
-            "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+            "minimum",
+            "maximum",
+            "exclusiveMinimum",
+            "exclusiveMaximum",
+            "multipleOf",
             // Composition (OpenAI only supports `anyOf`)
-            "allOf", "oneOf",
+            "allOf",
+            "oneOf",
             // Conditional
-            "if", "then", "else", "not",
+            "if",
+            "then",
+            "else",
+            "not",
             // Referencing
-            "$ref", "$dynamicRef", "$recursiveRef",
+            "$ref",
+            "$dynamicRef",
+            "$recursiveRef",
             // Content
-            "contentEncoding", "contentMediaType",
+            "contentEncoding",
+            "contentMediaType",
             // Other
-            "readOnly", "writeOnly",
+            "readOnly",
+            "writeOnly",
         ];
         for keyword in UNSUPPORTED {
             obj.remove(*keyword);
@@ -228,7 +258,11 @@ fn fill_missing_tool_responses(messages: &mut Vec<Value>) {
         // Collect tool_call_ids from this assistant message.
         let call_ids: Vec<String> = tool_calls
             .iter()
-            .filter_map(|tc| tc.get("id").and_then(|id| id.as_str()).map(|s| s.to_string()))
+            .filter_map(|tc| {
+                tc.get("id")
+                    .and_then(|id| id.as_str())
+                    .map(|s| s.to_string())
+            })
             .collect();
 
         // Find which ids are missing responses.
@@ -320,7 +354,10 @@ fn reorder_tool_responses(messages: &mut Vec<Value>) {
         let is_assistant_with_calls = {
             let msg = &messages[i];
             msg.get("role").and_then(|r| r.as_str()) == Some("assistant")
-                && msg.get("tool_calls").and_then(|tc| tc.as_array()).map_or(false, |a| !a.is_empty())
+                && msg
+                    .get("tool_calls")
+                    .and_then(|tc| tc.as_array())
+                    .map_or(false, |a| !a.is_empty())
         };
         if !is_assistant_with_calls {
             i += 1;
@@ -334,7 +371,11 @@ fn reorder_tool_responses(messages: &mut Vec<Value>) {
             .as_array()
             .unwrap()
             .iter()
-            .filter_map(|tc| tc.get("id").and_then(|id| id.as_str()).map(|s| s.to_string()))
+            .filter_map(|tc| {
+                tc.get("id")
+                    .and_then(|id| id.as_str())
+                    .map(|s| s.to_string())
+            })
             .collect();
 
         // Scan messages after this assistant to find tool responses that answer
@@ -631,7 +672,10 @@ mod tests {
         let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
         let params = &out["tools"][0]["function"]["parameters"];
         assert!(params.get("$id").is_none(), "$id should be stripped");
-        assert!(params.get("$comment").is_none(), "$comment should be stripped");
+        assert!(
+            params.get("$comment").is_none(),
+            "$comment should be stripped"
+        );
         assert_eq!(params["type"], "object");
     }
 
@@ -763,15 +807,28 @@ mod tests {
         let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
         let params = &out["tools"][0]["function"]["parameters"];
         // Unsupported keywords must be stripped
-        assert!(params.get("propertyNames").is_none(), "propertyNames must be stripped");
+        assert!(
+            params.get("propertyNames").is_none(),
+            "propertyNames must be stripped"
+        );
         assert!(params.get("title").is_none(), "title must be stripped");
         assert!(params.get("default").is_none(), "default must be stripped");
-        assert!(params.get("minProperties").is_none(), "minProperties must be stripped");
-        assert!(params.get("examples").is_none(), "examples must be stripped");
+        assert!(
+            params.get("minProperties").is_none(),
+            "minProperties must be stripped"
+        );
+        assert!(
+            params.get("examples").is_none(),
+            "examples must be stripped"
+        );
         // Supported keywords must remain
         assert_eq!(params["type"], "object");
         assert!(params.get("properties").is_some());
-        assert!(params["properties"]["questions"]["items"].get("properties").is_some());
+        assert!(
+            params["properties"]["questions"]["items"]
+                .get("properties")
+                .is_some()
+        );
     }
 
     #[test]
@@ -797,10 +854,13 @@ mod tests {
             }}
         ]}"#;
         let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
-        let ap = &out["tools"][0]["function"]["parameters"]
-            ["properties"]["annotations"]["additionalProperties"];
+        let ap = &out["tools"][0]["function"]["parameters"]["properties"]["annotations"]["additionalProperties"];
         // Must be collapsed to false, not an object schema
-        assert_eq!(ap, &json!(false), "additionalProperties object schema must be collapsed to false");
+        assert_eq!(
+            ap,
+            &json!(false),
+            "additionalProperties object schema must be collapsed to false"
+        );
     }
 
     #[test]
@@ -888,10 +948,19 @@ mod tests {
         // [0] assistant with tool_calls
         // [1] tool (moved up to immediately follow assistant)
         // [2] user text (pushed down)
-        assert_eq!(msgs[0]["role"], "assistant", "first msg should be assistant");
-        assert!(msgs[0].get("tool_calls").is_some(), "assistant should have tool_calls");
+        assert_eq!(
+            msgs[0]["role"], "assistant",
+            "first msg should be assistant"
+        );
+        assert!(
+            msgs[0].get("tool_calls").is_some(),
+            "assistant should have tool_calls"
+        );
 
-        assert_eq!(msgs[1]["role"], "tool", "second msg should be tool (reordered)");
+        assert_eq!(
+            msgs[1]["role"], "tool",
+            "second msg should be tool (reordered)"
+        );
         assert_eq!(msgs[1]["tool_call_id"], "call_00_abc");
 
         assert_eq!(msgs[2]["role"], "user", "third msg should be user text");
@@ -1119,7 +1188,10 @@ mod tests {
         assert_eq!(msgs[7]["content"], "additional context");
         // [8] final assistant text (no tool_calls)
         assert_eq!(msgs[8]["role"], "assistant");
-        assert_eq!(msgs[8]["content"], "Done! I've read file.txt and written summary.txt.");
+        assert_eq!(
+            msgs[8]["content"],
+            "Done! I've read file.txt and written summary.txt."
+        );
     }
 
     /// When only tool_result (no text) is in the user message, the
