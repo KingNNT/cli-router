@@ -9,6 +9,7 @@ pub mod deepseek;
 pub mod live;
 mod messages_protocol;
 pub mod minimax;
+pub mod minimax_stream;
 pub mod openai;
 pub mod routing;
 pub mod token_refresh;
