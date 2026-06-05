@@ -392,6 +392,57 @@ impl ReasoningEffortInput {
     }
 }
 
+/// Cycle widget state for MiniMax thinking_mode. Mirrors ReasoningEffortInput.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThinkingModeInput {
+    #[default]
+    Unset,
+    SplitOnly,
+    StripAll,
+}
+
+impl ThinkingModeInput {
+    pub fn label(self) -> &'static str {
+        match self {
+            ThinkingModeInput::Unset => "unset",
+            ThinkingModeInput::SplitOnly => "split_only",
+            ThinkingModeInput::StripAll => "strip_all",
+        }
+    }
+
+    pub fn as_option(self) -> Option<&'static str> {
+        match self {
+            ThinkingModeInput::Unset => None,
+            ThinkingModeInput::SplitOnly => Some("split_only"),
+            ThinkingModeInput::StripAll => Some("strip_all"),
+        }
+    }
+
+    pub fn from_option(opt: Option<&str>) -> Self {
+        match opt {
+            Some("split_only") => ThinkingModeInput::SplitOnly,
+            Some("strip_all") => ThinkingModeInput::StripAll,
+            _ => ThinkingModeInput::Unset,
+        }
+    }
+
+    pub fn cycle_next(self) -> Self {
+        match self {
+            ThinkingModeInput::Unset => ThinkingModeInput::SplitOnly,
+            ThinkingModeInput::SplitOnly => ThinkingModeInput::StripAll,
+            ThinkingModeInput::StripAll => ThinkingModeInput::Unset,
+        }
+    }
+
+    pub fn cycle_prev(self) -> Self {
+        match self {
+            ThinkingModeInput::Unset => ThinkingModeInput::StripAll,
+            ThinkingModeInput::SplitOnly => ThinkingModeInput::Unset,
+            ThinkingModeInput::StripAll => ThinkingModeInput::SplitOnly,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormField {
     Name,
@@ -399,6 +450,7 @@ pub enum FormField {
     BaseUrl,
     OpenaiBaseUrl,
     ReasoningEffort,
+    ThinkingMode,
     AuthKind,
     AuthValue,
     Save,
@@ -428,6 +480,9 @@ fn field_order(auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Vec<For
     ];
     if provider_kind == ProviderKind::Codex {
         order.push(FormField::ReasoningEffort);
+    }
+    if provider_kind == ProviderKind::Minimax {
+        order.push(FormField::ThinkingMode);
     }
     order.push(FormField::AuthKind);
     if matches!(auth_kind, AuthInputKind::ApiKey | AuthInputKind::Bearer) {
@@ -468,6 +523,7 @@ pub struct ProviderFormModal {
     pub base_url: String,
     pub openai_base_url: String,
     pub reasoning_effort: ReasoningEffortInput,
+    pub thinking_mode: ThinkingModeInput,
     pub auth_kind: AuthInputKind,
     pub auth_value: String,
     pub state: FormState,
@@ -486,6 +542,7 @@ impl ProviderFormModal {
             base_url: String::new(),
             openai_base_url: String::new(),
             reasoning_effort: ReasoningEffortInput::Unset,
+            thinking_mode: ThinkingModeInput::Unset,
             auth_kind: AuthInputKind::Passthrough,
             auth_value: String::new(),
             state: FormState::Editing,
@@ -510,6 +567,7 @@ impl ProviderFormModal {
             base_url: p.base_url.clone().unwrap_or_default(),
             openai_base_url: p.openai_base_url.clone().unwrap_or_default(),
             reasoning_effort: ReasoningEffortInput::from_option(p.reasoning_effort.as_deref()),
+            thinking_mode: ThinkingModeInput::from_option(p.thinking_mode.as_deref()),
             auth_kind,
             auth_value,
             state: FormState::Editing,
@@ -893,6 +951,32 @@ mod form_field_tests {
             f.next(AuthInputKind::Passthrough, ProviderKind::Codex),
             FormField::ReasoningEffort
         );
+    }
+
+    #[test]
+    fn thinking_mode_input_cycle() {
+        use super::ThinkingModeInput;
+        assert_eq!(ThinkingModeInput::Unset.cycle_next(), ThinkingModeInput::SplitOnly);
+        assert_eq!(ThinkingModeInput::SplitOnly.cycle_next(), ThinkingModeInput::StripAll);
+        assert_eq!(ThinkingModeInput::StripAll.cycle_next(), ThinkingModeInput::Unset);
+        assert_eq!(ThinkingModeInput::Unset.cycle_prev(), ThinkingModeInput::StripAll);
+    }
+
+    #[test]
+    fn thinking_mode_input_from_option() {
+        use super::ThinkingModeInput;
+        assert_eq!(ThinkingModeInput::from_option(Some("split_only")), ThinkingModeInput::SplitOnly);
+        assert_eq!(ThinkingModeInput::from_option(Some("strip_all")), ThinkingModeInput::StripAll);
+        assert_eq!(ThinkingModeInput::from_option(None), ThinkingModeInput::Unset);
+        assert_eq!(ThinkingModeInput::from_option(Some("garbage")), ThinkingModeInput::Unset);
+    }
+
+    #[test]
+    fn minimax_includes_thinking_mode_field() {
+        use super::{FormField, ThinkingModeInput, field_order, AuthInputKind, ProviderKind};
+        let order = field_order(AuthInputKind::Passthrough, ProviderKind::Minimax);
+        assert!(order.contains(&FormField::ThinkingMode));
+        assert!(!order.contains(&FormField::ReasoningEffort));
     }
 
     #[test]

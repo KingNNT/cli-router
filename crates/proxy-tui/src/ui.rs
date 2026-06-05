@@ -1258,6 +1258,13 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
             format!("< {} >    [←/→ to cycle]", m.reasoning_effort.label()),
         ));
     }
+    if m.kind == crate::app::ProviderKind::Minimax {
+        lines.push(row(
+            FormField::ThinkingMode,
+            "Thinking Mode:",
+            format!("< {} >    [←/→ to cycle]", m.thinking_mode.label()),
+        ));
+    }
     lines.push(row(
         FormField::AuthKind,
         "Auth Kind:",
