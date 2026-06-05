@@ -11,6 +11,16 @@ use bytes::Bytes;
 use futures::StreamExt;
 use serde_json::Value;
 
+/// Controls how thinking content is stripped from MiniMax responses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThinkingMode {
+    /// Strip 思绪...半数 tags from content, but keep reasoning_content and
+    /// reasoning_details fields intact.
+    SplitOnly,
+    /// Strip all thinking content: tags, reasoning_content, reasoning_details.
+    StripAll,
+}
+
 /// Strip thinking-related fields from a buffered (non-streaming) OpenAI-format
 /// response body. Removes `reasoning_content` and `reasoning_details` from
 /// `choices[].message` and `choices[].delta`, and strips 思绪...半数 tags
@@ -19,6 +29,14 @@ pub fn strip_thinking_buffered(body: &Bytes) -> Option<Bytes> {
     let mut value: Value = serde_json::from_slice(body).ok()?;
     strip_thinking_value(&mut value);
     serde_json::to_vec(&value).ok().map(Bytes::from)
+}
+
+/// Strip thinking content from a buffered response according to the given mode.
+pub fn clean_thinking_buffered(body: &Bytes, mode: ThinkingMode) -> Option<Bytes> {
+    match mode {
+        ThinkingMode::SplitOnly => strip_tags_only_buffered(body),
+        ThinkingMode::StripAll => strip_thinking_buffered(body),
+    }
 }
 
 /// Strip thinking content from a parsed JSON value in-place.
@@ -38,6 +56,38 @@ fn strip_thinking_value(value: &mut Value) {
             if let Some(map) = obj.as_object_mut() {
                 map.remove("reasoning_content");
                 map.remove("reasoning_details");
+                if let Some(content) = map.get("content").and_then(|c| c.as_str()) {
+                    let stripped = strip_thinking_tags(content);
+                    map.insert("content".to_string(), Value::String(stripped));
+                }
+            }
+        }
+    }
+}
+
+/// Strip 思绪...半数 tags from content fields only, keeping reasoning_content
+/// and reasoning_details intact.
+fn strip_tags_only_buffered(body: &Bytes) -> Option<Bytes> {
+    let mut value: Value = serde_json::from_slice(body).ok()?;
+    strip_tags_only_value(&mut value);
+    serde_json::to_vec(&value).ok().map(Bytes::from)
+}
+
+fn strip_tags_only_value(value: &mut Value) {
+    let Some(choices) = value.get_mut("choices").and_then(|c| c.as_array_mut()) else {
+        return;
+    };
+    for choice in choices.iter_mut() {
+        let target_key = if choice.get("message").is_some() {
+            "message"
+        } else if choice.get("delta").is_some() {
+            "delta"
+        } else {
+            continue;
+        };
+        if let Some(obj) = choice.get_mut(target_key) {
+            if let Some(map) = obj.as_object_mut() {
+                // Only strip tags from content, keep reasoning fields
                 if let Some(content) = map.get("content").and_then(|c| c.as_str()) {
                     let stripped = strip_thinking_tags(content);
                     map.insert("content".to_string(), Value::String(stripped));
@@ -149,6 +199,71 @@ pub fn strip_thinking_stream(
                                 out_lines.push("data: [DONE]".to_string());
                             } else if let Ok(mut value) = serde_json::from_str::<Value>(trimmed) {
                                 strip_thinking_value(&mut value);
+                                out_lines.push(format!("data: {}", value));
+                            } else {
+                                out_lines.push(line.to_string());
+                            }
+                        } else {
+                            out_lines.push(line.to_string());
+                        }
+                    }
+
+                    if !out_lines.is_empty() {
+                        emit.push(Ok(Bytes::from(
+                            out_lines.into_iter().collect::<Vec<_>>().join("\n") + "\n\n",
+                        )));
+                    }
+                }
+            }
+        }
+        futures::stream::iter(emit)
+    });
+
+    Box::pin(filtered)
+}
+
+/// Strip thinking content from a streaming response according to the given mode.
+pub fn clean_thinking_stream(
+    upstream: crate::application::ports::BoxedByteStream,
+    mode: ThinkingMode,
+) -> crate::application::ports::BoxedByteStream {
+    match mode {
+        ThinkingMode::SplitOnly => strip_tags_only_stream(upstream),
+        ThinkingMode::StripAll => strip_thinking_stream(upstream),
+    }
+}
+
+fn strip_tags_only_stream(
+    upstream: crate::application::ports::BoxedByteStream,
+) -> crate::application::ports::BoxedByteStream {
+    let mut buf = String::new();
+
+    let filtered = upstream.flat_map(move |chunk_result| {
+        let mut emit: Vec<Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> = Vec::new();
+
+        match chunk_result {
+            Err(e) => {
+                emit.push(Err(e));
+            }
+            Ok(chunk_bytes) => {
+                buf.push_str(&String::from_utf8_lossy(&chunk_bytes));
+
+                while let Some(idx) = buf.find("\n\n") {
+                    let frame = buf[..idx].to_string();
+                    buf.drain(..idx + 2);
+
+                    if frame.trim().is_empty() {
+                        continue;
+                    }
+
+                    let mut out_lines: Vec<String> = Vec::new();
+                    for line in frame.lines() {
+                        if let Some(data) = line.strip_prefix("data: ") {
+                            let trimmed = data.trim();
+                            if trimmed == "[DONE]" {
+                                out_lines.push("data: [DONE]".to_string());
+                            } else if let Ok(mut value) = serde_json::from_str::<Value>(trimmed) {
+                                strip_tags_only_value(&mut value);
                                 out_lines.push(format!("data: {}", value));
                             } else {
                                 out_lines.push(line.to_string());
@@ -289,5 +404,50 @@ mod tests {
         let data_str = String::from_utf8_lossy(&results[0].as_ref().unwrap());
         assert!(data_str.contains("real text"));
         assert!(!data_str.contains("hmm"));
+    }
+
+    #[test]
+    fn split_only_buffered_keeps_reasoning_fields() {
+        let body = Bytes::from(
+            r#"{"choices":[{"message":{"role":"assistant","content":"思绪hmm...半数Hello!","reasoning_content":"I should greet","reasoning_details":[{"text":"I should greet"}]}}]}"#,
+        );
+        let result = clean_thinking_buffered(&body, ThinkingMode::SplitOnly).unwrap();
+        let parsed: Value = serde_json::from_slice(&result).unwrap();
+        let msg = &parsed["choices"][0]["message"];
+        assert_eq!(msg["content"], "Hello!");
+        assert_eq!(msg["reasoning_content"], "I should greet");
+        assert!(msg.get("reasoning_details").is_some());
+    }
+
+    #[test]
+    fn strip_all_buffered_removes_reasoning_fields() {
+        let body = Bytes::from(
+            r#"{"choices":[{"message":{"role":"assistant","content":"思绪hmm...半数Hello!","reasoning_content":"I should greet","reasoning_details":[{"text":"I should greet"}]}}]}"#,
+        );
+        let result = clean_thinking_buffered(&body, ThinkingMode::StripAll).unwrap();
+        let parsed: Value = serde_json::from_slice(&result).unwrap();
+        let msg = &parsed["choices"][0]["message"];
+        assert_eq!(msg["content"], "Hello!");
+        assert!(msg.get("reasoning_content").is_none());
+        assert!(msg.get("reasoning_details").is_none());
+    }
+
+    #[test]
+    fn split_only_stream_keeps_reasoning_in_chunks() {
+        use futures::stream;
+        let chunks: Vec<Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> = vec![Ok(
+            Bytes::from(
+                "data: {\"choices\":[{\"delta\":{\"content\":\"思绪hmm...半数Hi\",\"reasoning_content\":\"thinking\"}}]}\n\n",
+            ),
+        )];
+        let upstream: crate::application::ports::BoxedByteStream = Box::pin(stream::iter(chunks));
+        let filtered = clean_thinking_stream(upstream, ThinkingMode::SplitOnly);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let results: Vec<_> = rt.block_on(async { filtered.collect::<Vec<_>>().await });
+
+        let data_str = String::from_utf8_lossy(&results[0].as_ref().unwrap());
+        assert!(data_str.contains("\"content\":\"Hi\""));
+        assert!(data_str.contains("\"reasoning_content\":\"thinking\""));
     }
 }

@@ -256,7 +256,7 @@ fn derive_monitor_base_url(p: &ProviderConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AuthConfig, ProviderKind};
+    use crate::config::{AuthConfig, ProviderKind, ThinkingMode};
 
     fn cfg(openai: Option<&str>, base: Option<&str>) -> ProviderConfig {
         ProviderConfig {
@@ -266,6 +266,7 @@ mod tests {
             base_url: base.map(str::to_string),
             openai_base_url: openai.map(str::to_string),
             reasoning_effort: None,
+            thinking_mode: ThinkingMode::SplitOnly,
         }
     }
 
@@ -305,6 +306,7 @@ mod tests {
                     value: "token-123".to_string(),
                 },
                 reasoning_effort: None,
+                thinking_mode: ThinkingMode::SplitOnly,
             }],
             ..Config {
                 port: 0,

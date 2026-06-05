@@ -600,7 +600,7 @@ mod tests {
 
     #[test]
     fn current_token_returns_none_for_non_oauth_auth() {
-        use crate::config::{AffinityConfig, Config, ProviderConfig, ProviderKind};
+        use crate::config::{AffinityConfig, Config, ProviderConfig, ProviderKind, ThinkingMode};
         let cfg = Config {
             port: 8787,
             proxy_db: "".into(),
@@ -612,6 +612,7 @@ mod tests {
                 base_url: None,
                 openai_base_url: None,
                 reasoning_effort: None,
+                thinking_mode: ThinkingMode::SplitOnly,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -623,7 +624,7 @@ mod tests {
 
     #[test]
     fn current_token_reads_oauth_access_token() {
-        use crate::config::{AffinityConfig, Config, ProviderConfig, ProviderKind};
+        use crate::config::{AffinityConfig, Config, ProviderConfig, ProviderKind, ThinkingMode};
         let cfg = Config {
             port: 8787,
             proxy_db: "".into(),
@@ -639,6 +640,7 @@ mod tests {
                 base_url: None,
                 openai_base_url: None,
                 reasoning_effort: None,
+                thinking_mode: ThinkingMode::SplitOnly,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -655,7 +657,7 @@ mod tests {
     fn fetch_usage_returns_none_when_not_oauth() {
         // No OAuth token configured → adapter must declare "not supported"
         // via None, NOT report an error.
-        use crate::config::{AffinityConfig, Config, ProviderConfig, ProviderKind};
+        use crate::config::{AffinityConfig, Config, ProviderConfig, ProviderKind, ThinkingMode};
         let cfg = Config {
             port: 8787,
             proxy_db: "".into(),
@@ -667,6 +669,7 @@ mod tests {
                 base_url: None,
                 openai_base_url: None,
                 reasoning_effort: None,
+                thinking_mode: ThinkingMode::SplitOnly,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),

@@ -1742,6 +1742,7 @@ mod tests {
                 base_url: Some("https://api.anthropic.com".into()),
                 openai_base_url: None,
                 reasoning_effort: None,
+                thinking_mode: None,
             },
             ProviderPayload {
                 name: "openai".into(),
@@ -1752,6 +1753,7 @@ mod tests {
                 base_url: None,
                 openai_base_url: Some("https://api.openai.com/v1".into()),
                 reasoning_effort: None,
+                thinking_mode: None,
             },
         ];
         let mut state = config_state(config);

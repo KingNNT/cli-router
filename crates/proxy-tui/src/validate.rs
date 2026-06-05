@@ -43,6 +43,7 @@ pub struct FormInputs<'a> {
     pub base_url: Option<&'a str>,
     pub openai_base_url: Option<&'a str>,
     pub reasoning_effort: Option<&'a str>,
+    pub thinking_mode: Option<&'a str>,
     pub auth: &'a AuthPayload,
     /// `None` for Add, `Some(original_index)` for Edit.
     pub editing_index: Option<usize>,
@@ -119,6 +120,11 @@ pub fn validate_provider_form(
         } else {
             None
         },
+        thinking_mode: if input.kind == "minimax" {
+            input.thinking_mode.map(str::to_string)
+        } else {
+            None
+        },
     })
 }
 
@@ -178,6 +184,7 @@ mod tests {
             base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
+            thinking_mode: None,
         }
     }
 
@@ -200,6 +207,7 @@ mod tests {
             base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
+            thinking_mode: None,
             auth,
             editing_index: None,
             original_name: None,
@@ -302,6 +310,7 @@ mod tests {
             base_url: None,
             openai_base_url: None,
             reasoning_effort: Some("high"),
+            thinking_mode: None,
             auth: &auth,
             editing_index: None,
             original_name: None,
@@ -321,6 +330,7 @@ mod tests {
             base_url: None,
             openai_base_url: None,
             reasoning_effort: Some("high"),
+            thinking_mode: None,
             auth: &auth,
             editing_index: None,
             original_name: None,

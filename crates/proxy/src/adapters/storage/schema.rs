@@ -7,6 +7,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (2, MIGRATION_V2),
     (3, MIGRATION_V3),
     (4, MIGRATION_V4),
+    (5, MIGRATION_V5),
 ];
 
 const MIGRATION_V1: &str = r#"
@@ -100,6 +101,10 @@ CREATE TABLE IF NOT EXISTS quota_rules (
 
 const MIGRATION_V4: &str = r#"
 ALTER TABLE providers ADD COLUMN reasoning_effort TEXT;
+"#;
+
+const MIGRATION_V5: &str = r#"
+ALTER TABLE providers ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'split_only';
 "#;
 
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
@@ -242,5 +247,19 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
         assert!(cols.contains(&"reasoning_effort".into()));
+    }
+
+    #[test]
+    fn v5_adds_provider_thinking_mode_column() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+        let cols: Vec<String> = conn
+            .prepare("PRAGMA table_info(providers)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert!(cols.contains(&"thinking_mode".into()));
     }
 }

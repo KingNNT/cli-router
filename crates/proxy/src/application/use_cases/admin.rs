@@ -701,6 +701,10 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                 base_url: p.base_url.clone(),
                 openai_base_url: p.openai_base_url.clone(),
                 reasoning_effort: p.reasoning_effort.clone(),
+                thinking_mode: Some(match p.thinking_mode {
+                    crate::config::ThinkingMode::SplitOnly => "split_only".to_string(),
+                    crate::config::ThinkingMode::StripAll => "strip_all".to_string(),
+                }),
             })
             .collect(),
         routing: c
@@ -760,6 +764,16 @@ fn payload_to_config(
                     )));
                 }
             };
+            let thinking_mode = match pp.thinking_mode.as_deref().map(str::trim) {
+                None | Some("") | Some("split_only") => crate::config::ThinkingMode::SplitOnly,
+                Some("strip_all") => crate::config::ThinkingMode::StripAll,
+                Some(other) => {
+                    return Err(ProxyError::BadRequest(format!(
+                        "invalid thinking_mode '{other}' for provider '{}' (expected 'split_only' or 'strip_all')",
+                        pp.name
+                    )));
+                }
+            };
             Ok(ProviderConfig {
                 name: pp.name,
                 kind,
@@ -767,6 +781,7 @@ fn payload_to_config(
                 base_url: pp.base_url,
                 openai_base_url: pp.openai_base_url,
                 reasoning_effort,
+                thinking_mode,
             })
         })
         .collect::<Result<Vec<_>, ProxyError>>()?;
@@ -1221,6 +1236,7 @@ mod tests {
                 base_url: None,
                 openai_base_url: None,
                 reasoning_effort: None,
+                thinking_mode: crate::config::ThinkingMode::SplitOnly,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -1257,6 +1273,7 @@ mod tests {
                 base_url: None,
                 openai_base_url: None,
                 reasoning_effort: Some("high".into()),
+                thinking_mode: crate::config::ThinkingMode::SplitOnly,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -1293,6 +1310,7 @@ mod tests {
                 base_url: None,
                 openai_base_url: None,
                 reasoning_effort: Some("extreme".into()),
+                thinking_mode: None,
             }],
             routing: vec![],
             quota: vec![],
@@ -1312,6 +1330,78 @@ mod tests {
 
         let err = payload_to_config(p, PathBuf::new(), PathBuf::new(), &existing).unwrap_err();
         assert!(err.to_string().contains("invalid reasoning_effort"));
+    }
+
+    #[test]
+    fn config_payload_preserves_thinking_mode() {
+        let cfg = Config {
+            port: 8787,
+            proxy_db: PathBuf::from("/tmp/proxy.db"),
+            pricing_db: PathBuf::from("/tmp/pricing.db"),
+            providers: vec![ProviderConfig {
+                name: "minimax".into(),
+                kind: ProviderKind::Minimax,
+                auth: AuthConfig::Passthrough,
+                base_url: None,
+                openai_base_url: None,
+                reasoning_effort: None,
+                thinking_mode: crate::config::ThinkingMode::StripAll,
+            }],
+            routing: vec![],
+            affinity: AffinityConfig::default(),
+            quota: vec![],
+        };
+
+        let payload = config_to_payload(&cfg);
+        assert_eq!(
+            payload.providers[0].thinking_mode.as_deref(),
+            Some("strip_all")
+        );
+
+        let restored = payload_to_config(
+            payload,
+            PathBuf::from("/tmp/proxy.db"),
+            PathBuf::from("/tmp/pricing.db"),
+            &cfg,
+        )
+        .unwrap();
+        assert_eq!(
+            restored.providers[0].thinking_mode,
+            crate::config::ThinkingMode::StripAll
+        );
+    }
+
+    #[test]
+    fn payload_to_config_rejects_invalid_thinking_mode() {
+        let p = ConfigPayload {
+            port: 8787,
+            providers: vec![ProviderPayload {
+                name: "minimax".into(),
+                kind: "minimax".into(),
+                auth: AuthPayload::Passthrough,
+                base_url: None,
+                openai_base_url: None,
+                reasoning_effort: None,
+                thinking_mode: Some("garbage".into()),
+            }],
+            routing: vec![],
+            quota: vec![],
+            affinity: AffinityPayload::default(),
+            proxy_db: None,
+            pricing_db: None,
+        };
+        let existing = Config {
+            port: 8787,
+            proxy_db: PathBuf::new(),
+            pricing_db: PathBuf::new(),
+            providers: vec![],
+            routing: vec![],
+            affinity: AffinityConfig::default(),
+            quota: Vec::new(),
+        };
+
+        let err = payload_to_config(p, PathBuf::new(), PathBuf::new(), &existing).unwrap_err();
+        assert!(err.to_string().contains("invalid thinking_mode"));
     }
 
     #[test]
@@ -1344,6 +1434,7 @@ mod tests {
                 base_url: None,
                 openai_base_url: None,
                 reasoning_effort: None,
+                thinking_mode: None,
             }],
             routing: vec![],
             quota: vec![],

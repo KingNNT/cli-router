@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use crate::application::ports::ConfigRepository;
 use crate::config::{
     AffinityConfig, AuthConfig, Config, ConfigError, MatchSpec, ProviderConfig, ProviderKind,
-    QuotaRule, RoutingRule, RoutingStrategy,
+    QuotaRule, RoutingRule, RoutingStrategy, ThinkingMode,
 };
 
 /// Convert rusqlite errors into ConfigError::Validation.
@@ -106,9 +106,9 @@ impl ConfigRepository for DbConfigRepository {
             tx.execute("DELETE FROM providers", []).map_err(db_err)?;
             let mut stmt = tx
                 .prepare(
-                    "INSERT INTO providers (name, kind, base_url, openai_base_url, reasoning_effort, auth_type,
+                    "INSERT INTO providers (name, kind, base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
                      auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 )
                 .map_err(db_err)?;
             for p in &config.providers {
@@ -120,6 +120,10 @@ impl ConfigRepository for DbConfigRepository {
                     p.base_url,
                     p.openai_base_url,
                     p.reasoning_effort,
+                    match p.thinking_mode {
+                        ThinkingMode::SplitOnly => "split_only",
+                        ThinkingMode::StripAll => "strip_all",
+                    },
                     auth_type,
                     ak,
                     bearer,
@@ -194,7 +198,7 @@ fn load_setting(conn: &Connection, key: &str) -> Option<String> {
 fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError> {
     let mut stmt = conn
         .prepare(
-            "SELECT name, kind, base_url, openai_base_url, reasoning_effort, auth_type,
+            "SELECT name, kind, base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms
              FROM providers ORDER BY id",
         )
@@ -202,20 +206,27 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
     let rows = stmt
         .query_map([], |row| {
             let kind_str: String = row.get(1)?;
-            let auth_type_str: String = row.get(5)?;
+            let auth_type_str: String = row.get(6)?;
+            let thinking_mode_str: String = row.get(5)?;
             Ok(ProviderConfig {
                 name: row.get(0)?,
                 kind: parse_kind(&kind_str),
                 base_url: row.get(2)?,
                 openai_base_url: row.get(3)?,
                 reasoning_effort: row.get(4)?,
+                thinking_mode: {
+                    match thinking_mode_str.as_str() {
+                        "strip_all" => ThinkingMode::StripAll,
+                        _ => ThinkingMode::SplitOnly,
+                    }
+                },
                 auth: columns_to_auth(
                     &auth_type_str,
-                    row.get(6)?,
                     row.get(7)?,
                     row.get(8)?,
                     row.get(9)?,
                     row.get(10)?,
+                    row.get(11)?,
                 ),
             })
         })
@@ -446,6 +457,7 @@ mod tests {
             base_url: Some("https://example.com".into()),
             openai_base_url: Some("https://example.com/v1".into()),
             reasoning_effort: Some("high".into()),
+            thinking_mode: ThinkingMode::SplitOnly,
         });
         cfg.routing.push(RoutingRule {
             match_spec: MatchSpec {
@@ -534,6 +546,7 @@ mod tests {
                 base_url: None,
                 openai_base_url: None,
                 reasoning_effort: None,
+                thinking_mode: ThinkingMode::SplitOnly,
             });
             repo.save(&cfg).unwrap();
             let loaded = repo.load().unwrap();

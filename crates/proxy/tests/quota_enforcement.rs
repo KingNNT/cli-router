@@ -144,6 +144,7 @@ fn hot_reload_preserves_quota_enforcement() {
             base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
+            thinking_mode: proxy::config::ThinkingMode::SplitOnly,
         }],
         routing: vec![RoutingRule {
             match_spec: MatchSpec {

@@ -36,6 +36,8 @@ pub struct ProviderConfig {
     pub openai_base_url: Option<String>,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub thinking_mode: ThinkingMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +51,18 @@ pub enum ProviderKind {
     OpenAi,
     Codex,
     Minimax,
+}
+
+/// Controls how MiniMax thinking/reasoning content is stripped from responses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingMode {
+    /// Strip 思绪...半数 tags from content, but keep reasoning_content and
+    /// reasoning_details fields intact so clients can display them.
+    #[default]
+    SplitOnly,
+    /// Strip all thinking content: tags, reasoning_content, reasoning_details.
+    StripAll,
 }
 
 /// How the proxy authenticates *to* the upstream when forwarding a request.
@@ -388,6 +402,27 @@ reasoning_effort = "high"
     }
 
     #[test]
+    fn provider_config_defaults_thinking_mode_to_split_only() {
+        let toml = r#"
+name = "minimax"
+kind = "minimax"
+"#;
+        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        assert_eq!(provider.thinking_mode, ThinkingMode::SplitOnly);
+    }
+
+    #[test]
+    fn provider_config_deserializes_thinking_mode() {
+        let toml = r#"
+name = "minimax"
+kind = "minimax"
+thinking_mode = "strip_all"
+"#;
+        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        assert_eq!(provider.thinking_mode, ThinkingMode::StripAll);
+    }
+
+    #[test]
     fn validate_rejects_empty_providers() {
         let cfg = Config {
             port: 8787,
@@ -414,6 +449,7 @@ reasoning_effort = "high"
                 base_url: None,
                 openai_base_url: None,
                 reasoning_effort: None,
+                thinking_mode: ThinkingMode::SplitOnly,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -445,6 +481,7 @@ reasoning_effort = "high"
                     base_url: None,
                     openai_base_url: None,
                     reasoning_effort: None,
+                    thinking_mode: ThinkingMode::SplitOnly,
                 },
                 ProviderConfig {
                     name: "x".into(),
@@ -453,6 +490,7 @@ reasoning_effort = "high"
                     base_url: None,
                     openai_base_url: None,
                     reasoning_effort: None,
+                    thinking_mode: ThinkingMode::SplitOnly,
                 },
             ],
             routing: vec![RoutingRule {
@@ -483,6 +521,7 @@ reasoning_effort = "high"
                 base_url: None,
                 openai_base_url: None,
                 reasoning_effort: None,
+                thinking_mode: ThinkingMode::SplitOnly,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {

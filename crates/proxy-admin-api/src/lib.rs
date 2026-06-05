@@ -122,6 +122,8 @@ pub struct ProviderPayload {
     pub openai_base_url: Option<String>,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
+    #[serde(default)]
+    pub thinking_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, utoipa::ToSchema)]
@@ -577,6 +579,7 @@ mod config_payload_toml_tests {
                 base_url: None,
                 openai_base_url: None,
                 reasoning_effort: Some("high".into()),
+                thinking_mode: None,
             }],
             routing: vec![],
             quota: vec![QuotaPayload {
