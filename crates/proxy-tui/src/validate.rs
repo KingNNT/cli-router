@@ -111,7 +111,7 @@ pub fn validate_provider_form(
             .openai_base_url
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
-        reasoning_effort: if input.kind == "codex" {
+        reasoning_effort: if matches!(input.kind, "codex" | "anthropic") {
             input
                 .reasoning_effort
                 .map(str::trim)
@@ -325,6 +325,26 @@ mod tests {
         let auth = AuthPayload::Passthrough;
         let cfg = empty_cfg();
         let input = FormInputs {
+            name: "zai-main",
+            kind: "zai",
+            base_url: None,
+            openai_base_url: None,
+            reasoning_effort: Some("high"),
+            thinking_mode: None,
+            auth: &auth,
+            editing_index: None,
+            original_name: None,
+        };
+
+        let provider = validate_provider_form(&input, &cfg).unwrap();
+        assert_eq!(provider.reasoning_effort, None);
+    }
+
+    #[test]
+    fn anthropic_provider_preserves_reasoning_effort() {
+        let auth = AuthPayload::Passthrough;
+        let cfg = empty_cfg();
+        let input = FormInputs {
             name: "anthropic-main",
             kind: "anthropic",
             base_url: None,
@@ -337,7 +357,7 @@ mod tests {
         };
 
         let provider = validate_provider_form(&input, &cfg).unwrap();
-        assert_eq!(provider.reasoning_effort, None);
+        assert_eq!(provider.reasoning_effort.as_deref(), Some("high"));
     }
 
     #[test]

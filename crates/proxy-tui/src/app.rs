@@ -340,54 +340,150 @@ impl ProviderKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReasoningEffortInput {
     Unset,
+    None,
+    Minimal,
     Low,
     Medium,
     High,
+    XHigh,
+    Max,
 }
 
 impl ReasoningEffortInput {
     pub fn label(self) -> &'static str {
         match self {
             ReasoningEffortInput::Unset => "unset",
+            ReasoningEffortInput::None => "none",
+            ReasoningEffortInput::Minimal => "minimal",
             ReasoningEffortInput::Low => "low",
             ReasoningEffortInput::Medium => "medium",
             ReasoningEffortInput::High => "high",
+            ReasoningEffortInput::XHigh => "xhigh",
+            ReasoningEffortInput::Max => "max",
         }
     }
 
     pub fn as_option(self) -> Option<&'static str> {
         match self {
             ReasoningEffortInput::Unset => None,
+            ReasoningEffortInput::None => Some("none"),
+            ReasoningEffortInput::Minimal => Some("minimal"),
             ReasoningEffortInput::Low => Some("low"),
             ReasoningEffortInput::Medium => Some("medium"),
             ReasoningEffortInput::High => Some("high"),
+            ReasoningEffortInput::XHigh => Some("xhigh"),
+            ReasoningEffortInput::Max => Some("max"),
         }
     }
 
     pub fn from_option(value: Option<&str>) -> Self {
         match value {
+            Some("none") => ReasoningEffortInput::None,
+            Some("minimal") => ReasoningEffortInput::Minimal,
             Some("low") => ReasoningEffortInput::Low,
             Some("medium") => ReasoningEffortInput::Medium,
             Some("high") => ReasoningEffortInput::High,
+            Some("xhigh") => ReasoningEffortInput::XHigh,
+            Some("max") => ReasoningEffortInput::Max,
             _ => ReasoningEffortInput::Unset,
         }
     }
 
-    pub fn cycle_next(self) -> Self {
-        match self {
-            ReasoningEffortInput::Unset => ReasoningEffortInput::Low,
-            ReasoningEffortInput::Low => ReasoningEffortInput::Medium,
-            ReasoningEffortInput::Medium => ReasoningEffortInput::High,
-            ReasoningEffortInput::High => ReasoningEffortInput::Unset,
+    /// Whether this effort value is valid for the given provider kind.
+    pub fn is_valid_for(self, provider_kind: ProviderKind) -> bool {
+        match provider_kind {
+            ProviderKind::Codex => matches!(
+                self,
+                ReasoningEffortInput::None
+                    | ReasoningEffortInput::Minimal
+                    | ReasoningEffortInput::Low
+                    | ReasoningEffortInput::Medium
+                    | ReasoningEffortInput::High
+                    | ReasoningEffortInput::XHigh
+            ),
+            ProviderKind::Anthropic => matches!(
+                self,
+                ReasoningEffortInput::Low
+                    | ReasoningEffortInput::Medium
+                    | ReasoningEffortInput::High
+                    | ReasoningEffortInput::XHigh
+                    | ReasoningEffortInput::Max
+            ),
+            _ => false,
         }
     }
 
-    pub fn cycle_prev(self) -> Self {
+    /// Effort levels for each provider (Unset is handled separately).
+    const CODEX_EFFORTS: &[ReasoningEffortInput] = &[
+        ReasoningEffortInput::None,
+        ReasoningEffortInput::Minimal,
+        ReasoningEffortInput::Low,
+        ReasoningEffortInput::Medium,
+        ReasoningEffortInput::High,
+        ReasoningEffortInput::XHigh,
+    ];
+
+    const ANTHROPIC_EFFORTS: &[ReasoningEffortInput] = &[
+        ReasoningEffortInput::Low,
+        ReasoningEffortInput::Medium,
+        ReasoningEffortInput::High,
+        ReasoningEffortInput::XHigh,
+        ReasoningEffortInput::Max,
+    ];
+
+    /// Return the effort list for a provider kind.
+    fn efforts_for(provider_kind: ProviderKind) -> &'static [ReasoningEffortInput] {
+        match provider_kind {
+            ProviderKind::Codex => Self::CODEX_EFFORTS,
+            ProviderKind::Anthropic => Self::ANTHROPIC_EFFORTS,
+            _ => &[],
+        }
+    }
+
+    /// Cycle to the next valid effort for the given provider.
+    /// Unset always goes to the first valid effort; values outside the
+    /// provider's set are clamped back to the first valid effort.
+    pub fn cycle_next_for(self, provider_kind: ProviderKind) -> Self {
+        let efforts = Self::efforts_for(provider_kind);
+        if efforts.is_empty() {
+            return ReasoningEffortInput::Unset;
+        }
         match self {
-            ReasoningEffortInput::Unset => ReasoningEffortInput::High,
-            ReasoningEffortInput::Low => ReasoningEffortInput::Unset,
-            ReasoningEffortInput::Medium => ReasoningEffortInput::Low,
-            ReasoningEffortInput::High => ReasoningEffortInput::Medium,
+            ReasoningEffortInput::Unset => efforts[0],
+            current => {
+                if let Some(idx) = efforts.iter().position(|&e| e == current) {
+                    efforts[(idx + 1) % efforts.len()]
+                } else {
+                    efforts[0]
+                }
+            }
+        }
+    }
+
+    pub fn cycle_prev_for(self, provider_kind: ProviderKind) -> Self {
+        let efforts = Self::efforts_for(provider_kind);
+        if efforts.is_empty() {
+            return ReasoningEffortInput::Unset;
+        }
+        match self {
+            ReasoningEffortInput::Unset => efforts[efforts.len() - 1],
+            current => {
+                if let Some(idx) = efforts.iter().position(|&e| e == current) {
+                    efforts[(idx + efforts.len() - 1) % efforts.len()]
+                } else {
+                    efforts[efforts.len() - 1]
+                }
+            }
+        }
+    }
+
+    /// Clamp the current value to a valid one for the given provider.
+    /// If the value is not valid for this provider, returns Unset.
+    pub fn clamp_for(self, provider_kind: ProviderKind) -> Self {
+        if self == ReasoningEffortInput::Unset || self.is_valid_for(provider_kind) {
+            self
+        } else {
+            ReasoningEffortInput::Unset
         }
     }
 }
@@ -478,7 +574,7 @@ fn field_order(auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Vec<For
         FormField::BaseUrl,
         FormField::OpenaiBaseUrl,
     ];
-    if provider_kind == ProviderKind::Codex {
+    if matches!(provider_kind, ProviderKind::Codex | ProviderKind::Anthropic) {
         order.push(FormField::ReasoningEffort);
     }
     if provider_kind == ProviderKind::Minimax {

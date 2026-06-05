@@ -12,7 +12,7 @@ mod views;
 use crate::app::{
     ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal, FormField,
     FormMode, FormState, Modal, PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderAction,
-    ProviderFormModal, ProviderKind, QuotaField, QuotaFormModal, RangePreset, ReasoningEffortInput,
+    ProviderFormModal, ProviderKind, QuotaField, QuotaFormModal, RangePreset,
     RoutingField, RoutingFormModal, TestProviderModal, TestState, View,
 };
 use crate::client::AdminClient;
@@ -1181,18 +1181,16 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
             } else {
                 m.kind.cycle_prev()
             };
-            if m.kind != ProviderKind::Codex {
-                m.reasoning_effort = ReasoningEffortInput::Unset;
-            }
+            m.reasoning_effort = m.reasoning_effort.clamp_for(m.kind);
             if m.kind != ProviderKind::Minimax {
                 m.thinking_mode = crate::app::ThinkingModeInput::Unset;
             }
         }
         FormField::ReasoningEffort => {
             m.reasoning_effort = if forward {
-                m.reasoning_effort.cycle_next()
+                m.reasoning_effort.cycle_next_for(m.kind)
             } else {
-                m.reasoning_effort.cycle_prev()
+                m.reasoning_effort.cycle_prev_for(m.kind)
             };
         }
         FormField::ThinkingMode => {

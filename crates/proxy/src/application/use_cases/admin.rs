@@ -754,14 +754,23 @@ fn payload_to_config(
             let kind = str_to_kind(&pp.kind)?;
             let reasoning_effort = match pp.reasoning_effort.as_deref().map(str::trim) {
                 None | Some("") => None,
-                Some("low" | "medium" | "high") => {
-                    pp.reasoning_effort.map(|s| s.trim().to_string())
-                }
-                Some(other) => {
-                    return Err(ProxyError::BadRequest(format!(
-                        "invalid reasoning_effort '{other}' for provider '{}'",
-                        pp.name
-                    )));
+                Some(v) => {
+                    let valid = match &kind {
+                        ProviderKind::Codex => {
+                            matches!(v, "none" | "minimal" | "low" | "medium" | "high" | "xhigh")
+                        }
+                        ProviderKind::Anthropic => {
+                            matches!(v, "low" | "medium" | "high" | "xhigh" | "max")
+                        }
+                        _ => false,
+                    };
+                    if !valid {
+                        return Err(ProxyError::BadRequest(format!(
+                            "invalid reasoning_effort '{v}' for provider '{}' (reasoning_effort is only supported for codex and anthropic providers)",
+                            pp.name
+                        )));
+                    }
+                    Some(v.to_string())
                 }
             };
             let thinking_mode = match pp.thinking_mode.as_deref().map(str::trim) {
