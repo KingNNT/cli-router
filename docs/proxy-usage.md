@@ -21,13 +21,23 @@ The proxy accepts both **Anthropic** (`/v1/messages`) and **OpenAI** (`/v1/chat/
 
 ## Configuration
 
-The proxy reads `~/.config/cli-router/config.toml` on startup. If the file doesn't exist, it falls back to environment variables.
+Config is stored in the SQLite database (`~/.local/share/cli-router/proxy.db`) — the **single source of truth**. The proxy reads config from DB at startup, and the admin API reads/writes DB directly. All config changes happen via the admin API or TUI and take effect immediately (hot reload).
 
-### Environment variable override:
+### Importing a legacy config.toml
+
+If you have an existing `config.toml`, import it into the DB once:
 
 ```bash
-export CLI_ROUTER_CONFIG="/path/to/custom-config.toml"
-cargo run -p proxy
+cargo run -p proxy -- --import-config ~/.config/cli-router/config.toml
+```
+
+This reads the TOML file, writes it to the DB, and exits. After that, all config is managed through the admin API/TUI — the TOML file is no longer needed.
+
+### Database path override:
+
+```bash
+# Default: ~/.local/share/cli-router/proxy.db
+cargo run -p proxy -- --db /path/to/custom-proxy.db
 ```
 
 ---
@@ -86,6 +96,35 @@ auth = { type = "passthrough" }
 ```
 
 The proxy forwards whatever `x-api-key` or `Authorization` header the client sends.
+
+---
+
+## Per-Provider Options
+
+Each `[[providers]]` entry supports optional fields beyond `name`, `kind`, and `auth`:
+
+| Field | Applies to | Description |
+|-------|-----------|-------------|
+| `base_url` | all | Override the default Anthropic-compatible endpoint |
+| `openai_base_url` | zai, deepseek, openai, minimax | Override the OpenAI-compatible endpoint |
+| `reasoning_effort` | codex, anthropic | Default reasoning effort for requests that don't specify one (e.g. `"high"`, `"low"`) |
+| `thinking_mode` | minimax | How to handle thinking/reasoning content: `"split_only"` (default, keep reasoning fields) or `"strip_all"` (remove all thinking content) |
+
+Example with all options:
+
+```toml
+[[providers]]
+name = "codex"
+kind = "codex"
+auth = { type = "codex_auto" }
+reasoning_effort = "high"
+
+[[providers]]
+name = "minimax"
+kind = "minimax"
+auth = { type = "api_key", value = "${MINIMAX_API_KEY}" }
+thinking_mode = "strip_all"
+```
 
 ---
 
@@ -177,6 +216,36 @@ The default base URL is `https://api.deepseek.com/v1`. Override it with `base_ur
 The `bearer` auth type is recommended. Use `api_key` only if your key comes from a source (e.g. the Anthropic SDK) that defaults to `x-api-key` headers.
 
 Available models: `deepseek-v4-pro`, `deepseek-v4-flash`.
+
+### MiniMax
+
+MiniMax provides an Anthropic-compatible endpoint and an OpenAI-compatible endpoint. Configure it with `kind = "minimax"`:
+
+```toml
+[[providers]]
+name = "minimax"
+kind = "minimax"
+auth = { type = "api_key", value = "${MINIMAX_API_KEY}" }
+
+[[routing]]
+match = { model = "MiniMax-*" }
+provider = "minimax"
+```
+
+MiniMax accepts the Anthropic format (`/v1/messages`) by default via `https://api.minimaxi.com/anthropic`. The OpenAI-compatible endpoint at `https://api.minimaxi.com/v1` is also available via `openai_base_url`.
+
+**Thinking mode:** MiniMax models (M2.x, M3) produce thinking/reasoning content in responses. The proxy can strip or preserve this content via the per-provider `thinking_mode` config:
+
+```toml
+[[providers]]
+name = "minimax"
+kind = "minimax"
+auth = { type = "api_key", value = "${MINIMAX_API_KEY}" }
+thinking_mode = "split_only"  # default — strip internal tags but keep reasoning_content/reasoning_details
+# thinking_mode = "strip_all"  # strip all thinking content entirely
+```
+
+The proxy automatically injects `reasoning_split: true` into requests so MiniMax separates thinking content from the main response.
 
 ---
 
@@ -408,8 +477,10 @@ curl http://127.0.0.1:8788/api-docs/openapi.json | jq .info
 
 ## Full Config Example
 
+This TOML shows the config shape that can be imported via `--import-config`. After import, all changes go through the admin API/TUI.
+
 ```toml
-# ~/.config/cli-router/config.toml
+# Example config.toml for --import-config
 
 [[providers]]
 name = "anthropic-a"
@@ -431,6 +502,12 @@ name = "zai"
 kind = "zai"
 auth = { type = "api_key", value = "${ZAI_API_KEY}" }
 openai_base_url = "https://api.z.ai/api/paas/v4"
+
+[[providers]]
+name = "minimax"
+kind = "minimax"
+auth = { type = "api_key", value = "${MINIMAX_API_KEY}" }
+thinking_mode = "split_only"
 
 # Opus models: round-robin across 3 Anthropic accounts
 [[routing]]
@@ -471,7 +548,16 @@ cargo build --release --workspace
 ./target/release/cli-router-proxy
 ```
 
-The proxy binds to `127.0.0.1:8787` by default. Configure the port:
+The proxy binds to `127.0.0.1:8787` by default. Configure the port via the admin API or TUI:
+
+```bash
+# Via admin API
+curl -X PUT http://127.0.0.1:8787/admin/config \
+  -H "content-type: application/json" \
+  -d '{"port": 9000, "providers": [], "routing": []}'
+```
+
+Or import via TOML with `--import-config`:
 
 ```toml
 port = 9000

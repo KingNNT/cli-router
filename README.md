@@ -2,7 +2,7 @@
 
 A Rust workspace with three binary apps and two shared library crates:
 
-- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai, DeepSeek, OpenAI, Codex) with multi-provider routing, admin API, OAuth flows for Anthropic and OpenAI with automatic token refresh, cross-format translation (Anthropic↔OpenAI), Swagger/OpenAPI docs, and hot reload. Captures token usage to SQLite per request. Config stored in SQLite (single source of truth).
+- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai, DeepSeek, OpenAI, Codex, MiniMax) with multi-provider routing, admin API, OAuth flows for Anthropic and OpenAI with automatic token refresh, cross-format translation (Anthropic↔OpenAI), Swagger/OpenAPI docs, and hot reload. Captures token usage to SQLite per request. Config stored in SQLite (single source of truth).
 - **`proxy-tui`** — terminal admin client for the proxy. View status, edit config, manage providers, test connectivity, and run OAuth flows (Anthropic and OpenAI) — all from the terminal.
 - **`analysis`** — terminal UI for analysing OpenCode and Claude Code usage (costs, token counts, model breakdowns, project insights). Companion to the proxy for historical analysis.
 
@@ -16,12 +16,12 @@ Built with [axum](https://github.com/tokio-rs/axum) (proxy), [Ratatui](https://r
 
 ### `proxy` — HTTP proxy with usage capture and admin control plane
 
-- **Multi-provider routing** — configure multiple LLM providers (Anthropic, Z.ai, DeepSeek, OpenAI, Codex) with glob-based model matching and fallback chains. Override per-request with `provider-name/model` namespace syntax (e.g. `zai/glm-5`).
+- **Multi-provider routing** — configure multiple LLM providers (Anthropic, Z.ai, DeepSeek, OpenAI, Codex, MiniMax) with glob-based model matching and fallback chains. Override per-request with `provider-name/model` namespace syntax (e.g. `zai/glm-5`).
 - **Dual-protocol support** — accepts both Anthropic (`/v1/messages`) and OpenAI (`/v1/chat/completions`) request formats with automatic cross-format translation. Works with Claude Code, OpenCode, Cursor, Codex CLI, and any OpenAI-compatible client.
 - **Token counting** — `/v1/messages/count_tokens` endpoint with upstream forwarding and local estimation fallback.
 - **Streaming support** — forwards SSE streaming and buffered JSON responses unchanged
 - **Token usage logging** — parses upstream events to extract input/output/cache token counts, looks up cost, writes to `~/.local/share/cli-router/proxy.db`
-- **SQLite-backed config** — config stored in the same SQLite database (single source of truth). Admin API reads/writes DB directly. TOML used only for initial seed.
+- **SQLite-backed config** — config stored in the same SQLite database (single source of truth). Admin API reads/writes DB directly. TOML import via `--import-config` for migration only. Per-provider config includes `reasoning_effort` (Codex/Anthropic) and `thinking_mode` (MiniMax).
 - **Admin API** — `GET/PUT /admin/config`, `GET /admin/status`, `GET /admin/requests/recent`, `GET /admin/usage/summary`, `GET /admin/account/usage`, `GET /admin/quota/status`, `POST /admin/providers/:name/test`, `POST /admin/oauth/anthropic/{start,complete}`, `POST /admin/oauth/openai/{start,complete}`
 - **OAuth** — PKCE-based browser flow for Anthropic, OAuth flow for OpenAI, both with automatic token refresh (background task refreshes tokens every 60s, persists to DB). Codex `CodexAuto` auth reads from `~/.codex/auth.json`.
 - **401 retry** — on auth failure, automatically refreshes OAuth token and retries once
@@ -31,7 +31,7 @@ Built with [axum](https://github.com/tokio-rs/axum) (proxy), [Ratatui](https://r
 ### `proxy-tui` — admin terminal client
 
 - **Status view** — uptime, request counts by provider and status
-- **Config editor** — organized tabs (Providers, Routing, Quotas, Settings) with keyboard and mouse navigation. Dual-mode editing: structured forms or raw TOML.
+- **Config editor** — organized tabs (Providers, Routing, Quotas, Settings) with keyboard and mouse navigation. Structured forms for all config fields.
 - **Account view** — provider balances, quota status, and per-model usage breakdown
 - **Usage view** — aggregate usage summaries (daily totals, per-model breakdowns) from the proxy request log
 - **OAuth flow** — start/complete Anthropic and OpenAI OAuth with browser-based flows
@@ -49,7 +49,7 @@ Built with [axum](https://github.com/tokio-rs/axum) (proxy), [Ratatui](https://r
 ## Prerequisites
 
 - Rust stable (pinned via `rust-toolchain.toml`)
-- For the proxy: an API key or OAuth session for at least one provider (Anthropic, Z.ai, DeepSeek, OpenAI, or Codex)
+- For the proxy: an API key or OAuth session for at least one provider (Anthropic, Z.ai, DeepSeek, OpenAI, Codex, or MiniMax)
 - For the TUI: a working OpenCode or Claude Code installation with usage data
 
 ## Build & run
