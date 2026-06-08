@@ -106,9 +106,68 @@ enum ProbeOutcome {
     TransportError(ureq::Error),
 }
 
+/// Whether a probe outcome is worth retrying on a transient failure.
+///
+/// `HttpErrorNoHeaders` covers 4xx/5xx responses without rate-limit headers
+/// (could be a backend hiccup, a 401 from a rotated token, or a 502 from a
+/// Cloudflare blip). `TransportError` covers network-level failures (DNS,
+/// connection reset, timeout). The 200 OK cases are deterministic and
+/// should not be retried.
+fn is_retriable(outcome: &ProbeOutcome) -> bool {
+    matches!(
+        outcome,
+        ProbeOutcome::HttpErrorNoHeaders | ProbeOutcome::TransportError(_)
+    )
+}
+
+/// A single iteration of a retry loop.
+enum RetryStep<T> {
+    /// Stop and return this value (success or non-retriable failure).
+    Done(T),
+    /// Keep trying — sleep for the next backoff, then re-run.
+    Retry(T),
+}
+
+/// Run `f` up to `max_attempts` times, sleeping for `backoffs[i]` between
+/// attempt `i` and attempt `i + 1`.
+///
+/// `f` receives the 0-based attempt index. If it returns `Done`, the value
+/// is returned immediately. If it returns `Retry`, the loop sleeps for the
+/// matching backoff (or skips the sleep on the last attempt) and re-runs.
+/// When the budget is exhausted, the last `Retry` value is returned.
+fn run_with_retry<T, F>(max_attempts: usize, backoffs: &[Duration], mut f: F) -> T
+where
+    F: FnMut(usize) -> RetryStep<T>,
+{
+    debug_assert!(max_attempts >= 1, "max_attempts must be at least 1");
+
+    let mut last: Option<T> = None;
+    for attempt in 0..max_attempts {
+        let step = f(attempt);
+        match step {
+            RetryStep::Done(value) => return value,
+            RetryStep::Retry(value) => {
+                last = Some(value);
+                if let Some(backoff) = backoffs.get(attempt) {
+                    std::thread::sleep(*backoff);
+                }
+            }
+        }
+    }
+    last.expect("max_attempts >= 1 guarantees at least one iteration")
+}
+
+/// Maximum number of probe attempts (initial + retries) before giving up.
+const MAX_PROBE_ATTEMPTS: usize = 3;
+/// Backoff between probe attempts. The probe is user-facing (TUI refresh),
+/// so total worst-case wait is ~2s — fast enough to feel responsive while
+/// giving the Codex backend room to recover from a transient blip.
+const PROBE_BACKOFFS: [Duration; MAX_PROBE_ATTEMPTS - 1] =
+    [Duration::from_millis(500), Duration::from_millis(1500)];
+
 impl AccountUsagePort for CodexAccountUsage {
     fn fetch_usage(&self) -> Option<Result<ProviderAccountUsage, ProxyError>> {
-        let token = match resolve_token(&self.auth) {
+        let mut token = match resolve_token(&self.auth) {
             Ok(Some(token)) => token,
             Ok(None) => return None,
             Err(e) => return Some(Err(e)),
@@ -118,41 +177,62 @@ impl AccountUsagePort for CodexAccountUsage {
             return None;
         }
 
-        let outcome = self.probe_once(&token);
-
-        // If the first probe failed with an HTTP error and no rate-limit
-        // headers, the token may be stale. Re-read ~/.codex/auth.json (for
-        // CodexAuto) and retry once before giving up.
-        let outcome = match outcome {
-            ProbeOutcome::HttpErrorNoHeaders if matches!(self.auth, AuthConfig::CodexAuto) => {
+        // Retry transient backend failures (network blips, Cloudflare
+        // hiccups, 5xx without rate-limit headers) with backoff before
+        // giving up. The token is the same on every attempt; if it is
+        // genuinely stale, the CodexAuto branch below re-reads it.
+        let mut outcome = run_with_retry(MAX_PROBE_ATTEMPTS, &PROBE_BACKOFFS, |attempt| {
+            if attempt > 0 {
                 tracing::info!(
                     provider = %self.provider_name,
-                    "Codex account probe failed; re-reading ~/.codex/auth.json and retrying"
+                    attempt = attempt + 1,
+                    max_attempts = MAX_PROBE_ATTEMPTS,
+                    "Codex account probe retrying after transient failure"
                 );
-                match resolve_token(&self.auth) {
-                    Ok(Some(fresh_token)) if fresh_token != token => self.probe_once(&fresh_token),
-                    _ => outcome, // Same token or resolve failed — return original result.
+            }
+            let result = self.probe_once(&token);
+            if is_retriable(&result) {
+                RetryStep::Retry(result)
+            } else {
+                RetryStep::Done(result)
+            }
+        });
+
+        // If all retries failed with HttpErrorNoHeaders and the user is
+        // using CodexAuto, the token may be stale — re-read ~/.codex/auth.json
+        // and probe one last time. OpenAiOAuth tokens are managed by the
+        // background refresh task, so we do not touch them here.
+        if matches!(outcome, ProbeOutcome::HttpErrorNoHeaders)
+            && matches!(self.auth, AuthConfig::CodexAuto)
+        {
+            tracing::info!(
+                provider = %self.provider_name,
+                "Codex account probe still failing; re-reading ~/.codex/auth.json and retrying"
+            );
+            if let Ok(Some(fresh_token)) = resolve_token(&self.auth) {
+                if fresh_token != token {
+                    token = fresh_token;
+                    outcome = self.probe_once(&token);
                 }
             }
-            other => other,
-        };
+        }
 
-        match outcome {
-            ProbeOutcome::Success(usage) => Some(Ok(usage)),
-            ProbeOutcome::NoRateLimitHeaders => Some(Err(ProxyError::UpstreamUsage {
+        Some(match outcome {
+            ProbeOutcome::Success(usage) => Ok(usage),
+            ProbeOutcome::NoRateLimitHeaders => Err(ProxyError::UpstreamUsage {
                 provider: self.provider_name.clone(),
                 message: "Codex response did not include rate-limit headers".to_string(),
-            })),
-            ProbeOutcome::HttpErrorNoHeaders => Some(Err(ProxyError::UpstreamUsage {
+            }),
+            ProbeOutcome::HttpErrorNoHeaders => Err(ProxyError::UpstreamUsage {
                 provider: self.provider_name.clone(),
                 message: "Codex probe failed and response did not include rate-limit headers"
                     .to_string(),
-            })),
-            ProbeOutcome::TransportError(e) => Some(Err(ProxyError::UpstreamUsage {
+            }),
+            ProbeOutcome::TransportError(e) => Err(ProxyError::UpstreamUsage {
                 provider: self.provider_name.clone(),
                 message: format!("Codex probe: {e}"),
-            })),
-        }
+            }),
+        })
     }
 }
 
@@ -532,5 +612,85 @@ mod tests {
         assert_eq!(input[0]["type"], "message");
         assert_eq!(input[0]["role"], "user");
         assert_eq!(input[0]["content"], "");
+    }
+
+    // -- Retry helper tests --
+
+    #[test]
+    fn http_error_no_headers_is_retriable() {
+        assert!(is_retriable(&ProbeOutcome::HttpErrorNoHeaders));
+    }
+
+    #[test]
+    fn success_is_not_retriable() {
+        let usage = ProviderAccountUsage {
+            provider: "codex".into(),
+            status: AccountUsageStatus::Available,
+            plan: None,
+            windows: vec![],
+            model_usage: None,
+        };
+        assert!(!is_retriable(&ProbeOutcome::Success(usage)));
+    }
+
+    #[test]
+    fn no_rate_limit_headers_is_not_retriable() {
+        assert!(!is_retriable(&ProbeOutcome::NoRateLimitHeaders));
+    }
+
+    #[test]
+    fn retry_returns_immediately_on_done() {
+        let mut calls = 0;
+        let result = run_with_retry(3, &[], |attempt| {
+            calls += 1;
+            assert_eq!(attempt, 0);
+            RetryStep::Done("ok")
+        });
+        assert_eq!(result, "ok");
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn retry_continues_until_done() {
+        let backoffs = [Duration::from_millis(0), Duration::from_millis(0)];
+        let mut calls = 0;
+        let result = run_with_retry(3, &backoffs, |attempt| {
+            calls += 1;
+            if attempt < 2 {
+                RetryStep::Retry(format!("attempt {attempt}"))
+            } else {
+                RetryStep::Done(format!("final {attempt}"))
+            }
+        });
+        assert_eq!(result, "final 2");
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn retry_returns_last_value_when_exhausted() {
+        let backoffs = [Duration::from_millis(0), Duration::from_millis(0)];
+        let mut calls = 0;
+        let result = run_with_retry(3, &backoffs, |attempt| {
+            calls += 1;
+            RetryStep::Retry(format!("attempt {attempt}"))
+        });
+        assert_eq!(result, "attempt 2");
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn retry_stops_early_on_non_retriable_done() {
+        let backoffs = [Duration::from_millis(0), Duration::from_millis(0)];
+        let mut calls = 0;
+        let result = run_with_retry(3, &backoffs, |_| {
+            calls += 1;
+            if calls == 1 {
+                RetryStep::Retry("first")
+            } else {
+                RetryStep::Done("second")
+            }
+        });
+        assert_eq!(result, "second");
+        assert_eq!(calls, 2);
     }
 }
