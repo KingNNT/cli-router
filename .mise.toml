@@ -1,0 +1,3 @@
+# cli-router — mise config
+# Put personal dev overrides in .mise.local.toml (gitignored).
+# mise auto-loads .mise.local.toml if it exists.
