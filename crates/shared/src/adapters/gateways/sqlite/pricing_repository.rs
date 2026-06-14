@@ -114,19 +114,26 @@ impl PricingRepository for SqlitePricingRepository {
         if keys.is_empty() {
             return Ok(HashMap::new());
         }
+        // Model ids flow through providers with inconsistent casing: LiteLLM
+        // upstream keeps its original (often mixed) case, while clients and
+        // usage data commonly lowercase. Compare both sides lowercased so the
+        // mismatch doesn't silently drop the row. Result-map keys are also
+        // lowercased so they line up with the lowercased candidates emitted
+        // by `pricing_lookup_keys`.
+        let lower_keys: Vec<String> = keys.iter().map(|k| k.to_lowercase()).collect();
         let conn = self.conn.lock().unwrap();
-        let placeholders = (1..=keys.len())
+        let placeholders = (1..=lower_keys.len())
             .map(|i| format!("?{}", i))
             .collect::<Vec<_>>()
             .join(",");
         let sql = format!(
             "SELECT lookup_key, model_id, provider_id, input_per_token, output_per_token, \
                     cache_read_per_token, cache_write_per_token, last_synced_at \
-             FROM pricing WHERE lookup_key IN ({})",
+             FROM pricing WHERE LOWER(lookup_key) IN ({})",
             placeholders
         );
         let mut stmt = conn.prepare(&sql).map_err(AdapterError::from)?;
-        let params: Vec<&dyn rusqlite::types::ToSql> = keys
+        let params: Vec<&dyn rusqlite::types::ToSql> = lower_keys
             .iter()
             .map(|k| k as &dyn rusqlite::types::ToSql)
             .collect();
@@ -137,7 +144,7 @@ impl PricingRepository for SqlitePricingRepository {
         for row in iter {
             let inner = row.map_err(AdapterError::from)?;
             let pricing = inner.map_err(ApplicationError::from)?;
-            out.insert(pricing.lookup_key.clone(), pricing);
+            out.insert(pricing.lookup_key.to_lowercase(), pricing);
         }
         Ok(out)
     }
@@ -215,6 +222,33 @@ mod tests {
         let all = repo.list().unwrap();
         assert_eq!(all.len(), 1);
         assert!((all[0].input_rate.value() - 0.00002).abs() < 1e-9);
+    }
+
+    #[test]
+    fn find_many_matches_case_insensitively() {
+        // LiteLLM upstream stores keys in mixed case (e.g. "minimax/MiniMax-M3"),
+        // but usage data and clients commonly lowercase the model id. The lookup
+        // must reconcile that mismatch so the dashboard can price a model whose
+        // stored row has different case than the incoming candidate key.
+        let repo = setup();
+        repo.upsert_many(&[row(
+            "minimax/MiniMax-M3",
+            "minimax/MiniMax-M3",
+            0.0000003,
+            None,
+            (2026, 4, 23),
+        )])
+        .unwrap();
+        let out = repo.find_many(&["minimax/minimax-m3".to_string()]).unwrap();
+        assert_eq!(out.len(), 1, "expected case-insensitive match");
+        assert!(
+            out.contains_key("minimax/minimax-m3"),
+            "map must be keyed by lowercased stored value to match lowercased candidate"
+        );
+        let hit = &out["minimax/minimax-m3"];
+        // The ModelPricing's own lookup_key field keeps the original (mixed) case
+        // so the pricing tab still displays the upstream name.
+        assert_eq!(hit.lookup_key, "minimax/MiniMax-M3");
     }
 
     #[test]

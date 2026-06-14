@@ -184,7 +184,9 @@ pub fn canonicalize(source: &str) -> Option<&'static str> {
 ///
 /// Ordering matters: exact request keys come first, then exact canonical aliases,
 /// then conservative family fallbacks. Keys are deduplicated while preserving the
-/// first occurrence.
+/// first occurrence. All keys are lowercased on the way out so the SQL lookup
+/// (which compares with `LOWER(lookup_key)`) and the result-map keys line up
+/// regardless of whether the source id was upper, lower, or mixed case.
 pub fn pricing_lookup_keys(source: &str) -> Vec<String> {
     let mut keys = Vec::new();
     push_unique(&mut keys, source);
@@ -205,7 +207,12 @@ pub fn pricing_lookup_keys(source: &str) -> Vec<String> {
         }
     }
 
-    keys
+    let mut lower = Vec::with_capacity(keys.len());
+    for k in keys {
+        let lk = k.to_lowercase();
+        push_unique(&mut lower, &lk);
+    }
+    lower
 }
 
 fn push_unique(keys: &mut Vec<String>, key: &str) {
@@ -357,6 +364,21 @@ mod tests {
                 "some-provider/unknown-model-latest".to_string(),
                 "unknown-model-latest".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn pricing_lookup_keys_lowercases_candidates() {
+        // Mixed-case upstream ids (e.g. LiteLLM's "minimax/MiniMax-M3") and
+        // mixed-case client ids must produce lowercase candidates so the SQL
+        // lookup (which compares with LOWER()) and the result-map keys line up.
+        assert_eq!(
+            pricing_lookup_keys("MiniMax-M3"),
+            vec!["minimax-m3".to_string()]
+        );
+        assert_eq!(
+            pricing_lookup_keys("minimax/MiniMax-M3"),
+            vec!["minimax/minimax-m3".to_string(), "minimax-m3".to_string(),]
         );
     }
 
