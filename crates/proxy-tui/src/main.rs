@@ -12,8 +12,8 @@ mod views;
 use crate::app::{
     ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal, FormField,
     FormMode, FormState, Modal, PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderAction,
-    ProviderFormModal, ProviderKind, QuotaField, QuotaFormModal, RangePreset,
-    RoutingField, RoutingFormModal, TestProviderModal, TestState, View,
+    ProviderFormModal, ProviderKind, QuotaField, QuotaFormModal, RangePreset, RoutingField,
+    RoutingFormModal, TestProviderModal, TestState, View,
 };
 use crate::client::AdminClient;
 use chrono::{Datelike, Local, TimeZone};

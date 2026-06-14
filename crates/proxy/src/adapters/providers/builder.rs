@@ -71,14 +71,12 @@ pub fn build_leaf(
         }
     };
     Ok(match p.kind {
-        ProviderKind::Anthropic => {
-            Arc::new(AnthropicProvider::configure_with_effort(
-                http,
-                p.base_url.clone(),
-                auth,
-                p.reasoning_effort.clone(),
-            ))
-        }
+        ProviderKind::Anthropic => Arc::new(AnthropicProvider::configure_with_effort(
+            http,
+            p.base_url.clone(),
+            auth,
+            p.reasoning_effort.clone(),
+        )),
         ProviderKind::Zai => Arc::new(ZaiProvider::configure(
             http,
             p.base_url.clone(),

@@ -176,10 +176,7 @@ fn render_window(lines: &mut Vec<ratatui::text::Line>, w: &UsageWindowDto) {
     if w.is_balance_info {
         lines.push(ratatui::text::Line::from(vec![
             ratatui::text::Span::raw(format!("│  {:16} ", w.label)),
-            ratatui::text::Span::styled(
-                "balance info",
-                Style::default().fg(Color::DarkGray),
-            ),
+            ratatui::text::Span::styled("balance info", Style::default().fg(Color::DarkGray)),
         ]));
         // Sub-items carry the balance details.
         if !w.sub_items.is_empty() {

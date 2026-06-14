@@ -1052,24 +1052,48 @@ mod form_field_tests {
     #[test]
     fn thinking_mode_input_cycle() {
         use super::ThinkingModeInput;
-        assert_eq!(ThinkingModeInput::Unset.cycle_next(), ThinkingModeInput::SplitOnly);
-        assert_eq!(ThinkingModeInput::SplitOnly.cycle_next(), ThinkingModeInput::StripAll);
-        assert_eq!(ThinkingModeInput::StripAll.cycle_next(), ThinkingModeInput::Unset);
-        assert_eq!(ThinkingModeInput::Unset.cycle_prev(), ThinkingModeInput::StripAll);
+        assert_eq!(
+            ThinkingModeInput::Unset.cycle_next(),
+            ThinkingModeInput::SplitOnly
+        );
+        assert_eq!(
+            ThinkingModeInput::SplitOnly.cycle_next(),
+            ThinkingModeInput::StripAll
+        );
+        assert_eq!(
+            ThinkingModeInput::StripAll.cycle_next(),
+            ThinkingModeInput::Unset
+        );
+        assert_eq!(
+            ThinkingModeInput::Unset.cycle_prev(),
+            ThinkingModeInput::StripAll
+        );
     }
 
     #[test]
     fn thinking_mode_input_from_option() {
         use super::ThinkingModeInput;
-        assert_eq!(ThinkingModeInput::from_option(Some("split_only")), ThinkingModeInput::SplitOnly);
-        assert_eq!(ThinkingModeInput::from_option(Some("strip_all")), ThinkingModeInput::StripAll);
-        assert_eq!(ThinkingModeInput::from_option(None), ThinkingModeInput::Unset);
-        assert_eq!(ThinkingModeInput::from_option(Some("garbage")), ThinkingModeInput::Unset);
+        assert_eq!(
+            ThinkingModeInput::from_option(Some("split_only")),
+            ThinkingModeInput::SplitOnly
+        );
+        assert_eq!(
+            ThinkingModeInput::from_option(Some("strip_all")),
+            ThinkingModeInput::StripAll
+        );
+        assert_eq!(
+            ThinkingModeInput::from_option(None),
+            ThinkingModeInput::Unset
+        );
+        assert_eq!(
+            ThinkingModeInput::from_option(Some("garbage")),
+            ThinkingModeInput::Unset
+        );
     }
 
     #[test]
     fn minimax_includes_thinking_mode_field() {
-        use super::{FormField, ThinkingModeInput, field_order, AuthInputKind, ProviderKind};
+        use super::{AuthInputKind, FormField, ProviderKind, ThinkingModeInput, field_order};
         let order = field_order(AuthInputKind::Passthrough, ProviderKind::Minimax);
         assert!(order.contains(&FormField::ThinkingMode));
         assert!(!order.contains(&FormField::ReasoningEffort));

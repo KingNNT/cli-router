@@ -34,12 +34,7 @@ impl AnthropicProvider {
     }
 
     pub fn with_auth(http: reqwest::Client, auth: AuthHeader) -> Self {
-        Self::build(
-            http,
-            "https://api.anthropic.com".into(),
-            auth,
-            None,
-        )
+        Self::build(http, "https://api.anthropic.com".into(), auth, None)
     }
 
     pub fn configure(http: reqwest::Client, base_url: Option<String>, auth: AuthHeader) -> Self {
@@ -249,9 +244,8 @@ mod tests {
 
     #[test]
     fn inject_effort_merges_into_existing_output_config() {
-        let mut body = Bytes::from(
-            r#"{"model":"claude-opus-4-8","output_config":{"other_key":true}}"#,
-        );
+        let mut body =
+            Bytes::from(r#"{"model":"claude-opus-4-8","output_config":{"other_key":true}}"#);
         inject_effort(&mut body, Some("high"));
         let parsed: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(parsed["output_config"]["effort"], "high");
@@ -260,9 +254,8 @@ mod tests {
 
     #[test]
     fn inject_effort_does_not_override_existing_effort() {
-        let mut body = Bytes::from(
-            r#"{"model":"claude-opus-4-8","output_config":{"effort":"low"}}"#,
-        );
+        let mut body =
+            Bytes::from(r#"{"model":"claude-opus-4-8","output_config":{"effort":"low"}}"#);
         inject_effort(&mut body, Some("high"));
         let parsed: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(parsed["output_config"]["effort"], "low");

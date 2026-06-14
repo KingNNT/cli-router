@@ -298,14 +298,7 @@ mod tests {
     #[test]
     fn model_column_note_shows_fallback_price() {
         let out = GetDashboardOutput {
-            rows: vec![row(
-                2026,
-                4,
-                23,
-                "openai/gpt-5.1-codex-latest",
-                1000,
-                0.03,
-            )],
+            rows: vec![row(2026, 4, 23, "openai/gpt-5.1-codex-latest", 1000, 0.03)],
             model_pricing: vec![DashboardModelPricing {
                 model: ModelId::new("openai/gpt-5.1-codex-latest").unwrap(),
                 pricing_key: Some("gpt5.1-codex".to_string()),
@@ -315,10 +308,7 @@ mod tests {
 
         let vm = present(&out);
 
-        assert_eq!(
-            vm.model_columns[0].model,
-            "openai/gpt-5.1-codex-latest"
-        );
+        assert_eq!(vm.model_columns[0].model, "openai/gpt-5.1-codex-latest");
         assert_eq!(vm.model_columns[0].pricing_note, "priced as gpt5.1-codex");
     }
 
