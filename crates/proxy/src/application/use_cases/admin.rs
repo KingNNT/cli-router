@@ -946,25 +946,21 @@ fn payload_to_auth(a: AuthPayload) -> AuthConfig {
 // GetAccountUsage
 // ---------------------------------------------------------------------------
 
-use crate::application::ports::AccountUsagePort;
+use crate::application::ports::AccountUsageRegistry;
 use crate::domain::account_usage::{AccountUsageStatus, ProviderAccountUsage};
 use proxy_admin_api::{
     AccountUsageResponse, ModelUsageDto, ProviderAccountUsageDto, ProviderUsageStatus,
     UsageSubItemDto, UsageWindowDto,
 };
-use std::collections::HashMap;
 
 pub struct GetAccountUsage {
-    adapters: HashMap<String, Arc<dyn AccountUsagePort>>,
+    registry: Arc<dyn AccountUsageRegistry>,
     read: Arc<dyn RequestLogReadPort>,
 }
 
 impl GetAccountUsage {
-    pub fn new(
-        adapters: HashMap<String, Arc<dyn AccountUsagePort>>,
-        read: Arc<dyn RequestLogReadPort>,
-    ) -> Self {
-        Self { adapters, read }
+    pub fn new(registry: Arc<dyn AccountUsageRegistry>, read: Arc<dyn RequestLogReadPort>) -> Self {
+        Self { registry, read }
     }
 
     pub fn execute(&self) -> AccountUsageResponse {
@@ -974,8 +970,9 @@ impl GetAccountUsage {
             .as_millis() as i64;
         let from_ms = now_ms - 24 * 3600 * 1000;
 
-        let mut providers: Vec<ProviderAccountUsageDto> = self
-            .adapters
+        // Pull the live adapter map — picks up providers added at runtime.
+        let adapters = self.registry.adapters();
+        let mut providers: Vec<ProviderAccountUsageDto> = adapters
             .iter()
             .map(|(name, adapter)| {
                 let mut dto = match adapter.fetch_usage() {
@@ -1109,10 +1106,10 @@ fn account_usage_to_dto(u: ProviderAccountUsage) -> ProviderAccountUsageDto {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::ModelBreakdownRow;
+    use crate::application::ports::{AccountUsagePort, ModelBreakdownRow};
     use crate::domain::account_usage::{AccountUsageStatus, UsageWindow};
     use crate::domain::{DailyTotal, ModelTotal, RequestRow, UsageSummary};
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::path::PathBuf;
 
     fn empty_stub_read() -> Arc<StubRead> {
@@ -1528,7 +1525,7 @@ mod tests {
             "anthropic".to_string(),
             Arc::new(StubAccountUsage { result: None }) as Arc<dyn AccountUsagePort>,
         );
-        let uc = GetAccountUsage::new(map, empty_stub_read());
+        let uc = GetAccountUsage::new(Arc::new(map), empty_stub_read());
         let resp = uc.execute();
         assert_eq!(resp.providers.len(), 1);
         assert_eq!(resp.providers[0].status, ProviderUsageStatus::NotSupported);
@@ -1558,7 +1555,7 @@ mod tests {
                 result: Some(Ok(usage)),
             }) as Arc<dyn AccountUsagePort>,
         );
-        let uc = GetAccountUsage::new(map, empty_stub_read());
+        let uc = GetAccountUsage::new(Arc::new(map), empty_stub_read());
         let resp = uc.execute();
         assert_eq!(resp.providers.len(), 1);
         assert_eq!(resp.providers[0].status, ProviderUsageStatus::Available);
@@ -1575,7 +1572,7 @@ mod tests {
                 result: Some(Err("timeout".to_string())),
             }) as Arc<dyn AccountUsagePort>,
         );
-        let uc = GetAccountUsage::new(map, empty_stub_read());
+        let uc = GetAccountUsage::new(Arc::new(map), empty_stub_read());
         let resp = uc.execute();
         assert_eq!(resp.providers.len(), 1);
         assert_eq!(resp.providers[0].status, ProviderUsageStatus::Error);
@@ -1592,7 +1589,7 @@ mod tests {
             "anthropic".to_string(),
             Arc::new(StubAccountUsage { result: None }) as Arc<dyn AccountUsagePort>,
         );
-        let uc = GetAccountUsage::new(map, empty_stub_read());
+        let uc = GetAccountUsage::new(Arc::new(map), empty_stub_read());
         let resp = uc.execute();
         assert_eq!(resp.providers[0].provider, "anthropic");
         assert_eq!(resp.providers[1].provider, "zai");
@@ -1600,7 +1597,7 @@ mod tests {
 
     #[test]
     fn get_account_usage_empty_map_returns_empty() {
-        let uc = GetAccountUsage::new(HashMap::new(), empty_stub_read());
+        let uc = GetAccountUsage::new(Arc::new(HashMap::new()), empty_stub_read());
         let resp = uc.execute();
         assert!(resp.providers.is_empty());
     }

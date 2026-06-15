@@ -9,7 +9,7 @@ pub mod request_log_read;
 pub mod upstream;
 pub mod usage_parser;
 
-pub use account_usage::AccountUsagePort;
+pub use account_usage::{AccountUsagePort, AccountUsageRegistry};
 pub use config::ConfigRepository;
 pub use provider::{ApiFormat, Direction, Provider};
 pub use quota::QuotaPort;

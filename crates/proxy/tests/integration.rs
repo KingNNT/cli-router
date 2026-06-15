@@ -157,7 +157,7 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
             proxy::adapters::quota::InMemoryQuota::new(vec![]),
         ))),
         account_usage: Arc::new(proxy::application::use_cases::admin::GetAccountUsage::new(
-            std::collections::HashMap::new(),
+            Arc::new(std::collections::HashMap::new()),
             read.clone(),
         )),
     }
@@ -516,7 +516,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             proxy::adapters::quota::InMemoryQuota::new(vec![]),
         ))),
         account_usage: Arc::new(proxy::application::use_cases::admin::GetAccountUsage::new(
-            std::collections::HashMap::new(),
+            Arc::new(std::collections::HashMap::new()),
             read.clone(),
         )),
     };

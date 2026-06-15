@@ -10,10 +10,10 @@ use super::{
     AnthropicProvider, AuthHeader, CodexProvider, DeepSeekProvider, MinimaxProvider,
     OpenAiProvider, RoutingProvider, ZaiProvider,
 };
-use crate::application::ports::{AccountUsagePort, Provider, QuotaPort};
+use crate::application::ports::{AccountUsagePort, AccountUsageRegistry, Provider, QuotaPort};
 use crate::config::{AuthConfig, Config, ProviderConfig, ProviderKind};
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BuildError {
@@ -237,6 +237,55 @@ pub fn build_account_usage(
         .collect()
 }
 
+/// Hot-reloading account-usage registry.
+///
+/// Rebuilds the adapter map only when the configured provider *set* changes
+/// (tracked by sorted provider name), so a provider added at runtime appears
+/// in the account tab without a daemon restart. While the set is stable the
+/// cached adapter instances are reused — this preserves each adapter's
+/// internal response cache (notably Anthropic's 5-minute / 429-protection
+/// cache, which a rebuild-every-call approach would throw away). The OAuth
+/// access token is *not* part of the key: the Anthropic adapter reads it live
+/// from the shared config, and the background refresh rotates it every 60s.
+pub struct LiveAccountUsage {
+    config: Arc<RwLock<Config>>,
+    cache: Mutex<CachedAdapters>,
+}
+
+struct CachedAdapters {
+    names: Vec<String>,
+    map: HashMap<String, Arc<dyn AccountUsagePort>>,
+}
+
+impl LiveAccountUsage {
+    pub fn new(config: Arc<RwLock<Config>>) -> Self {
+        Self {
+            config,
+            cache: Mutex::new(CachedAdapters {
+                names: Vec::new(),
+                map: HashMap::new(),
+            }),
+        }
+    }
+}
+
+impl AccountUsageRegistry for LiveAccountUsage {
+    fn adapters(&self) -> HashMap<String, Arc<dyn AccountUsagePort>> {
+        let names = {
+            let cfg = self.config.read().expect("config rwlock poisoned");
+            let mut n: Vec<String> = cfg.providers.iter().map(|p| p.name.clone()).collect();
+            n.sort();
+            n
+        };
+        let mut cache = self.cache.lock().expect("account usage cache poisoned");
+        if cache.names != names {
+            cache.map = build_account_usage(self.config.clone());
+            cache.names = names;
+        }
+        cache.map.clone()
+    }
+}
+
 /// Extract the bearer token value from an auth config for use in
 /// the Z.ai monitoring API (`Authorization: <token>` header).
 fn resolve_auth_token(auth: &AuthConfig) -> String {
@@ -338,5 +387,76 @@ mod tests {
         let result = adapter.fetch_usage();
 
         assert!(result.is_some(), "Codex should not use NoopAccountUsage");
+    }
+
+    fn empty_config() -> Config {
+        Config {
+            port: 0,
+            proxy_db: std::path::PathBuf::new(),
+            pricing_db: std::path::PathBuf::new(),
+            providers: vec![],
+            routing: vec![],
+            affinity: Default::default(),
+            quota: vec![],
+        }
+    }
+
+    #[test]
+    fn live_account_usage_picks_up_provider_added_at_runtime() {
+        let config = Arc::new(std::sync::RwLock::new(empty_config()));
+        let live = LiveAccountUsage::new(config.clone());
+
+        // No providers configured yet → empty map.
+        assert!(live.adapters().is_empty(), "no providers means no adapters");
+
+        // Add an Anthropic provider at runtime (as the admin API does).
+        config.write().unwrap().providers.push(ProviderConfig {
+            name: "claude".to_string(),
+            kind: ProviderKind::Anthropic,
+            auth: AuthConfig::AnthropicOAuth {
+                access_token: "sk-ant-oat01-x".to_string(),
+                refresh_token: "r".to_string(),
+                expires_at_ms: 0,
+            },
+            base_url: None,
+            openai_base_url: None,
+            reasoning_effort: None,
+            thinking_mode: ThinkingMode::SplitOnly,
+        });
+
+        // The registry must surface the newly added provider without a restart.
+        let adapters = live.adapters();
+        assert!(
+            adapters.contains_key("claude"),
+            "provider added at runtime must appear in the account-usage map"
+        );
+    }
+
+    #[test]
+    fn live_account_usage_reuses_adapters_while_provider_set_is_stable() {
+        let mut config = empty_config();
+        config.providers.push(ProviderConfig {
+            name: "claude".to_string(),
+            kind: ProviderKind::Anthropic,
+            auth: AuthConfig::AnthropicOAuth {
+                access_token: "sk-ant-oat01-x".to_string(),
+                refresh_token: "r".to_string(),
+                expires_at_ms: 0,
+            },
+            base_url: None,
+            openai_base_url: None,
+            reasoning_effort: None,
+            thinking_mode: ThinkingMode::SplitOnly,
+        });
+        let live = LiveAccountUsage::new(Arc::new(std::sync::RwLock::new(config)));
+
+        let first = live.adapters();
+        let second = live.adapters();
+
+        // Same provider set → same adapter instance (preserves response cache).
+        assert!(
+            Arc::ptr_eq(first.get("claude").unwrap(), second.get("claude").unwrap()),
+            "adapter instances must be reused when the provider set is unchanged"
+        );
     }
 }

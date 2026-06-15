@@ -179,9 +179,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg_lock = Arc::new(RwLock::new(cfg));
 
     // Built after cfg_lock so the Anthropic adapter can read the live OAuth
-    // token (refreshed in place by the background token_refresh task).
-    let account_usage_map =
-        proxy::adapters::providers::builder::build_account_usage(cfg_lock.clone());
+    // token (refreshed in place by the background token_refresh task). The
+    // registry rebuilds its adapter map when the provider set changes, so
+    // providers added at runtime show up in the account tab without a restart.
+    let account_usage_registry = Arc::new(
+        proxy::adapters::providers::builder::LiveAccountUsage::new(cfg_lock.clone()),
+    );
 
     let use_case = Arc::new(HandleMessages::new(
         provider,
@@ -242,7 +245,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let quota_status = Arc::new(GetQuotaStatus::new(quota_port.clone()));
 
     let account_usage = Arc::new(proxy::application::use_cases::admin::GetAccountUsage::new(
-        account_usage_map,
+        account_usage_registry,
         request_read.clone(),
     ));
 

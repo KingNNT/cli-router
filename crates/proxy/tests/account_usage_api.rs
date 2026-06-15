@@ -119,7 +119,7 @@ async fn account_usage_endpoint_returns_merged_providers() {
         Arc::new(StubUsage { result: None }) as Arc<dyn AccountUsagePort>,
     );
 
-    let uc = Arc::new(GetAccountUsage::new(map, Arc::new(StubRead)));
+    let uc = Arc::new(GetAccountUsage::new(Arc::new(map), Arc::new(StubRead)));
     let app = Router::new()
         .route("/admin/account/usage", get(handler))
         .with_state(uc);
@@ -163,7 +163,7 @@ async fn account_usage_endpoint_returns_error_provider() {
         }) as Arc<dyn AccountUsagePort>,
     );
 
-    let uc = Arc::new(GetAccountUsage::new(map, Arc::new(StubRead)));
+    let uc = Arc::new(GetAccountUsage::new(Arc::new(map), Arc::new(StubRead)));
     let app = Router::new()
         .route("/admin/account/usage", get(handler))
         .with_state(uc);
