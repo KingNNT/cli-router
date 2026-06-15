@@ -275,6 +275,41 @@ mod alias_tests {
     }
 
     #[test]
+    fn day_rows_keeps_glm5_variants_as_separate_columns() {
+        // GLM-5 has no baked-in alias anymore: 5.1, 5.2, 5-turbo, 5v-turbo
+        // must each appear as its own dashboard column (even if they all
+        // resolve to the same pricing row through the resolver).
+        let d = day(2026, 4, 23);
+        let out = aggregate_day_model_rows_by_alias(vec![
+            day_row(d, "zai/glm-5.1", 1000, 0.5),
+            day_row(d, "zai/glm-5.2", 200, 0.1),
+            day_row(d, "zai/glm-5-turbo", 500, 0.25),
+            day_row(d, "zai/glm-5v-turbo", 100, 0.05),
+        ]);
+        assert_eq!(out.len(), 4, "each GLM-5 variant must keep its own column");
+        let m51 = out
+            .iter()
+            .find(|r| r.model.as_str() == "zai/glm-5.1")
+            .unwrap();
+        let m52 = out
+            .iter()
+            .find(|r| r.model.as_str() == "zai/glm-5.2")
+            .unwrap();
+        let turbo = out
+            .iter()
+            .find(|r| r.model.as_str() == "zai/glm-5-turbo")
+            .unwrap();
+        let vturbo = out
+            .iter()
+            .find(|r| r.model.as_str() == "zai/glm-5v-turbo")
+            .unwrap();
+        assert_eq!(m51.tokens.input.value(), 1000);
+        assert_eq!(m52.tokens.input.value(), 200);
+        assert_eq!(turbo.tokens.input.value(), 500);
+        assert_eq!(vturbo.tokens.input.value(), 100);
+    }
+
+    #[test]
     fn day_rows_preserves_date_dimension_for_different_days() {
         let d1 = day(2026, 4, 22);
         let d2 = day(2026, 4, 23);

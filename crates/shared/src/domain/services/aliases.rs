@@ -125,24 +125,6 @@ pub const ALIASES: &[ModelAlias] = &[
         cache_read_per_token: Some(5.0e-8),
         cache_write_per_token: None,
     },
-    // GLM-5 family — LiteLLM doesn't carry rates for these yet, so using
-    // glm-4.6 rates as a placeholder estimate. Adjust if you know the real
-    // Z.AI rates; turbo variants likely run cheaper than the 5.1 flagship.
-    ModelAlias {
-        canonical: "glm5",
-        sources: &[
-            "glm-5.1",
-            "glm-5-turbo",
-            "glm-5v-turbo",
-            "zai/glm-5.1",
-            "zai/glm-5-turbo",
-            "zai/glm-5v-turbo",
-        ],
-        input_per_token: 6.0e-7,
-        output_per_token: 2.2e-6,
-        cache_read_per_token: Some(1.1e-7),
-        cache_write_per_token: None,
-    },
     // === Free / open-weights tiers (zero cost) ===
     ModelAlias {
         canonical: "minimax2.5",
@@ -222,25 +204,36 @@ fn push_unique(keys: &mut Vec<String>, key: &str) {
 }
 
 fn family_fallback(source: &str) -> Option<&'static str> {
-    if is_gpt_51_codex_variant(source) {
+    // Model ids flow through providers with inconsistent casing; match
+    // case-insensitively so `ZAI/GLM-5.1` and `openai/GPT-5.1-CODEX-LATEST`
+    // route the same way as their lowercase forms.
+    let source = source.to_ascii_lowercase();
+    if is_gpt_51_codex_variant(&source) {
         return Some("gpt5.1-codex");
     }
-    if is_gpt_5_codex_variant(source) {
+    if is_gpt_5_codex_variant(&source) {
         return Some("gpt5-codex");
     }
+    // GLM-5 family: each variant stays as its own column in the dashboard
+    // (no `glm5` alias collapse), but the resolver surfaces `zai/glm-5` as
+    // the pricing key so the case-insensitive SQL lookup finds the
+    // upstream LiteLLM row that holds the real rates.
     if matches!(
-        source,
+        source.as_str(),
         "glm-5.1"
+            | "glm-5.2"
             | "glm-5-turbo"
             | "glm-5v-turbo"
             | "zai/glm-5.1"
+            | "zai/glm-5.2"
             | "zai/glm-5-turbo"
             | "zai/glm-5v-turbo"
             | "z-ai/glm-5.1"
+            | "z-ai/glm-5.2"
             | "z-ai/glm-5-turbo"
             | "z-ai/glm-5v-turbo"
     ) {
-        return Some("glm5");
+        return Some("zai/glm-5");
     }
     None
 }
@@ -351,7 +344,7 @@ mod tests {
             vec![
                 "zai/glm-5.1".to_string(),
                 "glm-5.1".to_string(),
-                "glm5".to_string(),
+                "zai/glm-5".to_string(),
             ]
         );
     }
@@ -363,6 +356,92 @@ mod tests {
             vec![
                 "some-provider/unknown-model-latest".to_string(),
                 "unknown-model-latest".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn canonicalize_returns_none_for_glm5_variants() {
+        // The GLM-5 alias is gone — each variant (5.1, 5.2, 5-turbo, 5v-turbo)
+        // is its own column. Pricing comes from the LiteLLM `zai/glm-5` row
+        // via the resolver's family_fallback, not a baked-in alias.
+        for variant in [
+            "glm-5.1",
+            "glm-5.2",
+            "glm-5-turbo",
+            "glm-5v-turbo",
+            "zai/glm-5.1",
+            "zai/glm-5.2",
+            "zai/glm-5-turbo",
+            "zai/glm-5v-turbo",
+        ] {
+            assert_eq!(
+                canonicalize(variant),
+                None,
+                "{variant} must not have a baked-in alias"
+            );
+        }
+    }
+
+    #[test]
+    fn family_fallback_routes_glm5_variants_to_zai_glm_5() {
+        for variant in [
+            "glm-5.1",
+            "glm-5.2",
+            "glm-5-turbo",
+            "glm-5v-turbo",
+            "zai/glm-5.1",
+            "zai/glm-5.2",
+            "zai/glm-5-turbo",
+            "zai/glm-5v-turbo",
+            "z-ai/glm-5.1",
+            "z-ai/glm-5.2",
+            "z-ai/glm-5-turbo",
+            "z-ai/glm-5v-turbo",
+        ] {
+            assert_eq!(
+                family_fallback(variant),
+                Some("zai/glm-5"),
+                "{variant} must fall back to the LiteLLM zai/glm-5 key"
+            );
+        }
+    }
+
+    #[test]
+    fn family_fallback_is_case_insensitive() {
+        // Model ids flow through providers with inconsistent casing; the
+        // fallback must match regardless of input case so the resolver can
+        // find the pricing row. (Note: the resolver strips any `provider/`
+        // prefix before calling family_fallback, so tests here use the bare
+        // model id — same shape the function actually receives.)
+        assert_eq!(family_fallback("ZAI/GLM-5.1"), Some("zai/glm-5"));
+        assert_eq!(family_fallback("Glm-5.2"), Some("zai/glm-5"));
+        assert_eq!(
+            family_fallback("GPT-5.1-CODEX-LATEST"),
+            Some("gpt5.1-codex")
+        );
+        assert_eq!(family_fallback("GPT-5-CODEX-LATEST"), Some("gpt5-codex"));
+    }
+
+    #[test]
+    fn pricing_lookup_keys_includes_zai_glm5_for_glm5_variants() {
+        // Resolver must surface the LiteLLM key `zai/glm-5` as a pricing
+        // candidate for every GLM-5 variant, so the case-insensitive SQL
+        // lookup hits the upstream row.
+        assert_eq!(
+            pricing_lookup_keys("zai/glm-5.1"),
+            vec![
+                "zai/glm-5.1".to_string(),
+                "glm-5.1".to_string(),
+                "zai/glm-5".to_string(),
+            ]
+        );
+        assert_eq!(
+            pricing_lookup_keys("zai/glm-5.2"),
+            vec![
+                "zai/glm-5.2".to_string(),
+                "glm-5.2".to_string(),
+                "zai/glm-5".to_string(),
             ]
         );
     }
