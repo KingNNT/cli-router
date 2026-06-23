@@ -211,9 +211,19 @@ impl AccountUsagePort for AnthropicAccountUsage {
                     }
                     return Some(Ok(stale));
                 }
+                // A 401 here means the OAuth access token is expired/rejected
+                // and the background refresh could not renew it (typically the
+                // refresh token was invalidated). No retry can fix this — the
+                // provider must be re-authenticated, so surface that plainly
+                // instead of a raw HTTP error.
+                let message = if matches!(&e, ureq::Error::Status(401, _)) {
+                    "access token rejected (401) — re-authenticate this provider via OAuth".into()
+                } else {
+                    format!("oauth/usage: {e}")
+                };
                 Some(Err(ProxyError::UpstreamUsage {
                     provider: self.provider_name.clone(),
-                    message: format!("oauth/usage: {e}"),
+                    message,
                 }))
             }
         }
