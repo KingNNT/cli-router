@@ -209,12 +209,11 @@ impl AccountUsagePort for CodexAccountUsage {
                 provider = %self.provider_name,
                 "Codex account probe still failing; re-reading ~/.codex/auth.json and retrying"
             );
-            if let Ok(Some(fresh_token)) = resolve_token(&self.auth) {
-                if fresh_token != token {
+            if let Ok(Some(fresh_token)) = resolve_token(&self.auth)
+                && fresh_token != token {
                     token = fresh_token;
                     outcome = self.probe_once(&token);
                 }
-            }
         }
 
         Some(match outcome {

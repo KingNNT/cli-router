@@ -174,11 +174,10 @@ fn strip_schema_keywords(mut v: Value) -> Value {
         // An object-valued `additionalProperties` like `{"type":"string"}` or
         // `{"type":"object","properties":{...}}` causes a schema rejection.
         // We collapse it to `false`.
-        if let Some(ap) = obj.get("additionalProperties") {
-            if !ap.is_boolean() {
+        if let Some(ap) = obj.get("additionalProperties")
+            && !ap.is_boolean() {
                 obj.insert("additionalProperties".into(), json!(false));
             }
-        }
         // OpenAI strict mode requires every `type: "object"` with
         // `additionalProperties: false` to also have `properties` and `required`.
         // If an object property ends up with `additionalProperties: false` but
@@ -234,11 +233,10 @@ fn fill_missing_tool_responses(messages: &mut Vec<Value>) {
     // Collect all tool_call_ids that already have responses.
     let mut answered_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for msg in messages.iter() {
-        if msg.get("role").and_then(|r| r.as_str()) == Some("tool") {
-            if let Some(id) = msg.get("tool_call_id").and_then(|i| i.as_str()) {
+        if msg.get("role").and_then(|r| r.as_str()) == Some("tool")
+            && let Some(id) = msg.get("tool_call_id").and_then(|i| i.as_str()) {
                 answered_ids.insert(id.to_string());
             }
-        }
     }
 
     // Walk through and inject missing tool responses after each assistant
@@ -357,7 +355,7 @@ fn reorder_tool_responses(messages: &mut Vec<Value>) {
                 && msg
                     .get("tool_calls")
                     .and_then(|tc| tc.as_array())
-                    .map_or(false, |a| !a.is_empty())
+                    .is_some_and(|a| !a.is_empty())
         };
         if !is_assistant_with_calls {
             i += 1;
@@ -389,7 +387,7 @@ fn reorder_tool_responses(messages: &mut Vec<Value>) {
                     && cur
                         .get("tool_call_id")
                         .and_then(|id| id.as_str())
-                        .map_or(false, |tid| call_ids.iter().any(|c| c == tid))
+                        .is_some_and(|tid| call_ids.iter().any(|c| c == tid))
             };
             if is_matching_tool {
                 if j == insert_pos {

@@ -1098,7 +1098,7 @@ mod form_field_tests {
 
     #[test]
     fn minimax_includes_thinking_mode_field() {
-        use super::{AuthInputKind, FormField, ProviderKind, ThinkingModeInput, field_order};
+        use super::{AuthInputKind, FormField, ProviderKind, field_order};
         let order = field_order(AuthInputKind::Passthrough, ProviderKind::Minimax);
         assert!(order.contains(&FormField::ThinkingMode));
         assert!(!order.contains(&FormField::ReasoningEffort));

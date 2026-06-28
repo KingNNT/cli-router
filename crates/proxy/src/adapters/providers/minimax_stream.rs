@@ -52,8 +52,8 @@ fn strip_thinking_value(value: &mut Value) {
         } else {
             continue;
         };
-        if let Some(obj) = choice.get_mut(target_key) {
-            if let Some(map) = obj.as_object_mut() {
+        if let Some(obj) = choice.get_mut(target_key)
+            && let Some(map) = obj.as_object_mut() {
                 map.remove("reasoning_content");
                 map.remove("reasoning_details");
                 if let Some(content) = map.get("content").and_then(|c| c.as_str()) {
@@ -61,7 +61,6 @@ fn strip_thinking_value(value: &mut Value) {
                     map.insert("content".to_string(), Value::String(stripped));
                 }
             }
-        }
     }
 }
 
@@ -85,15 +84,14 @@ fn strip_tags_only_value(value: &mut Value) {
         } else {
             continue;
         };
-        if let Some(obj) = choice.get_mut(target_key) {
-            if let Some(map) = obj.as_object_mut() {
+        if let Some(obj) = choice.get_mut(target_key)
+            && let Some(map) = obj.as_object_mut() {
                 // Only strip tags from content, keep reasoning fields
                 if let Some(content) = map.get("content").and_then(|c| c.as_str()) {
                     let stripped = strip_thinking_tags(content);
                     map.insert("content".to_string(), Value::String(stripped));
                 }
             }
-        }
     }
 }
 
@@ -154,7 +152,7 @@ fn skip_until_end_tag<I: Iterator<Item = char> + Clone>(
     let mut buffer: std::collections::VecDeque<char> =
         std::collections::VecDeque::with_capacity(end_len);
 
-    while let Some(c) = chars.next() {
+    for c in chars.by_ref() {
         buffer.push_back(c);
         if buffer.len() > end_len {
             // Characters that don't form the end tag are discarded (they're thinking content)
@@ -367,7 +365,7 @@ mod tests {
         let results: Vec<_> = rt.block_on(async { filtered.collect::<Vec<_>>().await });
 
         assert_eq!(results.len(), 1);
-        let data_str = String::from_utf8_lossy(&results[0].as_ref().unwrap());
+        let data_str = String::from_utf8_lossy(results[0].as_ref().unwrap());
         assert!(!data_str.contains("reasoning_content"));
         assert!(!data_str.contains("reasoning_details"));
         assert!(data_str.contains("\"content\":\"Hi\""));
@@ -384,7 +382,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let results: Vec<_> = rt.block_on(async { filtered.collect::<Vec<_>>().await });
 
-        let data_str = String::from_utf8_lossy(&results[0].as_ref().unwrap());
+        let data_str = String::from_utf8_lossy(results[0].as_ref().unwrap());
         assert!(data_str.contains("[DONE]"));
     }
 
@@ -401,7 +399,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let results: Vec<_> = rt.block_on(async { filtered.collect::<Vec<_>>().await });
 
-        let data_str = String::from_utf8_lossy(&results[0].as_ref().unwrap());
+        let data_str = String::from_utf8_lossy(results[0].as_ref().unwrap());
         assert!(data_str.contains("real text"));
         assert!(!data_str.contains("hmm"));
     }
@@ -446,7 +444,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let results: Vec<_> = rt.block_on(async { filtered.collect::<Vec<_>>().await });
 
-        let data_str = String::from_utf8_lossy(&results[0].as_ref().unwrap());
+        let data_str = String::from_utf8_lossy(results[0].as_ref().unwrap());
         assert!(data_str.contains("\"content\":\"Hi\""));
         assert!(data_str.contains("\"reasoning_content\":\"thinking\""));
     }
