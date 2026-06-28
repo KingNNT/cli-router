@@ -124,6 +124,8 @@ pub struct ProviderPayload {
     pub reasoning_effort: Option<String>,
     #[serde(default)]
     pub thinking_mode: Option<String>,
+    #[serde(default)]
+    pub max_concurrent: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, utoipa::ToSchema)]
@@ -580,6 +582,7 @@ mod config_payload_toml_tests {
                 openai_base_url: None,
                 reasoning_effort: Some("high".into()),
                 thinking_mode: None,
+                max_concurrent: None,
             }],
             routing: vec![],
             quota: vec![QuotaPayload {

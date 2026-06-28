@@ -42,9 +42,12 @@ struct Route {
     pool: Vec<PoolEntry>,
 }
 
-/// Default max concurrent requests per provider. Prevents flooding a single
-/// upstream when multiple opencode instances all send requests at once.
-const DEFAULT_MAX_CONCURRENT: usize = 10;
+/// Default max concurrent requests per provider when a provider does not set
+/// its own `max_concurrent`. High enough to let bursts from several opencode
+/// instances flow without churning, while still capping a single misbehaving
+/// upstream. Override per-provider via config when an upstream needs a tighter
+/// or looser bound.
+const DEFAULT_MAX_CONCURRENT: usize = 64;
 
 struct PoolEntry {
     provider: Arc<dyn Provider>,
@@ -58,16 +61,6 @@ struct PoolEntry {
 }
 
 impl PoolEntry {
-    fn new(provider: Arc<dyn Provider>, id: String) -> Self {
-        Self {
-            provider,
-            id,
-            cooldown_until: AtomicU64::new(0),
-            semaphore: Arc::new(Semaphore::new(DEFAULT_MAX_CONCURRENT)),
-        }
-    }
-
-    #[allow(dead_code)]
     fn with_concurrency(provider: Arc<dyn Provider>, id: String, max: usize) -> Self {
         Self {
             provider,
@@ -179,6 +172,10 @@ pub struct RoutingProviderBuilder {
     leaves: std::collections::HashMap<String, Arc<dyn Provider>>,
     affinity: crate::config::AffinityConfig,
     quota: Arc<dyn QuotaPort>,
+    /// Per-provider concurrency overrides, keyed by provider name. Providers
+    /// absent from the map fall back to `DEFAULT_MAX_CONCURRENT`. Must be set
+    /// via `.concurrency(...)` *before* any `.rule(...)` call to take effect.
+    concurrency: std::collections::HashMap<String, usize>,
 }
 
 impl Default for RoutingProviderBuilder {
@@ -188,6 +185,7 @@ impl Default for RoutingProviderBuilder {
             leaves: std::collections::HashMap::new(),
             affinity: Default::default(),
             quota: Arc::new(crate::adapters::quota::NoopQuota),
+            concurrency: std::collections::HashMap::new(),
         }
     }
 }
@@ -209,6 +207,23 @@ impl RoutingProviderBuilder {
         self
     }
 
+    /// Set per-provider concurrency overrides (provider name → max in-flight).
+    /// Call this *before* `.rule(...)` so each pool entry picks up its limit.
+    pub fn concurrency(mut self, map: std::collections::HashMap<String, usize>) -> Self {
+        self.concurrency = map;
+        self
+    }
+
+    /// Resolve the configured concurrency for `name`, falling back to the
+    /// routing default. A configured `0` is treated as the default (a zero-permit
+    /// semaphore would deadlock the provider).
+    fn concurrency_for(&self, name: &str) -> usize {
+        match self.concurrency.get(name).copied() {
+            Some(n) if n > 0 => n,
+            _ => DEFAULT_MAX_CONCURRENT,
+        }
+    }
+
     pub fn rule(
         mut self,
         pattern: &str,
@@ -218,10 +233,17 @@ impl RoutingProviderBuilder {
     ) -> Result<Self, globset::Error> {
         let matcher = Glob::new(pattern)?.compile_matcher();
         let mut pool = Vec::with_capacity(1 + fallback.len());
-        pool.push(PoolEntry::new(primary.clone(), primary.name().to_string()));
+        let primary_id = primary.name().to_string();
+        let primary_max = self.concurrency_for(&primary_id);
+        pool.push(PoolEntry::with_concurrency(
+            primary.clone(),
+            primary_id,
+            primary_max,
+        ));
         for fb in fallback {
             let id = fb.name().to_string();
-            pool.push(PoolEntry::new(fb, id));
+            let max = self.concurrency_for(&id);
+            pool.push(PoolEntry::with_concurrency(fb, id, max));
         }
         self.rules.push(Route {
             matcher,
@@ -639,9 +661,7 @@ impl RoutingProvider {
                     if i + 1 == total {
                         return Err(ProxyError::UpstreamRateLimited {
                             retry_after_secs: 5,
-                            message: format!(
-                                "provider '{attempt_name}' concurrency limit reached ({DEFAULT_MAX_CONCURRENT} in-flight)"
-                            ),
+                            message: format!("provider '{attempt_name}' concurrency limit reached"),
                         });
                     }
                     continue;
@@ -898,9 +918,7 @@ impl RoutingProvider {
                     if i + 1 == total {
                         return Err(ProxyError::UpstreamRateLimited {
                             retry_after_secs: 5,
-                            message: format!(
-                                "provider '{attempt_name}' concurrency limit reached ({DEFAULT_MAX_CONCURRENT} in-flight)"
-                            ),
+                            message: format!("provider '{attempt_name}' concurrency limit reached"),
                         });
                     }
                     continue;
@@ -1209,8 +1227,36 @@ mod tests {
     }
 
     #[test]
+    fn pool_entry_defaults_to_default_concurrency() {
+        let p = RoutingProvider::builder()
+            .rule("*", RoutingStrategy::Failover, dummy(), vec![])
+            .unwrap()
+            .build();
+        let route = p.select("anything").unwrap();
+        assert_eq!(
+            route.pool[0].semaphore.available_permits(),
+            DEFAULT_MAX_CONCURRENT
+        );
+    }
+
+    #[test]
+    fn builder_applies_per_provider_concurrency() {
+        let mut map = std::collections::HashMap::new();
+        // dummy() is an AnthropicProvider whose name() is "anthropic".
+        map.insert("anthropic".to_string(), 3usize);
+        let p = RoutingProvider::builder()
+            .concurrency(map)
+            .rule("*", RoutingStrategy::Failover, dummy(), vec![])
+            .unwrap()
+            .build();
+        let route = p.select("anything").unwrap();
+        assert_eq!(route.pool[0].semaphore.available_permits(), 3);
+    }
+
+    #[test]
     fn pool_entry_cooldown_lifecycle() {
-        let entry = PoolEntry::new(dummy(), "test-a".to_string());
+        let entry =
+            PoolEntry::with_concurrency(dummy(), "test-a".to_string(), DEFAULT_MAX_CONCURRENT);
         assert!(!entry.is_cooling_down());
 
         // Set cooldown for 5 seconds.

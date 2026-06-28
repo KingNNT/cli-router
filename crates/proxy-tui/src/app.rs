@@ -622,6 +622,9 @@ pub struct ProviderFormModal {
     pub thinking_mode: ThinkingModeInput,
     pub auth_kind: AuthInputKind,
     pub auth_value: String,
+    /// Preserved across edits (not yet editable in the form UI). Carries the
+    /// provider's per-provider concurrency cap so a TUI edit doesn't reset it.
+    pub max_concurrent: Option<usize>,
     pub state: FormState,
     /// Inline validation error rendered red at top of modal. Cleared on
     /// any field edit.
@@ -641,6 +644,7 @@ impl ProviderFormModal {
             thinking_mode: ThinkingModeInput::Unset,
             auth_kind: AuthInputKind::Passthrough,
             auth_value: String::new(),
+            max_concurrent: None,
             state: FormState::Editing,
             error: None,
         }
@@ -666,6 +670,7 @@ impl ProviderFormModal {
             thinking_mode: ThinkingModeInput::from_option(p.thinking_mode.as_deref()),
             auth_kind,
             auth_value,
+            max_concurrent: p.max_concurrent,
             state: FormState::Editing,
             error: None,
         }

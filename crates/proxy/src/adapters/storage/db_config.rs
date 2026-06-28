@@ -107,8 +107,8 @@ impl ConfigRepository for DbConfigRepository {
             let mut stmt = tx
                 .prepare(
                     "INSERT INTO providers (name, kind, base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
-                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 )
                 .map_err(db_err)?;
             for p in &config.providers {
@@ -130,6 +130,7 @@ impl ConfigRepository for DbConfigRepository {
                     at,
                     rt,
                     exp,
+                    p.max_concurrent.map(|v| v as i64),
                 ])
                 .map_err(db_err)?;
             }
@@ -199,7 +200,8 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
     let mut stmt = conn
         .prepare(
             "SELECT name, kind, base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
-                    auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms
+                    auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms,
+                    max_concurrent
              FROM providers ORDER BY id",
         )
         .map_err(db_err)?;
@@ -228,6 +230,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
                     row.get(10)?,
                     row.get(11)?,
                 ),
+                max_concurrent: row.get::<_, Option<i64>>(12)?.map(|v| v.max(0) as usize),
             })
         })
         .map_err(db_err)?;
@@ -458,6 +461,7 @@ mod tests {
             openai_base_url: Some("https://example.com/v1".into()),
             reasoning_effort: Some("high".into()),
             thinking_mode: ThinkingMode::SplitOnly,
+            max_concurrent: None,
         });
         cfg.routing.push(RoutingRule {
             match_spec: MatchSpec {
@@ -547,6 +551,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
+                max_concurrent: None,
             });
             repo.save(&cfg).unwrap();
             let loaded = repo.load().unwrap();

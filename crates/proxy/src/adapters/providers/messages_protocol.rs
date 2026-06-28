@@ -172,7 +172,7 @@ pub(super) async fn forward(
         auth,
         path,
         headers,
-        &body,
+        body.clone(),
         streaming,
         provider_id,
     )
@@ -199,7 +199,7 @@ pub(super) async fn forward(
                     &refreshed,
                     path,
                     headers,
-                    &body,
+                    body,
                     streaming,
                     provider_id,
                 )
@@ -241,7 +241,7 @@ async fn send_request(
     auth: &AuthHeader,
     path: &str,
     headers: &HeaderMap,
-    body: &[u8],
+    body: Bytes,
     streaming: bool,
     provider_id: &str,
 ) -> Result<UpstreamResponse, ProxyError> {
@@ -254,7 +254,8 @@ async fn send_request(
         body = %body_preview,
         "sending request to upstream"
     );
-    let mut req = http.post(&url).body(body.to_vec());
+    // `body` is `Bytes`; moving it into reqwest is zero-copy (no `to_vec`).
+    let mut req = http.post(&url).body(body);
     let strip_auth = !matches!(auth, AuthHeader::Passthrough);
     for (k, v) in headers {
         if HOP_BY_HOP.contains(&k.as_str()) {

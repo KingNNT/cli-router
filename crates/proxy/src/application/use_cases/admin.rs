@@ -705,6 +705,7 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                     crate::config::ThinkingMode::SplitOnly => "split_only".to_string(),
                     crate::config::ThinkingMode::StripAll => "strip_all".to_string(),
                 }),
+                max_concurrent: p.max_concurrent,
             })
             .collect(),
         routing: c
@@ -791,6 +792,7 @@ fn payload_to_config(
                 openai_base_url: pp.openai_base_url,
                 reasoning_effort,
                 thinking_mode,
+                max_concurrent: pp.max_concurrent,
             })
         })
         .collect::<Result<Vec<_>, ProxyError>>()?;
@@ -1243,6 +1245,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
+                max_concurrent: None,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -1280,6 +1283,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: Some("high".into()),
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
+                max_concurrent: None,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -1317,6 +1321,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: Some("extreme".into()),
                 thinking_mode: None,
+                max_concurrent: None,
             }],
             routing: vec![],
             quota: vec![],
@@ -1352,6 +1357,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::StripAll,
+                max_concurrent: None,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -1389,6 +1395,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: Some("garbage".into()),
+                max_concurrent: None,
             }],
             routing: vec![],
             quota: vec![],
@@ -1441,6 +1448,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: None,
+                max_concurrent: None,
             }],
             routing: vec![],
             quota: vec![],
