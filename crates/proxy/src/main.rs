@@ -8,7 +8,7 @@ use proxy::adapters::oauth::openai::OAuthSessionStore as OpenAiOAuthSessionStore
 use proxy::adapters::providers::{LiveProvider, build_leaves, build_routing_provider};
 use proxy::adapters::quota::InMemoryQuota;
 use proxy::adapters::storage::db_config::DbConfigRepository;
-use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
+use proxy::adapters::storage::{AsyncRequestLog, SqliteRequestLogRepository, ensure_current};
 use proxy::application::ports::{
     ConfigRepository, Provider, QuotaPort, RequestLogPort, RequestLogReadPort,
 };
@@ -98,7 +98,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let request_repo = Arc::new(SqliteRequestLogRepository::new(proxy_conn));
-    let request_log: Arc<dyn RequestLogPort> = request_repo.clone();
+    // Hot-path writes go through a bounded queue drained by a single background
+    // task, so request handlers never block on the SQLite write lock. Reads and
+    // the stale-row sweeper keep using the synchronous repo directly (off the
+    // request path). 16k is generous headroom; a full queue drops log events
+    // rather than slowing requests.
+    let request_log_sync: Arc<dyn RequestLogPort> = request_repo.clone();
+    let request_log: Arc<dyn RequestLogPort> =
+        Arc::new(AsyncRequestLog::spawn(request_log_sync, 16_384));
     let request_read: Arc<dyn RequestLogReadPort> = request_repo;
 
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);

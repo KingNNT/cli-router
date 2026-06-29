@@ -428,6 +428,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: proxy::config::ThinkingMode::SplitOnly,
+            max_concurrent: None,
         }],
         routing: vec![RoutingRule {
             match_spec: MatchSpec {

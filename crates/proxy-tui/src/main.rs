@@ -1129,6 +1129,8 @@ fn submit_non_oauth_save(
         openai_base_url: Some(&m.openai_base_url),
         reasoning_effort: m.reasoning_effort.as_option(),
         thinking_mode: m.thinking_mode.as_option(),
+
+        max_concurrent: m.max_concurrent,
         auth: &auth,
         editing_index,
         original_name,
@@ -1265,6 +1267,8 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
             openai_base_url: Some(&m.openai_base_url),
             reasoning_effort: m.reasoning_effort.as_option(),
             thinking_mode: m.thinking_mode.as_option(),
+
+            max_concurrent: m.max_concurrent,
             auth: &placeholder_auth,
             editing_index: None,
             original_name: None,
@@ -1705,6 +1709,8 @@ fn submit_oauth_edit(
         openai_base_url: Some(&m.openai_base_url),
         reasoning_effort: m.reasoning_effort.as_option(),
         thinking_mode: m.thinking_mode.as_option(),
+
+        max_concurrent: m.max_concurrent,
         auth: &original_auth,
         editing_index: Some(original_index),
         original_name: Some(&original_name),

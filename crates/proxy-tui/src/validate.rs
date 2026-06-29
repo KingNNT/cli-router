@@ -44,6 +44,8 @@ pub struct FormInputs<'a> {
     pub openai_base_url: Option<&'a str>,
     pub reasoning_effort: Option<&'a str>,
     pub thinking_mode: Option<&'a str>,
+    /// Preserved per-provider concurrency cap (not yet editable in the form).
+    pub max_concurrent: Option<usize>,
     pub auth: &'a AuthPayload,
     /// `None` for Add, `Some(original_index)` for Edit.
     pub editing_index: Option<usize>,
@@ -125,6 +127,7 @@ pub fn validate_provider_form(
         } else {
             None
         },
+        max_concurrent: input.max_concurrent,
     })
 }
 
@@ -185,6 +188,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: None,
+            max_concurrent: None,
         }
     }
 
@@ -208,6 +212,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: None,
+            max_concurrent: None,
             auth,
             editing_index: None,
             original_name: None,
@@ -311,6 +316,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: Some("high"),
             thinking_mode: None,
+            max_concurrent: None,
             auth: &auth,
             editing_index: None,
             original_name: None,
@@ -331,6 +337,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: Some("high"),
             thinking_mode: None,
+            max_concurrent: None,
             auth: &auth,
             editing_index: None,
             original_name: None,
@@ -351,6 +358,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: Some("high"),
             thinking_mode: None,
+            max_concurrent: None,
             auth: &auth,
             editing_index: None,
             original_name: None,

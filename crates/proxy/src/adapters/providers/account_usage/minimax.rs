@@ -18,8 +18,10 @@ const USAGE_PATH: &str = "/v1/token_plan/remains";
 const SUBSCRIPTION_PATH: &str = "/v1/api/openplatform/charge/combo/cycle_audio_resource_package";
 
 /// Derive the usage host from the provider's configured base_url.
+///
 /// - `api.minimaxi.com` (CN) → `https://www.minimaxi.com`
 /// - `api.minimax.io` (international) → `https://api.minimax.io`
+///
 /// Falls back to CN if no base_url is set.
 fn derive_usage_host(base_url: Option<&str>) -> String {
     let raw = base_url.unwrap_or("https://api.minimaxi.com/anthropic");

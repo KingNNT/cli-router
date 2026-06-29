@@ -141,7 +141,15 @@ pub fn build_routing_provider(
     // Sort by priority (lower = higher priority = checked first).
     indexed.sort_by_key(|(pri, _)| *pri);
 
-    let mut builder = RoutingProvider::builder();
+    // Per-provider concurrency overrides, keyed by provider name. Set before
+    // any rule() so each pool entry picks up its configured limit.
+    let concurrency: HashMap<String, usize> = cfg
+        .providers
+        .iter()
+        .filter_map(|p| p.max_concurrent.map(|n| (p.name.clone(), n)))
+        .collect();
+
+    let mut builder = RoutingProvider::builder().concurrency(concurrency);
     for (_pri, rule) in indexed {
         let pattern = rule.match_spec.model.as_deref().unwrap_or("*");
         let primary = leaves
@@ -330,6 +338,7 @@ mod tests {
             openai_base_url: openai.map(str::to_string),
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
+            max_concurrent: None,
         }
     }
 
@@ -370,6 +379,7 @@ mod tests {
                 },
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
+                max_concurrent: None,
             }],
             ..Config {
                 port: 0,
@@ -422,6 +432,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
+            max_concurrent: None,
         });
 
         // The registry must surface the newly added provider without a restart.
@@ -447,6 +458,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
+            max_concurrent: None,
         });
         let live = LiveAccountUsage::new(Arc::new(std::sync::RwLock::new(config)));
 

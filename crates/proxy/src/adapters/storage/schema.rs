@@ -8,6 +8,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (3, MIGRATION_V3),
     (4, MIGRATION_V4),
     (5, MIGRATION_V5),
+    (6, MIGRATION_V6),
 ];
 
 const MIGRATION_V1: &str = r#"
@@ -105,6 +106,10 @@ ALTER TABLE providers ADD COLUMN reasoning_effort TEXT;
 
 const MIGRATION_V5: &str = r#"
 ALTER TABLE providers ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'split_only';
+"#;
+
+const MIGRATION_V6: &str = r#"
+ALTER TABLE providers ADD COLUMN max_concurrent INTEGER;
 "#;
 
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {

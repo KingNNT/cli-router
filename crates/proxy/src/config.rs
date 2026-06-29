@@ -38,6 +38,11 @@ pub struct ProviderConfig {
     pub reasoning_effort: Option<String>,
     #[serde(default)]
     pub thinking_mode: ThinkingMode,
+    /// Max concurrent in-flight requests to this provider. `None` falls back to
+    /// the routing default. Raise it to let a single fast provider serve more
+    /// simultaneous requests; lower it to stay under a strict rate limit.
+    #[serde(default)]
+    pub max_concurrent: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -423,6 +428,27 @@ thinking_mode = "strip_all"
     }
 
     #[test]
+    fn provider_config_deserializes_max_concurrent() {
+        let toml = r#"
+name = "zai"
+kind = "zai"
+max_concurrent = 64
+"#;
+        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        assert_eq!(provider.max_concurrent, Some(64));
+    }
+
+    #[test]
+    fn provider_config_defaults_max_concurrent_to_none() {
+        let toml = r#"
+name = "zai"
+kind = "zai"
+"#;
+        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        assert_eq!(provider.max_concurrent, None);
+    }
+
+    #[test]
     fn validate_rejects_empty_providers() {
         let cfg = Config {
             port: 8787,
@@ -450,6 +476,7 @@ thinking_mode = "strip_all"
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
+                max_concurrent: None,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -482,6 +509,7 @@ thinking_mode = "strip_all"
                     openai_base_url: None,
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
+                    max_concurrent: None,
                 },
                 ProviderConfig {
                     name: "x".into(),
@@ -491,6 +519,7 @@ thinking_mode = "strip_all"
                     openai_base_url: None,
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
+                    max_concurrent: None,
                 },
             ],
             routing: vec![RoutingRule {
@@ -522,6 +551,7 @@ thinking_mode = "strip_all"
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
+                max_concurrent: None,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {

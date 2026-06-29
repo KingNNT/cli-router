@@ -1750,6 +1750,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: None,
+                max_concurrent: None,
             },
             ProviderPayload {
                 name: "openai".into(),
@@ -1761,6 +1762,7 @@ mod tests {
                 openai_base_url: Some("https://api.openai.com/v1".into()),
                 reasoning_effort: None,
                 thinking_mode: None,
+                max_concurrent: None,
             },
         ];
         let mut state = config_state(config);
