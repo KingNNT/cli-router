@@ -2,16 +2,11 @@ use std::sync::Arc;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-use crate::adapters::presenters::{
-    present_dashboard, present_models, present_pricing, present_projects,
-};
+use crate::adapters::presenters::{present_dashboard, present_models, present_pricing};
 use crate::application::dto::{
-    Filter, GetDashboardInput, GetModelsBreakdownInput, GetPricingInput, GetProjectsBreakdownInput,
-    SyncPricingInput,
+    Filter, GetDashboardInput, GetModelsBreakdownInput, GetPricingInput, SyncPricingInput,
 };
-use crate::application::use_cases::{
-    GetDashboard, GetModelsBreakdown, GetPricing, GetProjectsBreakdown, SyncPricing,
-};
+use crate::application::use_cases::{GetDashboard, GetModelsBreakdown, GetPricing, SyncPricing};
 use crate::tui::app_state::FilterWindow;
 use crate::tui::{AppState, Focus, View};
 use shared::adapters::AdapterError;
@@ -21,7 +16,6 @@ use shared::domain::value_objects::DateRange;
 pub struct TuiController {
     pub get_dashboard: Arc<GetDashboard>,
     pub get_models_breakdown: Arc<GetModelsBreakdown>,
-    pub get_projects_breakdown: Arc<GetProjectsBreakdown>,
     pub get_pricing: Arc<GetPricing>,
     pub sync_pricing: Arc<SyncPricing>,
     clock: Arc<dyn Clock>,
@@ -31,7 +25,6 @@ impl TuiController {
     pub fn new(
         get_dashboard: Arc<GetDashboard>,
         get_models_breakdown: Arc<GetModelsBreakdown>,
-        get_projects_breakdown: Arc<GetProjectsBreakdown>,
         get_pricing: Arc<GetPricing>,
         sync_pricing: Arc<SyncPricing>,
         clock: Arc<dyn Clock>,
@@ -39,7 +32,6 @@ impl TuiController {
         Self {
             get_dashboard,
             get_models_breakdown,
-            get_projects_breakdown,
             get_pricing,
             sync_pricing,
             clock,
@@ -156,7 +148,6 @@ impl TuiController {
                         state.dashboard_offset = 0;
                         state.dashboard_col_offset = 0;
                         state.models_offset = 0;
-                        state.projects_offset = 0;
                         state.pricing_offset = 0;
                         state.pricing_query = String::new();
                         state.is_searching = false;
@@ -402,15 +393,6 @@ impl TuiController {
                     .map_err(|e| AdapterError::DataMapping(e.to_string()))?;
                 state.models_vm = Some(present_models(&out));
             }
-            View::Projects if state.projects_vm.is_none() => {
-                let out = self
-                    .get_projects_breakdown
-                    .execute(GetProjectsBreakdownInput {
-                        filter: Some(filter),
-                    })
-                    .map_err(|e| AdapterError::DataMapping(e.to_string()))?;
-                state.projects_vm = Some(present_projects(&out));
-            }
             View::Pricing if state.pricing_vm.is_none() => {
                 let out = self
                     .get_pricing
@@ -459,12 +441,11 @@ mod tests {
             pricing_repo_dyn.clone(),
             clock.clone(),
         ));
-        let gp = Arc::new(GetProjectsBreakdown::new(usage_dyn, clock.clone()));
         let get_pricing = Arc::new(GetPricing::new(pricing_repo_dyn.clone()));
         let controller_clock = clock.clone();
         let sync = Arc::new(SyncPricing::new(source_dyn, pricing_repo_dyn, clock));
         (
-            TuiController::new(gd, gm, gp, get_pricing, sync, controller_clock),
+            TuiController::new(gd, gm, get_pricing, sync, controller_clock),
             pricing_repo,
         )
     }
@@ -519,7 +500,7 @@ mod tests {
         let (controller, repo) = ctl_with_source_rows(vec![]);
         repo.upsert_many(&[pricing_row("opus")]).unwrap();
         let mut state = AppState::new();
-        state.sidebar_selected = 3;
+        state.sidebar_selected = 2;
         state.view = View::Pricing;
         controller.warmup(&mut state).unwrap();
         let vm = state.pricing_vm.as_ref().unwrap();
@@ -540,7 +521,7 @@ mod tests {
     fn pgdn_advances_pricing_offset_when_content_focused() {
         let (controller, _) = ctl_with_source_rows(vec![]);
         let mut state = AppState::new();
-        state.sidebar_selected = 3;
+        state.sidebar_selected = 2;
         state.view = View::Pricing;
         state.focus = Focus::Content;
         assert_eq!(state.pricing_offset, 0);
@@ -553,7 +534,7 @@ mod tests {
     fn pgdn_does_nothing_when_sidebar_focused() {
         let (controller, _) = ctl_with_source_rows(vec![]);
         let mut state = AppState::new();
-        state.sidebar_selected = 3;
+        state.sidebar_selected = 2;
         state.view = View::Pricing;
         // Default focus is Sidebar
         assert_eq!(state.focus, Focus::Sidebar);
@@ -567,7 +548,7 @@ mod tests {
     fn pgup_decreases_offset_saturating_at_zero() {
         let (controller, _) = ctl_with_source_rows(vec![]);
         let mut state = AppState::new();
-        state.sidebar_selected = 3;
+        state.sidebar_selected = 2;
         state.view = View::Pricing;
         state.focus = Focus::Content;
         state.pricing_offset = 10;
@@ -584,7 +565,7 @@ mod tests {
     fn home_resets_offset_to_zero() {
         let (controller, _) = ctl_with_source_rows(vec![]);
         let mut state = AppState::new();
-        state.sidebar_selected = 3;
+        state.sidebar_selected = 2;
         state.view = View::Pricing;
         state.focus = Focus::Content;
         state.pricing_offset = 100;
@@ -597,7 +578,7 @@ mod tests {
     fn end_sets_offset_to_usize_max() {
         let (controller, _) = ctl_with_source_rows(vec![]);
         let mut state = AppState::new();
-        state.sidebar_selected = 3;
+        state.sidebar_selected = 2;
         state.view = View::Pricing;
         state.focus = Focus::Content;
         let key = KeyEvent::new(KeyCode::End, KeyModifiers::NONE);
@@ -610,7 +591,7 @@ mod tests {
         let (controller, _) = ctl_with_source_rows(vec![]);
         let mut state = AppState::new();
         // Navigate to Pricing (index 3)
-        state.sidebar_selected = 3;
+        state.sidebar_selected = 2;
         state.view = View::Pricing;
         state.pricing_offset = 50;
         state.dashboard_offset = 10;
@@ -686,8 +667,7 @@ mod tests {
             state.sidebar_selected = match view {
                 View::Dashboard => 0,
                 View::Models => 1,
-                View::Projects => 2,
-                View::Pricing => 3,
+                View::Pricing => 2,
             };
             state.focus = Focus::Content;
             let key = KeyEvent::new(*keycode, KeyModifiers::NONE);
@@ -890,8 +870,8 @@ mod tests {
         use ratatui::layout::Rect;
         let (controller, _) = ctl_with_source_rows(vec![]);
         let mut state = AppState::new();
-        // Simulate a previously-rendered sidebar: 4 rows starting at (0, 0).
-        state.hit_regions.sidebar_items = (0..4)
+        // Simulate a previously-rendered sidebar: 3 rows starting at (0, 0).
+        state.hit_regions.sidebar_items = (0..3)
             .map(|i| {
                 Hit(Rect {
                     x: 0,
@@ -902,7 +882,7 @@ mod tests {
             })
             .collect();
 
-        // Click on row 2 → Projects.
+        // Click on row 2 → Pricing.
         let click = MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 5,
@@ -911,7 +891,7 @@ mod tests {
         };
         controller.handle_mouse(click, &mut state).unwrap();
         assert_eq!(state.sidebar_selected, 2);
-        assert_eq!(state.view, View::Projects);
+        assert_eq!(state.view, View::Pricing);
         assert_eq!(state.focus, Focus::Content);
     }
 
@@ -1061,7 +1041,7 @@ mod tests {
 
     fn pricing_state_content() -> AppState {
         let mut state = AppState::new();
-        state.sidebar_selected = 3;
+        state.sidebar_selected = 2;
         state.view = View::Pricing;
         state.focus = Focus::Content;
         state
@@ -1207,7 +1187,7 @@ mod tests {
         let (controller, _) = ctl_with_source_rows(vec![]);
         let mut state = AppState::new();
         // Navigate to Pricing view from Sidebar
-        state.sidebar_selected = 3;
+        state.sidebar_selected = 2;
         state.view = View::Pricing;
         state.pricing_query = "opus".to_string();
         state.is_searching = true;

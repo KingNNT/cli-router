@@ -3,7 +3,6 @@ pub mod help;
 pub mod layout;
 pub mod models;
 pub mod pricing;
-pub mod projects;
 pub mod sidebar;
 pub mod status_bar;
 
@@ -82,11 +81,6 @@ fn dispatch_view(f: &mut Frame, state: &AppState, area: Rect, regions: &mut HitR
         View::Models => {
             if let Some(vm) = &state.models_vm {
                 models::draw(f, vm, area, state.models_offset);
-            }
-        }
-        View::Projects => {
-            if let Some(vm) = &state.projects_vm {
-                projects::draw(f, vm, area, state.projects_offset);
             }
         }
         View::Pricing => {
