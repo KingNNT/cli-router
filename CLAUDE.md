@@ -56,7 +56,7 @@ crates/
 ├── analysis/            # APP 1 — Ratatui TUI binary `analysis`
 │   └── src/
 │       ├── application/    UsageRepository + PricingSource ports,
-│       │                   GetDashboard / GetModelsBreakdown / GetProjectsBreakdown /
+│       │                   GetDashboard / GetModelsBreakdown /
 │       │                   GetPricing / SyncPricing use cases, dtos, FakeUsageRepository
 │       ├── adapters/       SqliteUsageRepository, ClaudeCodeUsageRepository,
 │       │                   DispatchingUsageRepository, LiteLlmPricingSource,

@@ -6,7 +6,7 @@ The crate is organised as four concentric rings. Source dependencies point stric
 
 - No imports from other rings.
 - May depend on `std` and `chrono` only.
-- Entities (`UsageRecord`, `DailyUsage`, `ModelUsage`, `ProjectUsage`, `Overview`, `DayModelRow`) are plain data. Value objects (`Cost`, `TokenCount`, `TokenBreakdown`, `DateRange`, `ModelId`, `ProjectPath`) enforce invariants via constructors.
+- Entities (`UsageRecord`, `DailyUsage`, `ModelUsage`, `Overview`, `DayModelRow`) are plain data. Value objects (`Cost`, `TokenCount`, `TokenBreakdown`, `DateRange`, `ModelId`, `ProjectPath`) enforce invariants via constructors.
 - Services (`aggregation`, `budget`, `forecast`, `aliases`) are pure functions or compile-time tables over entities.
 - Const tables encoding business rules are fine (e.g. `services::aliases::ALIASES`). They're not infrastructure — they're a compile-time declaration of domain knowledge. Tests exercise them via `canonicalize` / `canonical_pricing` helpers.
 
