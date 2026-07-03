@@ -8,10 +8,8 @@ use crate::application::dto::Filter;
 use crate::application::ports::UsageRepository;
 use shared::adapters::AdapterError;
 use shared::application::errors::ApplicationError;
-use shared::domain::entities::{DayModelRow, ModelUsage, Overview, ProjectUsage};
-use shared::domain::value_objects::{
-    Cost, DateRange, ModelId, ProjectPath, TokenBreakdown, TokenCount,
-};
+use shared::domain::entities::{DayModelRow, ModelUsage, Overview};
+use shared::domain::value_objects::{Cost, DateRange, ModelId, TokenBreakdown, TokenCount};
 
 pub struct SqliteUsageRepository {
     conn: Arc<Mutex<Connection>>,
@@ -219,62 +217,6 @@ impl UsageRepository for SqliteUsageRepository {
         Ok(out)
     }
 
-    fn by_project(&self, filter: &Filter) -> Result<Vec<ProjectUsage>, ApplicationError> {
-        let WhereClause {
-            sql: where_sql,
-            params,
-        } = query_builder::build(filter);
-        let p_refs = query_builder::param_refs(&params);
-
-        let sql = format!(
-            "SELECT \
-                s.directory, \
-                COUNT(*), \
-                COALESCE(SUM(json_extract(m.data, '$.tokens.input')), 0), \
-                COALESCE(SUM(json_extract(m.data, '$.tokens.output')), 0), \
-                COALESCE(SUM(json_extract(m.data, '$.tokens.reasoning')), 0), \
-                COALESCE(SUM(json_extract(m.data, '$.tokens.cache.read')), 0), \
-                COALESCE(SUM(json_extract(m.data, '$.tokens.cache.write')), 0), \
-                COALESCE(SUM(json_extract(m.data, '$.cost')), 0.0) \
-            FROM message m JOIN session s ON m.session_id = s.id \
-            {} \
-            GROUP BY s.directory \
-            ORDER BY COALESCE(SUM(json_extract(m.data, '$.cost')), 0.0) DESC",
-            where_sql
-        );
-
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(&sql).map_err(AdapterError::from)?;
-        let iter = stmt
-            .query_map(p_refs.as_slice(), |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, i64>(2)?,
-                    r.get::<_, i64>(3)?,
-                    r.get::<_, i64>(4)?,
-                    r.get::<_, i64>(5)?,
-                    r.get::<_, i64>(6)?,
-                    r.get::<_, f64>(7)?,
-                ))
-            })
-            .map_err(AdapterError::from)?;
-
-        let mut out = Vec::new();
-        for row in iter {
-            let (project_str, count, input, output, reasoning, cache_read, cache_write, cost) =
-                row.map_err(AdapterError::from)?;
-            let project = ProjectPath::new(project_str)
-                .map_err(|e| ApplicationError::from(AdapterError::from(e)))?;
-            out.push(ProjectUsage {
-                project,
-                message_count: count.max(0) as u64,
-                tokens: parse_tokens(input, output, reasoning, cache_read, cache_write),
-                cost: parse_cost(cost).map_err(ApplicationError::from)?,
-            });
-        }
-        Ok(out)
-    }
 }
 
 #[cfg(test)]
@@ -315,14 +257,5 @@ mod tests {
         let rows = repo.by_model(&Filter::default()).unwrap();
         assert_eq!(rows.len(), 2);
         assert!(rows[0].cost.value() >= rows[1].cost.value());
-    }
-
-    #[test]
-    fn by_project_sorted_by_cost_desc() {
-        let repo = SqliteUsageRepository::new(seed());
-        let rows = repo.by_project(&Filter::default()).unwrap();
-        assert_eq!(rows.len(), 2);
-        assert!(rows[0].cost.value() >= rows[1].cost.value());
-        assert_eq!(rows[0].project.as_str(), "/work/alpha");
     }
 }

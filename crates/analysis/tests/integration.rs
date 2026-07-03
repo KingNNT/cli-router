@@ -13,12 +13,10 @@ use rusqlite::Connection;
 
 use analysis::adapters::gateways::sqlite::SqliteUsageRepository;
 use analysis::application::dto::{
-    Filter, GetDashboardInput, GetModelsBreakdownInput, GetPricingInput, GetProjectsBreakdownInput,
+    Filter, GetDashboardInput, GetModelsBreakdownInput, GetPricingInput,
 };
 use analysis::application::ports::UsageRepository;
-use analysis::application::use_cases::{
-    GetDashboard, GetModelsBreakdown, GetPricing, GetProjectsBreakdown,
-};
+use analysis::application::use_cases::{GetDashboard, GetModelsBreakdown, GetPricing};
 use shared::adapters::gateways::sqlite::SqlitePricingRepository;
 use shared::application::ports::{Clock, PricingRepository};
 use shared::domain::entities::ModelPricing;
@@ -172,32 +170,6 @@ fn models_breakdown_returns_one_row_per_model_sorted_by_cost() {
         .expect("opus row present");
     assert_eq!(opus.tokens.input.value(), 3000);
     assert_eq!(opus.tokens.output.value(), 1500);
-}
-
-#[test]
-fn projects_breakdown_groups_by_session_directory() {
-    let (usage_repo, _pricing, clock) = wire();
-    let uc = GetProjectsBreakdown::new(usage_repo, clock);
-
-    let out = uc
-        .execute(GetProjectsBreakdownInput {
-            filter: Some(unfiltered()),
-        })
-        .unwrap();
-
-    assert_eq!(
-        out.projects.len(),
-        2,
-        "two distinct directories in seed.sql"
-    );
-
-    let paths: Vec<_> = out
-        .projects
-        .iter()
-        .map(|r| r.project.as_str().to_string())
-        .collect();
-    assert!(paths.iter().any(|p| p == "/work/alpha"));
-    assert!(paths.iter().any(|p| p == "/work/beta"));
 }
 
 #[test]

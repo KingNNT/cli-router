@@ -11,7 +11,7 @@ use crate::application::dto::Filter;
 use crate::application::ports::UsageRepository;
 use shared::adapters::AdapterError;
 use shared::application::errors::ApplicationError;
-use shared::domain::entities::{DayModelRow, ModelUsage, Overview, ProjectUsage, UsageRecord};
+use shared::domain::entities::{DayModelRow, ModelUsage, Overview, UsageRecord};
 use shared::domain::value_objects::{
     Cost, DateRange, ModelId, ProjectPath, TokenBreakdown, TokenCount,
 };
@@ -258,40 +258,6 @@ impl UsageRepository for ClaudeCodeUsageRepository {
         Ok(out)
     }
 
-    fn by_project(&self, filter: &Filter) -> Result<Vec<ProjectUsage>, ApplicationError> {
-        let records = self.records().map_err(ApplicationError::from)?;
-        let mut map: HashMap<String, (ProjectPath, u64, TokenBreakdown, Cost)> = HashMap::new();
-        for r in records.iter().filter(|r| matches_filter(r, filter)) {
-            let key = r.project.as_str().to_string();
-            let entry = map.entry(key).or_insert_with(|| {
-                (
-                    r.project.clone(),
-                    0,
-                    TokenBreakdown::default(),
-                    Cost::zero(),
-                )
-            });
-            entry.1 += 1;
-            entry.2 += r.tokens;
-            entry.3 += r.cost;
-        }
-        let mut out: Vec<ProjectUsage> = map
-            .into_values()
-            .map(|(project, count, tokens, cost)| ProjectUsage {
-                project,
-                message_count: count,
-                tokens,
-                cost,
-            })
-            .collect();
-        out.sort_by(|a, b| {
-            b.cost
-                .partial_cmp(&a.cost)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.project.as_str().cmp(b.project.as_str()))
-        });
-        Ok(out)
-    }
 }
 
 #[derive(Deserialize)]

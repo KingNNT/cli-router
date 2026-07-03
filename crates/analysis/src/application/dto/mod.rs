@@ -7,9 +7,6 @@ pub use dashboard::{DashboardModelPricing, GetDashboardInput, GetDashboardOutput
 pub mod models_breakdown;
 pub use models_breakdown::{GetModelsBreakdownInput, GetModelsBreakdownOutput};
 
-pub mod projects_breakdown;
-pub use projects_breakdown::{GetProjectsBreakdownInput, GetProjectsBreakdownOutput};
-
 pub mod sync_pricing;
 pub use sync_pricing::{SyncPricingInput, SyncPricingOutput};
 
