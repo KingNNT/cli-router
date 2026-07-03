@@ -590,7 +590,7 @@ mod tests {
     fn sidebar_navigation_resets_all_offsets() {
         let (controller, _) = ctl_with_source_rows(vec![]);
         let mut state = AppState::new();
-        // Navigate to Pricing (index 3)
+        // Navigate to Pricing (index 2)
         state.sidebar_selected = 2;
         state.view = View::Pricing;
         state.pricing_offset = 50;
