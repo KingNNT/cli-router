@@ -53,14 +53,15 @@ fn strip_thinking_value(value: &mut Value) {
             continue;
         };
         if let Some(obj) = choice.get_mut(target_key)
-            && let Some(map) = obj.as_object_mut() {
-                map.remove("reasoning_content");
-                map.remove("reasoning_details");
-                if let Some(content) = map.get("content").and_then(|c| c.as_str()) {
-                    let stripped = strip_thinking_tags(content);
-                    map.insert("content".to_string(), Value::String(stripped));
-                }
+            && let Some(map) = obj.as_object_mut()
+        {
+            map.remove("reasoning_content");
+            map.remove("reasoning_details");
+            if let Some(content) = map.get("content").and_then(|c| c.as_str()) {
+                let stripped = strip_thinking_tags(content);
+                map.insert("content".to_string(), Value::String(stripped));
             }
+        }
     }
 }
 
@@ -85,13 +86,14 @@ fn strip_tags_only_value(value: &mut Value) {
             continue;
         };
         if let Some(obj) = choice.get_mut(target_key)
-            && let Some(map) = obj.as_object_mut() {
-                // Only strip tags from content, keep reasoning fields
-                if let Some(content) = map.get("content").and_then(|c| c.as_str()) {
-                    let stripped = strip_thinking_tags(content);
-                    map.insert("content".to_string(), Value::String(stripped));
-                }
+            && let Some(map) = obj.as_object_mut()
+        {
+            // Only strip tags from content, keep reasoning fields
+            if let Some(content) = map.get("content").and_then(|c| c.as_str()) {
+                let stripped = strip_thinking_tags(content);
+                map.insert("content".to_string(), Value::String(stripped));
             }
+        }
     }
 }
 

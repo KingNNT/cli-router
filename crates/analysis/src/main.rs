@@ -63,12 +63,7 @@ fn run() -> Result<(), FrameworkError> {
     let controller_clock = clock.clone();
     let sync_pricing = Arc::new(SyncPricing::new(pricing_source, pricing_repo, clock));
 
-    let controller = TuiController::new(
-        get_dashboard,
-        get_pricing,
-        sync_pricing,
-        controller_clock,
-    );
+    let controller = TuiController::new(get_dashboard, get_pricing, sync_pricing, controller_clock);
     let mut state = AppState::with_data_source(data_source);
 
     let mut terminal = tui::enter()?;

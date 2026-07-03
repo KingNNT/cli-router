@@ -210,10 +210,11 @@ impl AccountUsagePort for CodexAccountUsage {
                 "Codex account probe still failing; re-reading ~/.codex/auth.json and retrying"
             );
             if let Ok(Some(fresh_token)) = resolve_token(&self.auth)
-                && fresh_token != token {
-                    token = fresh_token;
-                    outcome = self.probe_once(&token);
-                }
+                && fresh_token != token
+            {
+                token = fresh_token;
+                outcome = self.probe_once(&token);
+            }
         }
 
         Some(match outcome {

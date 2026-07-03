@@ -175,9 +175,10 @@ fn strip_schema_keywords(mut v: Value) -> Value {
         // `{"type":"object","properties":{...}}` causes a schema rejection.
         // We collapse it to `false`.
         if let Some(ap) = obj.get("additionalProperties")
-            && !ap.is_boolean() {
-                obj.insert("additionalProperties".into(), json!(false));
-            }
+            && !ap.is_boolean()
+        {
+            obj.insert("additionalProperties".into(), json!(false));
+        }
         // OpenAI strict mode requires every `type: "object"` with
         // `additionalProperties: false` to also have `properties` and `required`.
         // If an object property ends up with `additionalProperties: false` but
@@ -234,9 +235,10 @@ fn fill_missing_tool_responses(messages: &mut Vec<Value>) {
     let mut answered_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for msg in messages.iter() {
         if msg.get("role").and_then(|r| r.as_str()) == Some("tool")
-            && let Some(id) = msg.get("tool_call_id").and_then(|i| i.as_str()) {
-                answered_ids.insert(id.to_string());
-            }
+            && let Some(id) = msg.get("tool_call_id").and_then(|i| i.as_str())
+        {
+            answered_ids.insert(id.to_string());
+        }
     }
 
     // Walk through and inject missing tool responses after each assistant

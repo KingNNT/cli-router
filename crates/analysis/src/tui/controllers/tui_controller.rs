@@ -3,9 +3,7 @@ use std::sync::Arc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::adapters::presenters::{present_dashboard, present_pricing};
-use crate::application::dto::{
-    Filter, GetDashboardInput, GetPricingInput, SyncPricingInput,
-};
+use crate::application::dto::{Filter, GetDashboardInput, GetPricingInput, SyncPricingInput};
 use crate::application::use_cases::{GetDashboard, GetPricing, SyncPricing};
 use crate::tui::app_state::FilterWindow;
 use crate::tui::{AppState, Focus, View};
