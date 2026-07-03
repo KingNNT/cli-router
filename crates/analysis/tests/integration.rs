@@ -12,11 +12,9 @@ use chrono::NaiveDate;
 use rusqlite::Connection;
 
 use analysis::adapters::gateways::sqlite::SqliteUsageRepository;
-use analysis::application::dto::{
-    Filter, GetDashboardInput, GetModelsBreakdownInput, GetPricingInput,
-};
+use analysis::application::dto::{Filter, GetDashboardInput, GetPricingInput};
 use analysis::application::ports::UsageRepository;
-use analysis::application::use_cases::{GetDashboard, GetModelsBreakdown, GetPricing};
+use analysis::application::use_cases::{GetDashboard, GetPricing};
 use shared::adapters::gateways::sqlite::SqlitePricingRepository;
 use shared::application::ports::{Clock, PricingRepository};
 use shared::domain::entities::ModelPricing;
@@ -140,36 +138,6 @@ fn dashboard_reconciles_cost_when_pricing_present() {
         out.last_pricing_sync,
         Some(NaiveDate::from_ymd_opt(2026, 4, 24).unwrap())
     );
-}
-
-#[test]
-fn models_breakdown_returns_one_row_per_model_sorted_by_cost() {
-    let (usage_repo, pricing_repo, clock) = wire();
-    let uc = GetModelsBreakdown::new(usage_repo, pricing_repo, clock);
-
-    let out = uc
-        .execute(GetModelsBreakdownInput {
-            filter: Some(unfiltered()),
-        })
-        .unwrap();
-
-    assert_eq!(out.models.len(), 2, "two distinct models in seed.sql");
-
-    let sonnet = out
-        .models
-        .iter()
-        .find(|r| r.model.as_str().contains("sonnet"))
-        .expect("sonnet row present");
-    assert_eq!(sonnet.tokens.input.value(), 500);
-    assert_eq!(sonnet.tokens.output.value(), 300);
-
-    let opus = out
-        .models
-        .iter()
-        .find(|r| r.model.as_str().contains("opus"))
-        .expect("opus row present");
-    assert_eq!(opus.tokens.input.value(), 3000);
-    assert_eq!(opus.tokens.output.value(), 1500);
 }
 
 #[test]

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::domain::entities::{DailyUsage, DayModelRow, ModelUsage, UsageRecord};
+use crate::domain::entities::{DailyUsage, DayModelRow, UsageRecord};
 use crate::domain::services::aliases::canonicalize;
 use crate::domain::value_objects::{Cost, ModelId, TokenBreakdown};
 
@@ -34,34 +34,6 @@ pub fn group_by_day(records: &[UsageRecord]) -> Vec<DailyUsage> {
         .collect()
 }
 
-pub fn group_by_model(records: &[UsageRecord]) -> Vec<ModelUsage> {
-    let mut map: BTreeMap<ModelId, (u64, TokenBreakdown, Cost)> = BTreeMap::new();
-    for r in records {
-        let entry =
-            map.entry(r.model.clone())
-                .or_insert((0, TokenBreakdown::default(), Cost::zero()));
-        entry.0 += 1;
-        entry.1 += r.tokens;
-        entry.2 += r.cost;
-    }
-    let mut out: Vec<ModelUsage> = map
-        .into_iter()
-        .map(|(model, (count, tokens, cost))| ModelUsage {
-            model,
-            message_count: count,
-            tokens,
-            cost,
-        })
-        .collect();
-    // DESC by cost — matches SQL ORDER BY.
-    out.sort_by(|a, b| {
-        b.cost
-            .partial_cmp(&a.cost)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    out
-}
-
 /// Collapse rows by (date, canonical_or_raw_model). Each group sums its
 /// tokens and cost. Aliased groups take `ModelId(canonical)`; unaliased
 /// groups keep their original `ModelId`. Return order is not guaranteed —
@@ -91,40 +63,6 @@ pub fn aggregate_day_model_rows_by_alias(rows: Vec<DayModelRow>) -> Vec<DayModel
         .map(|((date, _key), (model, tokens, cost))| DayModelRow {
             date,
             model,
-            tokens,
-            cost,
-        })
-        .collect()
-}
-
-/// Collapse model-usage rows by canonical-or-raw name. Sums message_count,
-/// tokens, and cost. Return order is not guaranteed.
-pub fn aggregate_model_usage_by_alias(rows: Vec<ModelUsage>) -> Vec<ModelUsage> {
-    type Group = (ModelId, u64, TokenBreakdown, Cost);
-    let mut groups: BTreeMap<String, Group> = BTreeMap::new();
-
-    for row in rows {
-        let key_str: String = match canonicalize(row.model.as_str()) {
-            Some(c) => c.to_string(),
-            None => row.model.as_str().to_string(),
-        };
-        let display_model: ModelId = match canonicalize(row.model.as_str()) {
-            Some(c) => ModelId::new(c).expect("canonical must be non-empty"),
-            None => row.model.clone(),
-        };
-        let entry = groups
-            .entry(key_str)
-            .or_insert_with(|| (display_model, 0, TokenBreakdown::default(), Cost::zero()));
-        entry.1 += row.message_count;
-        entry.2 += row.tokens;
-        entry.3 += row.cost;
-    }
-
-    groups
-        .into_iter()
-        .map(|(_key, (model, message_count, tokens, cost))| ModelUsage {
-            model,
-            message_count,
             tokens,
             cost,
         })
@@ -184,24 +122,12 @@ mod tests {
         assert_eq!(daily[0].tokens.input.value(), 40);
         assert_eq!(daily[1].date, NaiveDate::from_ymd_opt(2026, 4, 22).unwrap());
     }
-
-    #[test]
-    fn group_by_model_buckets_and_sorts_by_cost_desc() {
-        let recs = vec![
-            record((2026, 4, 23), "cheap", 0.5, 10),
-            record((2026, 4, 23), "pricey", 9.0, 10),
-        ];
-        let by_model = group_by_model(&recs);
-        assert_eq!(by_model.len(), 2);
-        assert_eq!(by_model[0].model.as_str(), "pricey");
-        assert_eq!(by_model[1].model.as_str(), "cheap");
-    }
 }
 
 #[cfg(test)]
 mod alias_tests {
     use super::*;
-    use crate::domain::entities::{DayModelRow, ModelUsage};
+    use crate::domain::entities::DayModelRow;
     use crate::domain::value_objects::{Cost, ModelId, TokenBreakdown, TokenCount};
     use chrono::NaiveDate;
 
@@ -213,18 +139,6 @@ mod alias_tests {
         DayModelRow {
             date,
             model: ModelId::new(model).unwrap(),
-            tokens: TokenBreakdown {
-                input: TokenCount::new(input),
-                ..Default::default()
-            },
-            cost: Cost::new(cost).unwrap(),
-        }
-    }
-
-    fn model_row(model: &str, messages: u64, input: u64, cost: f64) -> ModelUsage {
-        ModelUsage {
-            model: ModelId::new(model).unwrap(),
-            message_count: messages,
             tokens: TokenBreakdown {
                 input: TokenCount::new(input),
                 ..Default::default()
@@ -322,35 +236,5 @@ mod alias_tests {
         let d2_row = out.iter().find(|r| r.date == d2).unwrap();
         assert_eq!(d1_row.tokens.input.value(), 1000);
         assert_eq!(d2_row.tokens.input.value(), 2000);
-    }
-
-    #[test]
-    fn model_usage_single_source_passes_through_unchanged() {
-        let out = aggregate_model_usage_by_alias(vec![model_row("solo-model", 3, 100, 1.0)]);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].model.as_str(), "solo-model");
-        assert_eq!(out[0].message_count, 3);
-    }
-
-    #[test]
-    fn model_usage_multi_source_collapses_and_sums_message_count() {
-        let out = aggregate_model_usage_by_alias(vec![
-            model_row("anthropic.claude-opus-4-6-v1", 10, 1000, 0.5),
-            model_row("us.anthropic.claude-opus-4-6-v1", 7, 2000, 1.0),
-        ]);
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].model.as_str(), "opus4.6");
-        assert_eq!(out[0].message_count, 17);
-        assert_eq!(out[0].tokens.input.value(), 3000);
-        assert!((out[0].cost.value() - 1.5).abs() < 1e-9);
-    }
-
-    #[test]
-    fn model_usage_mixed_aliased_and_not_keeps_both() {
-        let out = aggregate_model_usage_by_alias(vec![
-            model_row("anthropic.claude-opus-4-6-v1", 5, 1000, 0.5),
-            model_row("zai/glm-5.1", 2, 500, 0.0),
-        ]);
-        assert_eq!(out.len(), 2);
     }
 }

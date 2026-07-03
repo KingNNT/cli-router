@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use crate::application::dto::Filter;
 use crate::application::ports::UsageRepository;
 use shared::application::errors::ApplicationError;
-use shared::domain::entities::{DayModelRow, ModelUsage, Overview};
+use shared::domain::entities::{DayModelRow, Overview};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataSource {
@@ -96,10 +96,6 @@ impl UsageRepository for DispatchingUsageRepository {
 
     fn daily_by_model(&self, filter: &Filter) -> Result<Vec<DayModelRow>, ApplicationError> {
         self.active().daily_by_model(filter)
-    }
-
-    fn by_model(&self, filter: &Filter) -> Result<Vec<ModelUsage>, ApplicationError> {
-        self.active().by_model(filter)
     }
 }
 

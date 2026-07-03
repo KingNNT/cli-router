@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use shared::application::errors::ApplicationError;
 use shared::domain::entities::ModelPricing;
-use shared::domain::entities::{DayModelRow, ModelUsage, Overview};
+use shared::domain::entities::{DayModelRow, Overview};
 
 use crate::application::dto::Filter;
 use crate::application::ports::{PricingSource, UsageRepository};
@@ -14,7 +14,6 @@ use crate::application::ports::{PricingSource, UsageRepository};
 pub struct FakeUsageRepository {
     pub overview: Overview,
     pub daily: Vec<DayModelRow>,
-    pub by_model: Vec<ModelUsage>,
     pub last_filter: Mutex<Option<Filter>>,
 }
 
@@ -27,11 +26,6 @@ impl UsageRepository for FakeUsageRepository {
     fn daily_by_model(&self, filter: &Filter) -> Result<Vec<DayModelRow>, ApplicationError> {
         *self.last_filter.lock().unwrap() = Some(filter.clone());
         Ok(self.daily.clone())
-    }
-
-    fn by_model(&self, filter: &Filter) -> Result<Vec<ModelUsage>, ApplicationError> {
-        *self.last_filter.lock().unwrap() = Some(filter.clone());
-        Ok(self.by_model.clone())
     }
 }
 
