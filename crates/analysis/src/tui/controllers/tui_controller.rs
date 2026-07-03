@@ -1000,6 +1000,18 @@ mod tests {
         }
     }
 
+    #[test]
+    fn left_from_pricing_content_returns_to_sidebar() {
+        let (controller, _) = ctl_with_source_rows(vec![]);
+        let mut state = AppState::new();
+        state.sidebar_selected = 1;
+        state.view = View::Pricing;
+        state.focus = Focus::Content;
+        let key = KeyEvent::new(KeyCode::Left, KeyModifiers::NONE);
+        controller.handle(key, &mut state).unwrap();
+        assert_eq!(state.focus, Focus::Sidebar);
+    }
+
     // ── Pricing search tests ──────────────────────────────────────────────────
 
     fn pricing_state_content() -> AppState {
