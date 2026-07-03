@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
 
 use crate::adapters::gateways::{DataSource, DataSourceCell};
-use crate::adapters::view_models::{DashboardViewModel, ModelsViewModel, PricingViewModel};
+use crate::adapters::view_models::{DashboardViewModel, PricingViewModel};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Hit(pub Rect);
@@ -82,17 +82,15 @@ impl FilterWindow {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum View {
     Dashboard,
-    Models,
     Pricing,
 }
 
 impl View {
-    pub const ALL: [View; 3] = [View::Dashboard, View::Models, View::Pricing];
+    pub const ALL: [View; 2] = [View::Dashboard, View::Pricing];
 
     pub fn label(self) -> &'static str {
         match self {
             View::Dashboard => "Dashboard",
-            View::Models => "Models",
             View::Pricing => "Pricing",
         }
     }
@@ -105,11 +103,9 @@ pub struct AppState {
     pub filter_window: FilterWindow,
     pub data_source: DataSourceCell,
     pub dashboard_vm: Option<DashboardViewModel>,
-    pub models_vm: Option<ModelsViewModel>,
     pub pricing_vm: Option<PricingViewModel>,
     pub dashboard_offset: usize,
     pub dashboard_col_offset: usize,
-    pub models_offset: usize,
     pub pricing_offset: usize,
     pub focus: Focus,
     pub status_message: Option<String>,
@@ -133,11 +129,9 @@ impl AppState {
             filter_window: FilterWindow::Last30Days,
             data_source,
             dashboard_vm: None,
-            models_vm: None,
             pricing_vm: None,
             dashboard_offset: 0,
             dashboard_col_offset: 0,
-            models_offset: 0,
             pricing_offset: 0,
             focus: Focus::Sidebar,
             status_message: None,
@@ -156,7 +150,6 @@ impl AppState {
             self.scroll_offset = 0;
             self.dashboard_offset = 0;
             self.dashboard_col_offset = 0;
-            self.models_offset = 0;
             self.pricing_offset = 0;
             self.pricing_query = String::new();
             self.is_searching = false;
@@ -170,7 +163,6 @@ impl AppState {
             self.scroll_offset = 0;
             self.dashboard_offset = 0;
             self.dashboard_col_offset = 0;
-            self.models_offset = 0;
             self.pricing_offset = 0;
             self.pricing_query = String::new();
             self.is_searching = false;
@@ -179,18 +171,15 @@ impl AppState {
 
     pub fn invalidate_all_vms(&mut self) {
         self.dashboard_vm = None;
-        self.models_vm = None;
         self.pricing_vm = None;
         self.dashboard_offset = 0;
         self.dashboard_col_offset = 0;
-        self.models_offset = 0;
         self.pricing_offset = 0;
     }
 
     pub fn current_offset(&self) -> usize {
         match self.view {
             View::Dashboard => self.dashboard_offset,
-            View::Models => self.models_offset,
             View::Pricing => self.pricing_offset,
         }
     }
@@ -198,7 +187,6 @@ impl AppState {
     pub fn set_current_offset(&mut self, value: usize) {
         match self.view {
             View::Dashboard => self.dashboard_offset = value,
-            View::Models => self.models_offset = value,
             View::Pricing => self.pricing_offset = value,
         }
     }

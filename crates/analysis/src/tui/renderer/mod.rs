@@ -1,7 +1,6 @@
 pub mod dashboard;
 pub mod help;
 pub mod layout;
-pub mod models;
 pub mod pricing;
 pub mod sidebar;
 pub mod status_bar;
@@ -76,11 +75,6 @@ fn dispatch_view(f: &mut Frame, state: &AppState, area: Rect, regions: &mut HitR
                     state.data_source.get().label(),
                 );
                 regions.window_tabs = tabs;
-            }
-        }
-        View::Models => {
-            if let Some(vm) = &state.models_vm {
-                models::draw(f, vm, area, state.models_offset);
             }
         }
         View::Pricing => {

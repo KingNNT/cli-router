@@ -5,7 +5,7 @@ use analysis::adapters::gateways::http::LiteLlmPricingSource;
 use analysis::adapters::gateways::sqlite::SqliteUsageRepository;
 use analysis::adapters::gateways::{DataSource, DataSourceCell, DispatchingUsageRepository};
 use analysis::application::ports::{PricingSource, UsageRepository};
-use analysis::application::use_cases::{GetDashboard, GetModelsBreakdown, GetPricing, SyncPricing};
+use analysis::application::use_cases::{GetDashboard, GetPricing, SyncPricing};
 use analysis::errors::FrameworkError;
 use analysis::tui::controllers::TuiController;
 use analysis::tui::{self, AppState};
@@ -59,18 +59,12 @@ fn run() -> Result<(), FrameworkError> {
         pricing_repo.clone(),
         clock.clone(),
     ));
-    let get_models = Arc::new(GetModelsBreakdown::new(
-        usage_repo.clone(),
-        pricing_repo.clone(),
-        clock.clone(),
-    ));
     let get_pricing = Arc::new(GetPricing::new(pricing_repo.clone()));
     let controller_clock = clock.clone();
     let sync_pricing = Arc::new(SyncPricing::new(pricing_source, pricing_repo, clock));
 
     let controller = TuiController::new(
         get_dashboard,
-        get_models,
         get_pricing,
         sync_pricing,
         controller_clock,
