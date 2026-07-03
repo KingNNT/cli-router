@@ -257,7 +257,6 @@ impl UsageRepository for ClaudeCodeUsageRepository {
         });
         Ok(out)
     }
-
 }
 
 #[derive(Deserialize)]

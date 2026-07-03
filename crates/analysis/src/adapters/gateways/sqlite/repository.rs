@@ -216,7 +216,6 @@ impl UsageRepository for SqliteUsageRepository {
         }
         Ok(out)
     }
-
 }
 
 #[cfg(test)]
