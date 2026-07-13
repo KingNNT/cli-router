@@ -160,7 +160,11 @@ mod tests {
 
     #[test]
     fn window_maps_available_and_is_balance_info() {
-        let data = BalanceData { available_balance: 49.58, voucher_balance: 46.58, cash_balance: 3.0 };
+        let data = BalanceData {
+            available_balance: 49.58,
+            voucher_balance: 46.58,
+            cash_balance: 3.0,
+        };
         let w = balance_to_window(&data);
         assert!(w.is_balance_info);
         assert_eq!(w.label, "Balance");

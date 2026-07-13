@@ -172,8 +172,12 @@ mod tests {
 
     #[test]
     fn configure_defaults_to_moonshot_ai() {
-        let p = KimiProvider::configure(reqwest::Client::new(), None, None, AuthHeader::Passthrough);
+        let p =
+            KimiProvider::configure(reqwest::Client::new(), None, None, AuthHeader::Passthrough);
         assert_eq!(p.base_url, "https://api.moonshot.ai/anthropic");
-        assert_eq!(p.openai_base_url.as_deref(), Some("https://api.moonshot.ai/v1"));
+        assert_eq!(
+            p.openai_base_url.as_deref(),
+            Some("https://api.moonshot.ai/v1")
+        );
     }
 }

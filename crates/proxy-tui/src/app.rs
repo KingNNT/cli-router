@@ -1159,7 +1159,10 @@ mod form_field_tests {
         assert_eq!(ProviderKind::Kimi.cycle_next(), ProviderKind::Anthropic);
         assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::Kimi);
         assert_eq!(ProviderKind::Kimi.cycle_prev(), ProviderKind::Minimax);
-        assert_eq!(ProviderKind::from_str_or_default("kimi"), ProviderKind::Kimi);
+        assert_eq!(
+            ProviderKind::from_str_or_default("kimi"),
+            ProviderKind::Kimi
+        );
         assert_eq!(ProviderKind::Kimi.label(), "kimi");
     }
 }
