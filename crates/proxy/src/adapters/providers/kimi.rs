@@ -2,9 +2,11 @@
 //! Anthropic-compatible endpoint at `https://api.moonshot.ai/anthropic` and its
 //! OpenAI-compatible endpoint at `https://api.moonshot.ai/v1`.
 //!
-//! Mirrors `ZaiProvider`: `native_format()` is `OpenAI`, so incoming Anthropic
-//! requests are translated to OpenAI and sent to `/v1`; `forward()` still offers
-//! the Anthropic passthrough path.
+//! Follows the dual-endpoint shape of `ZaiProvider`: `native_format()` is
+//! `OpenAI`, so incoming Anthropic requests are translated to OpenAI and sent to
+//! `/v1`; `forward()` still offers the Anthropic passthrough path. The usage
+//! parsers use the OpenAI variants (matching `native_format()`, as `DeepSeek`
+//! does) rather than Zai's Anthropic variants.
 
 use super::messages_protocol::{self, AuthHeader};
 use crate::application::errors::ProxyError;
