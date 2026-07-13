@@ -56,6 +56,8 @@ pub enum ProviderKind {
     OpenAi,
     Codex,
     Minimax,
+    #[serde(alias = "kimi", alias = "moonshot")]
+    Kimi,
 }
 
 /// Controls how MiniMax thinking/reasoning content is stripped from responses.
@@ -302,6 +304,7 @@ fn parse_kind(s: &str) -> Option<ProviderKind> {
         "deepseek" | "deep-seek" => Some(ProviderKind::DeepSeek),
         "openai" | "open_ai" => Some(ProviderKind::OpenAi),
         "codex" => Some(ProviderKind::Codex),
+        "kimi" | "moonshot" => Some(ProviderKind::Kimi),
         _ => None,
     }
 }
@@ -393,6 +396,25 @@ mod tests {
         assert_eq!(parse_kind("codex"), Some(ProviderKind::Codex));
         assert_eq!(parse_kind("CODEX"), Some(ProviderKind::Codex));
         assert_eq!(parse_kind("Codex"), Some(ProviderKind::Codex));
+    }
+
+    #[test]
+    fn provider_kind_deserializes_kimi_aliases() {
+        assert_eq!(
+            serde_json::from_str::<ProviderKind>("\"kimi\"").unwrap(),
+            ProviderKind::Kimi
+        );
+        assert_eq!(
+            serde_json::from_str::<ProviderKind>("\"moonshot\"").unwrap(),
+            ProviderKind::Kimi
+        );
+    }
+
+    #[test]
+    fn parse_kind_accepts_kimi_aliases() {
+        assert_eq!(parse_kind("kimi"), Some(ProviderKind::Kimi));
+        assert_eq!(parse_kind("moonshot"), Some(ProviderKind::Kimi));
+        assert_eq!(parse_kind("KIMI"), Some(ProviderKind::Kimi));
     }
 
     #[test]
