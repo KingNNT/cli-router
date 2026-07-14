@@ -299,6 +299,7 @@ fn parse_kind(s: &str) -> ProviderKind {
         "openai" | "open_ai" => ProviderKind::OpenAi,
         "codex" => ProviderKind::Codex,
         "minimax" => ProviderKind::Minimax,
+        "kimi" | "moonshot" => ProviderKind::Kimi,
         _ => ProviderKind::Anthropic,
     }
 }
@@ -311,6 +312,7 @@ fn kind_to_str(k: ProviderKind) -> &'static str {
         ProviderKind::OpenAi => "openai",
         ProviderKind::Codex => "codex",
         ProviderKind::Minimax => "minimax",
+        ProviderKind::Kimi => "kimi",
     }
 }
 

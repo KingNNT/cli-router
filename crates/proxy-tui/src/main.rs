@@ -871,6 +871,7 @@ fn open_test_modal(state: &mut AppState) {
         "zai" => "glm-4.5-air",
         "deepseek" => "deepseek-chat",
         "openai" => "gpt-4o-mini",
+        "kimi" => "kimi-k2-0711-preview",
         _ => "",
     };
     state.modal = Modal::TestProvider(TestProviderModal {

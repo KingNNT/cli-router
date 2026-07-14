@@ -68,7 +68,7 @@ Two enforcement levels: cargo-level between libraries and apps (compiler refuses
 
 ### Proxy config
 
-TOML `config.rs` defines config types but **SQLite is the single source of truth** (via `DbConfigRepository`). TOML is used only for the `--import-config` one-time migration flag. Multi-provider config with routing rules, `${ENV}` interpolation (env vars sourced from `~/.config/cli-router/.env` for the launchd service). `AuthConfig` variants: `Passthrough`, `ApiKey`, `Bearer`, `AnthropicOAuth`, `OpenAiOAuth`, `CodexAuto`. `ProviderKind`: `anthropic`, `zai`/`z.ai`/`z-ai`, `deepseek`/`deep_seek`, `openai`/`open_ai`, `codex`, `minimax`. Config fields include `docs_port` and `docs_enabled` for the OpenAPI docs server, `reasoning_effort` (per-provider, codex + anthropic only, values like `high`/`low`), `thinking_mode` (per-provider, minimax only, `SplitOnly` default or `StripAll`), and `openai_base_url` (per-provider override for OpenAI-compatible endpoint).
+TOML `config.rs` defines config types but **SQLite is the single source of truth** (via `DbConfigRepository`). TOML is used only for the `--import-config` one-time migration flag. Multi-provider config with routing rules. `AuthConfig` variants: `Passthrough`, `ApiKey`, `Bearer`, `AnthropicOAuth`, `OpenAiOAuth`, `CodexAuto`. `ProviderKind`: `anthropic`, `zai`/`z.ai`/`z-ai`, `deepseek`/`deep_seek`, `openai`/`open_ai`, `codex`, `minimax`. Config fields include `docs_port` and `docs_enabled` for the OpenAPI docs server, `reasoning_effort` (per-provider, codex + anthropic only, values like `high`/`low`), `thinking_mode` (per-provider, minimax only, `SplitOnly` default or `StripAll`), and `openai_base_url` (per-provider override for OpenAI-compatible endpoint).
 
 ## Rules (in `.claude/rules/`)
 

@@ -447,7 +447,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let _tmp_path = std::env::temp_dir().join(format!("cli-router-reload-{nanos}.toml"));
+    let _tmp_path = std::env::temp_dir().join(format!("cli-router-reload-{nanos}.db"));
 
     let http = reqwest::Client::new();
     let quota: Arc<dyn proxy::application::ports::QuotaPort> =

@@ -3,11 +3,11 @@
 //! (`LiveProvider::reload`) call the same code.
 
 use super::account_usage::{
-    AnthropicAccountUsage, CodexAccountUsage, DeepSeekAccountUsage, MinimaxAccountUsage,
-    ZaiAccountUsage,
+    AnthropicAccountUsage, CodexAccountUsage, DeepSeekAccountUsage, KimiAccountUsage,
+    MinimaxAccountUsage, ZaiAccountUsage,
 };
 use super::{
-    AnthropicProvider, AuthHeader, CodexProvider, DeepSeekProvider, MinimaxProvider,
+    AnthropicProvider, AuthHeader, CodexProvider, DeepSeekProvider, KimiProvider, MinimaxProvider,
     OpenAiProvider, RoutingProvider, ZaiProvider,
 };
 use crate::application::ports::{AccountUsagePort, AccountUsageRegistry, Provider, QuotaPort};
@@ -110,6 +110,12 @@ pub fn build_leaf(
                 mode,
             ))
         }
+        ProviderKind::Kimi => Arc::new(KimiProvider::configure(
+            http,
+            p.base_url.clone(),
+            p.openai_base_url.clone(),
+            auth,
+        )),
     })
 }
 
@@ -237,6 +243,15 @@ pub fn build_account_usage(
                         p.name.clone(),
                         token,
                         p.base_url.clone(),
+                    ))
+                }
+                ProviderKind::Kimi => {
+                    let token = resolve_auth_token(&p.auth);
+                    Arc::new(KimiAccountUsage::new(
+                        p.name.clone(),
+                        token,
+                        p.base_url.clone(),
+                        p.openai_base_url.clone(),
                     ))
                 }
             };

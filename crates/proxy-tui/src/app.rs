@@ -292,6 +292,7 @@ pub enum ProviderKind {
     OpenAi,
     Codex,
     Minimax,
+    Kimi,
 }
 
 impl ProviderKind {
@@ -303,6 +304,7 @@ impl ProviderKind {
             ProviderKind::OpenAi => "openai",
             ProviderKind::Codex => "codex",
             ProviderKind::Minimax => "minimax",
+            ProviderKind::Kimi => "kimi",
         }
     }
     pub fn cycle_next(self) -> Self {
@@ -312,17 +314,19 @@ impl ProviderKind {
             ProviderKind::DeepSeek => ProviderKind::OpenAi,
             ProviderKind::OpenAi => ProviderKind::Codex,
             ProviderKind::Codex => ProviderKind::Minimax,
-            ProviderKind::Minimax => ProviderKind::Anthropic,
+            ProviderKind::Minimax => ProviderKind::Kimi,
+            ProviderKind::Kimi => ProviderKind::Anthropic,
         }
     }
     pub fn cycle_prev(self) -> Self {
         match self {
-            ProviderKind::Anthropic => ProviderKind::Minimax,
+            ProviderKind::Anthropic => ProviderKind::Kimi,
             ProviderKind::Zai => ProviderKind::Anthropic,
             ProviderKind::DeepSeek => ProviderKind::Zai,
             ProviderKind::OpenAi => ProviderKind::DeepSeek,
             ProviderKind::Codex => ProviderKind::OpenAi,
             ProviderKind::Minimax => ProviderKind::Codex,
+            ProviderKind::Kimi => ProviderKind::Minimax,
         }
     }
     pub fn from_str_or_default(s: &str) -> Self {
@@ -332,6 +336,7 @@ impl ProviderKind {
             "openai" => ProviderKind::OpenAi,
             "codex" => ProviderKind::Codex,
             "minimax" => ProviderKind::Minimax,
+            "kimi" | "moonshot" => ProviderKind::Kimi,
             _ => ProviderKind::Anthropic,
         }
     }
@@ -1136,14 +1141,29 @@ mod form_field_tests {
         assert_eq!(ProviderKind::DeepSeek.cycle_next(), ProviderKind::OpenAi);
         assert_eq!(ProviderKind::OpenAi.cycle_next(), ProviderKind::Codex);
         assert_eq!(ProviderKind::Codex.cycle_next(), ProviderKind::Minimax);
-        assert_eq!(ProviderKind::Minimax.cycle_next(), ProviderKind::Anthropic);
+        assert_eq!(ProviderKind::Minimax.cycle_next(), ProviderKind::Kimi);
+        assert_eq!(ProviderKind::Kimi.cycle_next(), ProviderKind::Anthropic);
         // prev direction
-        assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::Minimax);
+        assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::Kimi);
+        assert_eq!(ProviderKind::Kimi.cycle_prev(), ProviderKind::Minimax);
         assert_eq!(ProviderKind::Minimax.cycle_prev(), ProviderKind::Codex);
         assert_eq!(ProviderKind::Codex.cycle_prev(), ProviderKind::OpenAi);
         assert_eq!(ProviderKind::OpenAi.cycle_prev(), ProviderKind::DeepSeek);
         assert_eq!(ProviderKind::DeepSeek.cycle_prev(), ProviderKind::Zai);
         assert_eq!(ProviderKind::Zai.cycle_prev(), ProviderKind::Anthropic);
+    }
+
+    #[test]
+    fn cycle_includes_kimi() {
+        assert_eq!(ProviderKind::Minimax.cycle_next(), ProviderKind::Kimi);
+        assert_eq!(ProviderKind::Kimi.cycle_next(), ProviderKind::Anthropic);
+        assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::Kimi);
+        assert_eq!(ProviderKind::Kimi.cycle_prev(), ProviderKind::Minimax);
+        assert_eq!(
+            ProviderKind::from_str_or_default("kimi"),
+            ProviderKind::Kimi
+        );
+        assert_eq!(ProviderKind::Kimi.label(), "kimi");
     }
 }
 

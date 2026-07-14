@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A Rust workspace named **`cli-router`** with **3 binary apps** and **2 library crates**:
 
 - **`analysis`** — interactive Ratatui TUI that reads the OpenCode SQLite database at `~/.local/share/opencode/opencode.db` and Claude Code's JSONL session files, then renders token/cost usage as a ccusage-style dashboard. Menu-driven, not argv-driven. Has both `lib` and `bin` targets.
-- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai, DeepSeek, OpenAI, Codex, MiniMax). Multi-provider routing with glob-based model matching, `provider/model` namespace overrides, round-robin load balancing with 429 cooldown, affinity-based session stickiness, admin API for live config editing, OAuth flows for Anthropic (PKCE) and OpenAI with automatic token refresh, cross-format translation (Anthropic↔OpenAI), token counting endpoint with local estimation fallback, Swagger/OpenAPI docs via utoipa, and hot reload. Accepts both Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`) formats, captures token usage from streaming and non-streaming responses, and writes one row per request to a local SQLite file. **Config is stored in SQLite** (single source of truth via `DbConfigRepository`), not TOML.
+- **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai, DeepSeek, OpenAI, Codex, MiniMax). Multi-provider routing with glob-based model matching, `provider/model` namespace overrides, round-robin load balancing with 429 cooldown, affinity-based session stickiness, admin API for live config editing, OAuth flows for Anthropic (PKCE) and OpenAI with automatic token refresh, cross-format translation (Anthropic↔OpenAI), token counting endpoint with local estimation fallback, Swagger/OpenAPI docs via utoipa, and hot reload. Accepts both Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`) formats, captures token usage from streaming and non-streaming responses, and writes one row per request to a local SQLite file. **Config is stored in SQLite** (single source of truth via `DbConfigRepository`), edited only through the admin API / TUI.
 - **`proxy-tui`** — Ratatui admin client for the proxy daemon. Connects to the proxy's admin API to view status, edit config, manage providers, test connectivity, and initiate OAuth flows (Anthropic and OpenAI).
 
 Shared libraries:
@@ -119,14 +119,16 @@ crates/
     │   │                 openai_to_anthropic (request/response/stream),
     │   │                 stream_wrap
     │   └── quota/      quota enforcement
-    ├── config.rs        TOML config types (ProviderKind: anthropic, zai, deepseek,
-    │                   openai, codex, minimax; AuthConfig: Passthrough, ApiKey, Bearer,
-    │                   AnthropicOAuth, OpenAiOAuth, CodexAuto; routing rules;
-    │                   docs_port, docs_enabled; ${ENV} interpolation with
-    │                   ~/.config/cli-router/.env fallback; per-provider
-    │                   reasoning_effort and thinking_mode fields).
-    │                   SQLite is the single source of truth — TOML is only
-    │                   used for the --import-config one-time migration flag.
+    ├── config.rs        config types (ProviderKind: anthropic, zai, deepseek,
+    │                   openai, codex, minimax, kimi; AuthConfig: Passthrough, ApiKey,
+    │                   Bearer, AnthropicOAuth, OpenAiOAuth, CodexAuto; routing rules;
+    │                   docs_port, docs_enabled; per-provider
+    │                   reasoning_effort and thinking_mode fields.
+    │                   Auth values are stored/sent verbatim — no ${ENV}
+    │                   interpolation).
+    │                   SQLite is the single source of truth; config is
+    │                   serialized as JSON via serde. Edit only through the
+    │                   admin API / TUI (hot reload).
         ├── frameworks/     framework ring — axum router (`/v1/messages`,
         │                   `/v1/messages/count_tokens`, `/v1/chat/completions`,
         │                   `/admin/*`), admin handler glue, openapi (utoipa spec,
@@ -203,7 +205,7 @@ Detailed conventions live in `.claude/rules/`:
 
 ## Design docs
 
-- **Proxy usage guide** — `docs/proxy-usage.md` (config examples, OAuth, namespace routing, load balancing, priority).
+- **Provider config spec** — `docs/specs/provider-config.md` (source of truth: field meanings, provider kinds, auth types, per-provider setup).
 - **OAuth refresh token support** — plan `docs/superpowers/plans/2026-05-03-oauth-refresh-token.md`.
 - **Provider namespace routing** — spec `docs/superpowers/specs/2026-05-03-provider-namespace-design.md`, plan `docs/superpowers/plans/2026-05-03-provider-namespace.md`.
 - **Load balancing** — spec `docs/superpowers/specs/2026-05-03-load-balancing-design.md`.

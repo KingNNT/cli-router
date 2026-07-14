@@ -56,6 +56,8 @@ pub enum ProviderKind {
     OpenAi,
     Codex,
     Minimax,
+    #[serde(alias = "kimi", alias = "moonshot")]
+    Kimi,
 }
 
 /// Controls how MiniMax thinking/reasoning content is stripped from responses.
@@ -105,7 +107,7 @@ pub enum AuthConfig {
     },
     /// Auto-read tokens from `~/.codex/auth.json` (Codex CLI cache).
     /// The proxy reads the file at startup and during background refresh.
-    /// No tokens are stored in config.toml.
+    /// No tokens are stored in the config DB.
     #[serde(rename = "codex_auto")]
     CodexAuto,
 }
@@ -162,7 +164,7 @@ pub struct RoutingRule {
     #[serde(default)]
     pub strategy: RoutingStrategy,
     /// Lower number = higher priority = checked first. Defaults to the
-    /// rule's position in the TOML array (0, 1, 2, …). Rules with the same
+    /// rule's position in the config array (0, 1, 2, …). Rules with the same
     /// priority keep their file order.
     #[serde(default)]
     pub priority: Option<u32>,
@@ -302,6 +304,7 @@ fn parse_kind(s: &str) -> Option<ProviderKind> {
         "deepseek" | "deep-seek" => Some(ProviderKind::DeepSeek),
         "openai" | "open_ai" => Some(ProviderKind::OpenAi),
         "codex" => Some(ProviderKind::Codex),
+        "kimi" | "moonshot" => Some(ProviderKind::Kimi),
         _ => None,
     }
 }
@@ -396,55 +399,56 @@ mod tests {
     }
 
     #[test]
+    fn provider_kind_deserializes_kimi_aliases() {
+        assert_eq!(
+            serde_json::from_str::<ProviderKind>("\"kimi\"").unwrap(),
+            ProviderKind::Kimi
+        );
+        assert_eq!(
+            serde_json::from_str::<ProviderKind>("\"moonshot\"").unwrap(),
+            ProviderKind::Kimi
+        );
+    }
+
+    #[test]
+    fn parse_kind_accepts_kimi_aliases() {
+        assert_eq!(parse_kind("kimi"), Some(ProviderKind::Kimi));
+        assert_eq!(parse_kind("moonshot"), Some(ProviderKind::Kimi));
+        assert_eq!(parse_kind("KIMI"), Some(ProviderKind::Kimi));
+    }
+
+    #[test]
     fn provider_config_deserializes_reasoning_effort() {
-        let toml = r#"
-name = "codex-main"
-kind = "codex"
-reasoning_effort = "high"
-"#;
-        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        let json = r#"{"name":"codex-main","kind":"codex","reasoning_effort":"high"}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
         assert_eq!(provider.reasoning_effort.as_deref(), Some("high"));
     }
 
     #[test]
     fn provider_config_defaults_thinking_mode_to_split_only() {
-        let toml = r#"
-name = "minimax"
-kind = "minimax"
-"#;
-        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        let json = r#"{"name":"minimax","kind":"minimax"}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
         assert_eq!(provider.thinking_mode, ThinkingMode::SplitOnly);
     }
 
     #[test]
     fn provider_config_deserializes_thinking_mode() {
-        let toml = r#"
-name = "minimax"
-kind = "minimax"
-thinking_mode = "strip_all"
-"#;
-        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        let json = r#"{"name":"minimax","kind":"minimax","thinking_mode":"strip_all"}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
         assert_eq!(provider.thinking_mode, ThinkingMode::StripAll);
     }
 
     #[test]
     fn provider_config_deserializes_max_concurrent() {
-        let toml = r#"
-name = "zai"
-kind = "zai"
-max_concurrent = 64
-"#;
-        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        let json = r#"{"name":"zai","kind":"zai","max_concurrent":64}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
         assert_eq!(provider.max_concurrent, Some(64));
     }
 
     #[test]
     fn provider_config_defaults_max_concurrent_to_none() {
-        let toml = r#"
-name = "zai"
-kind = "zai"
-"#;
-        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        let json = r#"{"name":"zai","kind":"zai"}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
         assert_eq!(provider.max_concurrent, None);
     }
 

@@ -869,6 +869,7 @@ fn kind_to_str(k: ProviderKind) -> &'static str {
         ProviderKind::OpenAi => "openai",
         ProviderKind::Codex => "codex",
         ProviderKind::Minimax => "minimax",
+        ProviderKind::Kimi => "kimi",
     }
 }
 
@@ -880,6 +881,7 @@ fn str_to_kind(s: &str) -> Result<ProviderKind, ProxyError> {
         "deepseek" => Ok(ProviderKind::DeepSeek),
         "codex" => Ok(ProviderKind::Codex),
         "minimax" => Ok(ProviderKind::Minimax),
+        "kimi" | "moonshot" => Ok(ProviderKind::Kimi),
         other => Err(ProxyError::BadRequest(format!(
             "unknown provider kind: {other}"
         ))),

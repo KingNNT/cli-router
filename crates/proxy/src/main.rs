@@ -31,10 +31,6 @@ struct Args {
     /// Path to the SQLite database file
     #[arg(long, default_value_t = default_db_path())]
     db: String,
-
-    /// Import providers/routing from a legacy config.toml file into the DB, then exit.
-    #[arg(long)]
-    import_config: Option<String>,
 }
 
 fn default_db_path() -> String {
@@ -70,18 +66,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Config repository — DB is the single source of truth
     let config_repo: Arc<dyn ConfigRepository> =
         Arc::new(DbConfigRepository::new(proxy_conn, args.db));
-    // Import legacy config.toml into DB, then exit
-    if let Some(ref config_path) = args.import_config {
-        let raw = std::fs::read_to_string(config_path)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?;
-        let legacy_cfg: proxy::config::Config = toml::from_str(&raw)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        config_repo
-            .save(&legacy_cfg)
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
-        tracing::info!("Imported config from {} to DB", config_path);
-        return Ok(());
-    }
 
     let cfg = config_repo.load()?;
     tracing::info!(?cfg, "starting proxy (config from DB)");

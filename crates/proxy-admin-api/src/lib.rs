@@ -545,7 +545,7 @@ mod account_usage_tests {
 }
 
 #[cfg(test)]
-mod config_payload_toml_tests {
+mod config_payload_tests {
     use super::*;
 
     #[test]
@@ -571,7 +571,7 @@ mod config_payload_toml_tests {
     }
 
     #[test]
-    fn config_payload_round_trips_through_toml() {
+    fn config_payload_round_trips_through_json() {
         let payload = ConfigPayload {
             port: 8787,
             providers: vec![ProviderPayload {
@@ -600,8 +600,8 @@ mod config_payload_toml_tests {
             proxy_db: None,
             pricing_db: None,
         };
-        let toml_str = toml::to_string_pretty(&payload).unwrap();
-        let parsed: ConfigPayload = toml::from_str(&toml_str).unwrap();
+        let json_str = serde_json::to_string(&payload).unwrap();
+        let parsed: ConfigPayload = serde_json::from_str(&json_str).unwrap();
         assert_eq!(parsed.port, 8787);
         assert_eq!(parsed.providers.len(), 1);
         assert_eq!(
@@ -614,9 +614,9 @@ mod config_payload_toml_tests {
     }
 
     #[test]
-    fn config_payload_defaults_when_empty_toml() {
-        let toml_str = "port = 8787\n";
-        let parsed: ConfigPayload = toml::from_str(toml_str).unwrap();
+    fn config_payload_defaults_when_empty_json() {
+        let json_str = r#"{"port":8787}"#;
+        let parsed: ConfigPayload = serde_json::from_str(json_str).unwrap();
         assert!(parsed.providers.is_empty());
         assert!(parsed.routing.is_empty());
         assert!(parsed.quota.is_empty());

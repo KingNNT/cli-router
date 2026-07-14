@@ -6,6 +6,7 @@ pub mod anthropic;
 pub mod builder;
 pub mod codex;
 pub mod deepseek;
+pub mod kimi;
 pub mod live;
 mod messages_protocol;
 pub mod minimax;
@@ -21,6 +22,7 @@ pub use builder::{
 };
 pub use codex::CodexProvider;
 pub use deepseek::DeepSeekProvider;
+pub use kimi::KimiProvider;
 pub use live::LiveProvider;
 pub use messages_protocol::AuthHeader;
 pub use minimax::MinimaxProvider;
