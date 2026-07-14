@@ -104,14 +104,14 @@ Ví dụ các dạng `auth`:
 
 ```jsonc
 { "type": "passthrough" }
-{ "type": "api_key", "value": "${ANTHROPIC_API_KEY}" }
+{ "type": "api_key", "value": "sk-ant-..." }
 { "type": "bearer",  "value": "sk-ant-oat-..." }
 { "type": "anthropic_oauth", "access_token": "...", "refresh_token": "...", "expires_at_ms": 1746300000000 }
 { "type": "openai_oauth",    "access_token": "...", "refresh_token": "...", "expires_at_ms": 1746300000000 }
 { "type": "codex_auto" }
 ```
 
-- `value` hỗ trợ nội suy biến môi trường: `"${ANTHROPIC_API_KEY}"`, fallback đọc từ `~/.config/cli-router/.env`.
+- `value` được lưu và gửi **nguyên văn**. **Không** có nội suy biến môi trường kiểu `${VAR}` — nếu ghi `"value": "${MOONSHOT_API_KEY}"` thì proxy gửi đúng chuỗi literal `${MOONSHOT_API_KEY}` lên upstream và bị **401**. Dán key thật vào `value`.
 - `expires_at_ms` là Unix epoch **millisecond**. Background task refresh khi còn trong vòng 5 phút trước hạn.
 - OAuth thường được thiết lập qua TUI (mục §7), không nhập tay.
 
@@ -141,7 +141,7 @@ Các block dưới đây là phần tử của mảng `providers` / `routing` tr
 {
   "name": "anthropic",
   "kind": "anthropic",
-  "auth": { "type": "api_key", "value": "${ANTHROPIC_API_KEY}" }
+  "auth": { "type": "api_key", "value": "sk-ant-..." }
   // "reasoning_effort": "high"   // tùy chọn: mức mặc định khi request không chỉ định
 }
 // routing[]
@@ -158,7 +158,7 @@ Các block dưới đây là phần tử của mảng `providers` / `routing` tr
 {
   "name": "zai",
   "kind": "zai",
-  "auth": { "type": "api_key", "value": "${ZAI_API_KEY}" },
+  "auth": { "type": "api_key", "value": "<zai-api-key>" },
   "openai_base_url": "https://api.z.ai/api/paas/v4"   // PAYG (default)
 }
 // routing[]
@@ -180,7 +180,7 @@ Nếu dùng **GLM Coding Plan**, cần cả 2:
 {
   "name": "zai",
   "kind": "zai",
-  "auth": { "type": "bearer", "value": "${ZAI_CODING_PLAN_TOKEN}" },
+  "auth": { "type": "bearer", "value": "<zai-coding-plan-token>" },
   "openai_base_url": "https://api.z.ai/api/coding/paas/v4"
 }
 ```
@@ -191,7 +191,7 @@ Endpoint Anthropic mặc định (`.../api/anthropic`) đã trỏ Coding Plan kh
 
 ```jsonc
 // providers[]
-{ "name": "deepseek", "kind": "deepseek", "auth": { "type": "bearer", "value": "${DEEPSEEK_API_KEY}" } }
+{ "name": "deepseek", "kind": "deepseek", "auth": { "type": "bearer", "value": "<deepseek-key>" } }
 // routing[]
 { "match": { "model": "deepseek-*" }, "provider": "deepseek" }
 ```
@@ -204,7 +204,7 @@ Endpoint Anthropic mặc định (`.../api/anthropic`) đã trỏ Coding Plan kh
 
 ```jsonc
 // providers[]
-{ "name": "openai", "kind": "openai", "auth": { "type": "bearer", "value": "${OPENAI_API_KEY}" } }
+{ "name": "openai", "kind": "openai", "auth": { "type": "bearer", "value": "sk-..." } }
 // routing[]
 { "match": { "model": "gpt-*" }, "provider": "openai" }
 ```
@@ -237,7 +237,7 @@ Endpoint Anthropic mặc định (`.../api/anthropic`) đã trỏ Coding Plan kh
 {
   "name": "minimax",
   "kind": "minimax",
-  "auth": { "type": "api_key", "value": "${MINIMAX_API_KEY}" },
+  "auth": { "type": "api_key", "value": "<minimax-key>" },
   "thinking_mode": "split_only"        // hoặc "strip_all"
 }
 // routing[]
@@ -254,7 +254,7 @@ Endpoint Anthropic mặc định (`.../api/anthropic`) đã trỏ Coding Plan kh
 {
   "name": "kimi",
   "kind": "kimi",                       // alias: "moonshot"
-  "auth": { "type": "api_key", "value": "${MOONSHOT_API_KEY}" }
+  "auth": { "type": "api_key", "value": "sk-..." }
 }
 // routing[]
 { "match": { "model": "kimi-*" }, "provider": "kimi" }
@@ -287,8 +287,8 @@ background task tự refresh (mỗi 60s, khi còn <5 phút trước hạn; retry
 
 ```jsonc
 // providers[]
-{ "name": "anthropic-work",     "kind": "anthropic", "auth": { "type": "api_key", "value": "${ANTHROPIC_WORK_KEY}" } },
-{ "name": "anthropic-personal", "kind": "anthropic", "auth": { "type": "api_key", "value": "${ANTHROPIC_PERSONAL_KEY}" } }
+{ "name": "anthropic-work",     "kind": "anthropic", "auth": { "type": "api_key", "value": "sk-ant-work-..." } },
+{ "name": "anthropic-personal", "kind": "anthropic", "auth": { "type": "api_key", "value": "sk-ant-personal-..." } }
 // routing[]
 {
   "match": { "model": "*" },

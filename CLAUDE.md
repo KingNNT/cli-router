@@ -122,9 +122,10 @@ crates/
     ├── config.rs        config types (ProviderKind: anthropic, zai, deepseek,
     │                   openai, codex, minimax, kimi; AuthConfig: Passthrough, ApiKey,
     │                   Bearer, AnthropicOAuth, OpenAiOAuth, CodexAuto; routing rules;
-    │                   docs_port, docs_enabled; ${ENV} interpolation with
-    │                   ~/.config/cli-router/.env fallback; per-provider
-    │                   reasoning_effort and thinking_mode fields).
+    │                   docs_port, docs_enabled; per-provider
+    │                   reasoning_effort and thinking_mode fields.
+    │                   Auth values are stored/sent verbatim — no ${ENV}
+    │                   interpolation).
     │                   SQLite is the single source of truth; config is
     │                   serialized as JSON via serde. Edit only through the
     │                   admin API / TUI (hot reload).
