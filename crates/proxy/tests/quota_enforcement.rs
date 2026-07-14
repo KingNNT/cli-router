@@ -91,7 +91,7 @@ fn unconfigured_provider_always_ok() {
 #[test]
 fn record_and_check_use_leaf_provider_config_name() {
     // Configure a quota for the leaf provider name that appears in RoutingProvider's
-    // PoolEntry::id — i.e. the value from ProviderConfig::name in config.toml.
+    // PoolEntry::id — i.e. the value from ProviderConfig::name in the config.
     let q: Arc<dyn QuotaPort> = Arc::new(InMemoryQuota::new(vec![cfg("zai", 1)]));
 
     // Simulate what RoutingProvider now does: record with the leaf config name.

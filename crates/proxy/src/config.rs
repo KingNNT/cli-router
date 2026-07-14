@@ -107,7 +107,7 @@ pub enum AuthConfig {
     },
     /// Auto-read tokens from `~/.codex/auth.json` (Codex CLI cache).
     /// The proxy reads the file at startup and during background refresh.
-    /// No tokens are stored in config.toml.
+    /// No tokens are stored in the config DB.
     #[serde(rename = "codex_auto")]
     CodexAuto,
 }
@@ -164,7 +164,7 @@ pub struct RoutingRule {
     #[serde(default)]
     pub strategy: RoutingStrategy,
     /// Lower number = higher priority = checked first. Defaults to the
-    /// rule's position in the TOML array (0, 1, 2, …). Rules with the same
+    /// rule's position in the config array (0, 1, 2, …). Rules with the same
     /// priority keep their file order.
     #[serde(default)]
     pub priority: Option<u32>,
@@ -419,54 +419,36 @@ mod tests {
 
     #[test]
     fn provider_config_deserializes_reasoning_effort() {
-        let toml = r#"
-name = "codex-main"
-kind = "codex"
-reasoning_effort = "high"
-"#;
-        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        let json = r#"{"name":"codex-main","kind":"codex","reasoning_effort":"high"}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
         assert_eq!(provider.reasoning_effort.as_deref(), Some("high"));
     }
 
     #[test]
     fn provider_config_defaults_thinking_mode_to_split_only() {
-        let toml = r#"
-name = "minimax"
-kind = "minimax"
-"#;
-        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        let json = r#"{"name":"minimax","kind":"minimax"}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
         assert_eq!(provider.thinking_mode, ThinkingMode::SplitOnly);
     }
 
     #[test]
     fn provider_config_deserializes_thinking_mode() {
-        let toml = r#"
-name = "minimax"
-kind = "minimax"
-thinking_mode = "strip_all"
-"#;
-        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        let json = r#"{"name":"minimax","kind":"minimax","thinking_mode":"strip_all"}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
         assert_eq!(provider.thinking_mode, ThinkingMode::StripAll);
     }
 
     #[test]
     fn provider_config_deserializes_max_concurrent() {
-        let toml = r#"
-name = "zai"
-kind = "zai"
-max_concurrent = 64
-"#;
-        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        let json = r#"{"name":"zai","kind":"zai","max_concurrent":64}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
         assert_eq!(provider.max_concurrent, Some(64));
     }
 
     #[test]
     fn provider_config_defaults_max_concurrent_to_none() {
-        let toml = r#"
-name = "zai"
-kind = "zai"
-"#;
-        let provider: ProviderConfig = toml::from_str(toml).unwrap();
+        let json = r#"{"name":"zai","kind":"zai"}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
         assert_eq!(provider.max_concurrent, None);
     }
 
