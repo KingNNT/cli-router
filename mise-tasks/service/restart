@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+#MISE description="Restart the proxy service (atomic kickstart)"
+#MISE alias="sr"
+
+set -euo pipefail
+
+SERVICE_LABEL="com.cli-router.proxy"
+SERVICE_PLIST="$HOME/Library/LaunchAgents/$SERVICE_LABEL.plist"
+SERVICE_DOMAIN="gui/$(id -u)"
+SERVICE_TARGET="$SERVICE_DOMAIN/$SERVICE_LABEL"
+SERVICE_LOG_ERR="$HOME/Library/Logs/cli-router-proxy.err"
+
+if [ ! -f "$SERVICE_PLIST" ]; then
+    echo "error: service not installed. Run 'mise run service:install' first."
+    exit 1
+fi
+
+if launchctl print "$SERVICE_TARGET" >/dev/null 2>&1; then
+    launchctl kickstart -k "$SERVICE_TARGET"
+else
+    launchctl bootstrap "$SERVICE_DOMAIN" "$SERVICE_PLIST"
+fi
+
+: > "$SERVICE_LOG_ERR"
+echo "service restarted"
