@@ -637,16 +637,14 @@ impl AnthropicNoopFilter {
                     == Some("tool_use");
                 if is_tool {
                     // Start buffering a fresh tool block. If one was already
-                    // pending (missing stop — shouldn't happen), flush it first.
-                    let mut out = self.flush_pending_tool();
+                    // pending (missing stop — shouldn't happen), flush it first
+                    // so a valid tool is never lost.
+                    let flushed = self.flush_pending_tool();
                     self.pending_tool = Some(PendingTool {
                         frames: vec![sse(event, data)],
                         args: String::new(),
                     });
-                    out.clear(); // flushed frames (if any) already appended below
-                    out.extend(self.flush_pending_tool_noop_guard());
-                    // Note: nothing to emit yet for the new tool.
-                    Vec::new()
+                    flushed
                 } else {
                     vec![sse(event, data)]
                 }
@@ -707,15 +705,8 @@ impl AnthropicNoopFilter {
             _ => vec![sse(event, data)],
         }
     }
-
-    // Placeholder kept private; real flush handled inline above.
-    fn flush_pending_tool_noop_guard(&mut self) -> Vec<String> {
-        Vec::new()
-    }
 }
 ```
-
-> Implementer note: the `flush_pending_tool_noop_guard` / `out.clear()` lines in the `content_block_start` arm are redundant scaffolding — simplify that arm to: if a tool is already pending, `let flushed = self.flush_pending_tool();` then start the new pending tool and return `flushed`. Keep the behavior: never lose a previously-buffered valid tool. Ensure `cargo clippy` is clean (remove the unused helper).
 
 - [ ] **Step 4: Add the stream wrapper**
 
@@ -1094,6 +1085,6 @@ git commit -m "test(proxy): end-to-end no-op tool filter streaming tests"
 - wiremock integration, flag on & off → Task 6. ✔
 - Disable at runtime via admin API → Task 1 mapping (round-trips the flag). ✔
 
-**Placeholder scan:** No TBD/TODO. The one soft spot — the `flush_pending_tool_noop_guard`/`out.clear()` scaffolding in Task 4 Step 3 — is called out explicitly with an implementer note to simplify to a plain flush; behavior is fully specified.
+**Placeholder scan:** No TBD/TODO. All code blocks are complete and self-contained.
 
 **Type consistency:** `is_noop_tool_use(&Value) -> bool`, `sanitize_buffered(&[u8]) -> Bytes`, `sanitize_stream(BoxedByteStream) -> BoxedByteStream`, `AnthropicNoopFilter::{new, feed}`, `KimiProvider::configure(.., bool)` — names consistent across Tasks 3–6. `sanitize_empty_tools` field/column/DTO name identical across Tasks 1–5.
