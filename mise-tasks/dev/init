@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#MISE description="Clone prod DB into dev with port override"
+#MISE alias="di"
+
+set -euo pipefail
+
+DEV_PORT=8788
+DEV_DATA_DIR="$HOME/.local/share/cli-router/dev"
+DEV_DB="$DEV_DATA_DIR/proxy.db"
+PROD_DB="$HOME/.local/share/cli-router/proxy.db"
+
+if [ -f "$DEV_DB" ]; then
+    echo "error: $DEV_DB already exists. Run 'mise run dev:reset' to recreate."
+    exit 1
+fi
+
+if [ ! -f "$PROD_DB" ]; then
+    echo "error: no prod DB at $PROD_DB."
+    exit 1
+fi
+
+mkdir -p "$DEV_DATA_DIR"
+cp "$PROD_DB" "$DEV_DB"
+
+sqlite3 "$DEV_DB" <<EOF
+INSERT OR REPLACE INTO settings (key, value) VALUES ('port', '$DEV_PORT');
+INSERT OR REPLACE INTO settings (key, value) VALUES ('proxy_db', '$DEV_DB');
+INSERT OR REPLACE INTO settings (key, value) VALUES ('pricing_db', '$DEV_DATA_DIR/pricing.db');
+DELETE FROM requests;
+DELETE FROM api_keys;
+EOF
+
+echo "cloned prod DB -> $DEV_DB"
+echo "  port:     $DEV_PORT"
+echo "  data dir: $DEV_DATA_DIR"
+echo ""
+echo "providers/routing were copied from prod — edit via the admin API to change them."

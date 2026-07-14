@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+#MISE description="Delete dev DBs, then re-clone from prod"
+#MISE alias="dr"
+
+set -euo pipefail
+
+DEV_DATA_DIR="$HOME/.local/share/cli-router/dev"
+
+rm -rf "$DEV_DATA_DIR"
+mise run dev:init
