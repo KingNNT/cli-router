@@ -24,6 +24,11 @@ use crate::domain::account_usage::{AccountUsageStatus, ProviderAccountUsage, Usa
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const PROFILE_URL: &str = "https://api.anthropic.com/api/oauth/profile";
 const BETA_HEADER: &str = "oauth-2025-04-20";
+/// Mimic Claude Code's User-Agent. Anthropic matches on the `claude-code/`
+/// prefix; requests without it land in an aggressively rate-limited bucket
+/// that 429s almost immediately (claude-code#31021, #31637), whereas the
+/// claude-code bucket is far more generous.
+const USER_AGENT: &str = "claude-code/2.0.5 (external, cli)";
 const CACHE_TTL: Duration = Duration::from_secs(300);
 /// Profile data (plan tier, email) is essentially static — refresh hourly.
 const PROFILE_CACHE_TTL: Duration = Duration::from_secs(3600);
@@ -109,6 +114,7 @@ impl AnthropicAccountUsage {
             .get(USAGE_URL)
             .set("Authorization", &format!("Bearer {token}"))
             .set("anthropic-beta", BETA_HEADER)
+            .set("User-Agent", USER_AGENT)
             .set("Accept", "application/json")
             .call()?;
         let payload: UsagePayload = resp.into_json()?;
@@ -142,6 +148,7 @@ impl AnthropicAccountUsage {
             .agent
             .get(PROFILE_URL)
             .set("Authorization", &format!("Bearer {token}"))
+            .set("User-Agent", USER_AGENT)
             .set("Accept", "application/json")
             .call()?;
         let payload: ProfilePayload = resp.into_json()?;
@@ -277,6 +284,9 @@ fn payload_to_usage(provider: String, p: UsagePayload) -> ProviderAccountUsage {
     if let Some(w) = p.seven_day_cowork {
         windows.push(window_from("Weekly: Cowork".to_string(), w));
     }
+    if let Some(w) = p.seven_day_routines {
+        windows.push(window_from("Weekly: Routines".to_string(), w));
+    }
 
     // Extra-usage credits (off-plan spend in USD).
     if let Some(eu) = p.extra_usage
@@ -359,6 +369,8 @@ struct UsagePayload {
     seven_day_oauth_apps: Option<WindowField>,
     #[serde(default)]
     seven_day_cowork: Option<WindowField>,
+    #[serde(default)]
+    seven_day_routines: Option<WindowField>,
     #[serde(default)]
     extra_usage: Option<ExtraUsage>,
 }
@@ -546,6 +558,22 @@ mod tests {
         let p: UsagePayload = serde_json::from_str(json).unwrap();
         let usage = payload_to_usage("Anthropic".into(), p);
         assert_eq!(usage.windows.len(), 1);
+    }
+
+    #[test]
+    fn payload_to_usage_maps_seven_day_routines() {
+        let json = r#"{
+            "five_hour":          { "utilization": 6.0,  "resets_at": "2026-06-01T04:59:59Z" },
+            "seven_day_routines": { "utilization": 22.0, "resets_at": "2026-06-06T03:59:59Z" }
+        }"#;
+        let p: UsagePayload = serde_json::from_str(json).unwrap();
+        let usage = payload_to_usage("Anthropic".into(), p);
+        let routines = usage
+            .windows
+            .iter()
+            .find(|w| w.label == "Weekly: Routines")
+            .expect("routines window should be emitted");
+        assert_eq!(routines.used_pct, 22.0);
     }
 
     #[test]
