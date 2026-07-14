@@ -1751,6 +1751,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: None,
                 max_concurrent: None,
+                sanitize_empty_tools: None,
             },
             ProviderPayload {
                 name: "openai".into(),
@@ -1763,6 +1764,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: None,
                 max_concurrent: None,
+                sanitize_empty_tools: None,
             },
         ];
         let mut state = config_state(config);

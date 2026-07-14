@@ -128,6 +128,7 @@ pub fn validate_provider_form(
             None
         },
         max_concurrent: input.max_concurrent,
+        sanitize_empty_tools: None,
     })
 }
 
@@ -189,6 +190,7 @@ mod tests {
             reasoning_effort: None,
             thinking_mode: None,
             max_concurrent: None,
+            sanitize_empty_tools: None,
         }
     }
 

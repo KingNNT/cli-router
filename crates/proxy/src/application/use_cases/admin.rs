@@ -706,6 +706,7 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                     crate::config::ThinkingMode::StripAll => "strip_all".to_string(),
                 }),
                 max_concurrent: p.max_concurrent,
+                sanitize_empty_tools: Some(p.sanitize_empty_tools),
             })
             .collect(),
         routing: c
@@ -793,6 +794,7 @@ fn payload_to_config(
                 reasoning_effort,
                 thinking_mode,
                 max_concurrent: pp.max_concurrent,
+                sanitize_empty_tools: pp.sanitize_empty_tools.unwrap_or(false),
             })
         })
         .collect::<Result<Vec<_>, ProxyError>>()?;
@@ -1248,6 +1250,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 max_concurrent: None,
+                sanitize_empty_tools: false,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -1286,6 +1289,7 @@ mod tests {
                 reasoning_effort: Some("high".into()),
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 max_concurrent: None,
+                sanitize_empty_tools: false,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -1324,6 +1328,7 @@ mod tests {
                 reasoning_effort: Some("extreme".into()),
                 thinking_mode: None,
                 max_concurrent: None,
+                sanitize_empty_tools: None,
             }],
             routing: vec![],
             quota: vec![],
@@ -1360,6 +1365,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::StripAll,
                 max_concurrent: None,
+                sanitize_empty_tools: false,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -1386,6 +1392,41 @@ mod tests {
     }
 
     #[test]
+    fn config_payload_preserves_sanitize_empty_tools() {
+        let cfg = Config {
+            port: 8787,
+            proxy_db: PathBuf::from("/tmp/proxy.db"),
+            pricing_db: PathBuf::from("/tmp/pricing.db"),
+            providers: vec![ProviderConfig {
+                name: "moonshot".into(),
+                kind: ProviderKind::Kimi,
+                auth: AuthConfig::Passthrough,
+                base_url: None,
+                openai_base_url: None,
+                reasoning_effort: None,
+                thinking_mode: crate::config::ThinkingMode::SplitOnly,
+                max_concurrent: None,
+                sanitize_empty_tools: true,
+            }],
+            routing: vec![],
+            affinity: AffinityConfig::default(),
+            quota: vec![],
+        };
+
+        let payload = config_to_payload(&cfg);
+        assert_eq!(payload.providers[0].sanitize_empty_tools, Some(true));
+
+        let restored = payload_to_config(
+            payload,
+            PathBuf::from("/tmp/proxy.db"),
+            PathBuf::from("/tmp/pricing.db"),
+            &cfg,
+        )
+        .unwrap();
+        assert!(restored.providers[0].sanitize_empty_tools);
+    }
+
+    #[test]
     fn payload_to_config_rejects_invalid_thinking_mode() {
         let p = ConfigPayload {
             port: 8787,
@@ -1398,6 +1439,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: Some("garbage".into()),
                 max_concurrent: None,
+                sanitize_empty_tools: None,
             }],
             routing: vec![],
             quota: vec![],
@@ -1451,6 +1493,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: None,
                 max_concurrent: None,
+                sanitize_empty_tools: None,
             }],
             routing: vec![],
             quota: vec![],

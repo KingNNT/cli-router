@@ -231,6 +231,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
                     row.get(11)?,
                 ),
                 max_concurrent: row.get::<_, Option<i64>>(12)?.map(|v| v.max(0) as usize),
+                sanitize_empty_tools: false,
             })
         })
         .map_err(db_err)?;
@@ -464,6 +465,7 @@ mod tests {
             reasoning_effort: Some("high".into()),
             thinking_mode: ThinkingMode::SplitOnly,
             max_concurrent: None,
+            sanitize_empty_tools: false,
         });
         cfg.routing.push(RoutingRule {
             match_spec: MatchSpec {
@@ -554,6 +556,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 max_concurrent: None,
+                sanitize_empty_tools: false,
             });
             repo.save(&cfg).unwrap();
             let loaded = repo.load().unwrap();
