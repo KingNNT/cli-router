@@ -72,6 +72,22 @@ cargo run -p analysis
 
 Release binaries: `target/release/cli-router-proxy`, `target/release/cli-router-proxy-tui`, and `target/release/cli-router-analysis` after `cargo build --release --workspace`.
 
+## Task runner
+
+The project uses [mise](https://mise.jdx.dev/) for development, install, and service tasks:
+
+```bash
+mise run dev:proxy          # Run proxy in foreground against dev DB
+mise run dev:proxy-tui      # Run proxy-tui against dev proxy
+mise run dev:init           # Clone prod DB into dev
+mise run dev:reset          # Delete dev DBs and re-clone from prod
+mise run install:prod       # Install binaries and register launchd service
+mise run service:status     # Show launchd service status
+mise run service:logs       # Tail service logs
+```
+
+Run `mise tasks` for the full list.
+
 ## Architecture
 
 The workspace has five crates:
