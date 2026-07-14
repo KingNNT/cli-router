@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Uninstall the proxy binary"
+#MISE alias="unp"
+
+set -euo pipefail
+
+CARGO="${CARGO:-cargo}"
+"$CARGO" uninstall proxy

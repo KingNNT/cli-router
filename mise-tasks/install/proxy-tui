@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Install the proxy-tui binary into ~/.cargo/bin"
+#MISE alias="ipt"
+
+set -euo pipefail
+
+CARGO="${CARGO:-cargo}"
+"$CARGO" install --locked --force --path crates/proxy-tui
