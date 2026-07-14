@@ -247,7 +247,12 @@ pub fn build_account_usage(
                 }
                 ProviderKind::Kimi => {
                     let token = resolve_auth_token(&p.auth);
-                    Arc::new(KimiAccountUsage::new(p.name.clone(), token))
+                    Arc::new(KimiAccountUsage::new(
+                        p.name.clone(),
+                        token,
+                        p.base_url.clone(),
+                        p.openai_base_url.clone(),
+                    ))
                 }
             };
             (p.name.clone(), adapter)
