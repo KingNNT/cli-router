@@ -1265,6 +1265,16 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
             format!("< {} >    [←/→ to cycle]", m.thinking_mode.label()),
         ));
     }
+    if m.kind == crate::app::ProviderKind::Kimi {
+        lines.push(row(
+            FormField::SanitizeEmptyTools,
+            "Sanitize empty tools:",
+            format!(
+                "< {} >    [←/→ to toggle]",
+                if m.sanitize_empty_tools { "on" } else { "off" }
+            ),
+        ));
+    }
     lines.push(row(
         FormField::AuthKind,
         "Auth Kind:",
@@ -1751,6 +1761,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: None,
                 max_concurrent: None,
+                sanitize_empty_tools: None,
             },
             ProviderPayload {
                 name: "openai".into(),
@@ -1763,6 +1774,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: None,
                 max_concurrent: None,
+                sanitize_empty_tools: None,
             },
         ];
         let mut state = config_state(config);

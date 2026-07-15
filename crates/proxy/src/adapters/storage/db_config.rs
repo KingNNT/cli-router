@@ -107,8 +107,8 @@ impl ConfigRepository for DbConfigRepository {
             let mut stmt = tx
                 .prepare(
                     "INSERT INTO providers (name, kind, base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
-                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent, sanitize_empty_tools)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 )
                 .map_err(db_err)?;
             for p in &config.providers {
@@ -131,6 +131,7 @@ impl ConfigRepository for DbConfigRepository {
                     rt,
                     exp,
                     p.max_concurrent.map(|v| v as i64),
+                    p.sanitize_empty_tools as i64,
                 ])
                 .map_err(db_err)?;
             }
@@ -201,7 +202,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
         .prepare(
             "SELECT name, kind, base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms,
-                    max_concurrent
+                    max_concurrent, sanitize_empty_tools
              FROM providers ORDER BY id",
         )
         .map_err(db_err)?;
@@ -231,6 +232,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
                     row.get(11)?,
                 ),
                 max_concurrent: row.get::<_, Option<i64>>(12)?.map(|v| v.max(0) as usize),
+                sanitize_empty_tools: row.get::<_, i64>(13)? != 0,
             })
         })
         .map_err(db_err)?;
@@ -464,6 +466,7 @@ mod tests {
             reasoning_effort: Some("high".into()),
             thinking_mode: ThinkingMode::SplitOnly,
             max_concurrent: None,
+            sanitize_empty_tools: false,
         });
         cfg.routing.push(RoutingRule {
             match_spec: MatchSpec {
@@ -554,6 +557,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 max_concurrent: None,
+                sanitize_empty_tools: false,
             });
             repo.save(&cfg).unwrap();
             let loaded = repo.load().unwrap();
@@ -598,5 +602,30 @@ mod tests {
                 AuthConfig::CodexAuto => assert!(matches!(loaded_auth, AuthConfig::CodexAuto)),
             }
         }
+    }
+
+    #[test]
+    fn sanitize_empty_tools_survives_save_and_load() {
+        let repo = test_repo();
+        let mut cfg = repo.load().unwrap();
+        cfg.providers.push(ProviderConfig {
+            name: "moonshot".into(),
+            kind: ProviderKind::Kimi,
+            auth: AuthConfig::Passthrough,
+            base_url: None,
+            openai_base_url: None,
+            reasoning_effort: None,
+            thinking_mode: ThinkingMode::SplitOnly,
+            max_concurrent: None,
+            sanitize_empty_tools: true,
+        });
+        repo.save(&cfg).unwrap();
+        let loaded = repo.load().unwrap();
+        assert!(
+            loaded
+                .providers
+                .iter()
+                .any(|p| p.name == "moonshot" && p.sanitize_empty_tools)
+        );
     }
 }

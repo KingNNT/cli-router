@@ -9,6 +9,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (4, MIGRATION_V4),
     (5, MIGRATION_V5),
     (6, MIGRATION_V6),
+    (7, MIGRATION_V7),
 ];
 
 const MIGRATION_V1: &str = r#"
@@ -110,6 +111,10 @@ ALTER TABLE providers ADD COLUMN thinking_mode TEXT NOT NULL DEFAULT 'split_only
 
 const MIGRATION_V6: &str = r#"
 ALTER TABLE providers ADD COLUMN max_concurrent INTEGER;
+"#;
+
+const MIGRATION_V7: &str = r#"
+ALTER TABLE providers ADD COLUMN sanitize_empty_tools INTEGER NOT NULL DEFAULT 0;
 "#;
 
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
@@ -266,5 +271,19 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
         assert!(cols.contains(&"thinking_mode".into()));
+    }
+
+    #[test]
+    fn v7_adds_provider_sanitize_empty_tools_column() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+        let cols: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('providers')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(cols.contains(&"sanitize_empty_tools".into()));
     }
 }

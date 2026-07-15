@@ -115,6 +115,7 @@ pub fn build_leaf(
             p.base_url.clone(),
             p.openai_base_url.clone(),
             auth,
+            p.sanitize_empty_tools,
         )),
     })
 }
@@ -354,6 +355,7 @@ mod tests {
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
             max_concurrent: None,
+            sanitize_empty_tools: false,
         }
     }
 
@@ -395,6 +397,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 max_concurrent: None,
+                sanitize_empty_tools: false,
             }],
             ..Config {
                 port: 0,
@@ -448,6 +451,7 @@ mod tests {
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
             max_concurrent: None,
+            sanitize_empty_tools: false,
         });
 
         // The registry must surface the newly added provider without a restart.
@@ -474,6 +478,7 @@ mod tests {
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
             max_concurrent: None,
+            sanitize_empty_tools: false,
         });
         let live = LiveAccountUsage::new(Arc::new(std::sync::RwLock::new(config)));
 

@@ -60,7 +60,9 @@ fn resolve_endpoint(base_url: Option<&str>, openai_base_url: Option<&str>) -> En
             Some(u) => u.trim_end_matches('/').to_string(),
             None => format!(
                 "{}/v1",
-                base_url.unwrap_or("https://api.kimi.com/coding").trim_end_matches('/')
+                base_url
+                    .unwrap_or("https://api.kimi.com/coding")
+                    .trim_end_matches('/')
             ),
         };
         Endpoint::CodingUsages(format!("{base}/usages"))
@@ -263,11 +265,10 @@ fn window_label(w: Option<&Window>) -> String {
 fn quota_window(label: String, d: &QuotaDetail) -> UsageWindow {
     let limit = parse_u64(d.limit.as_ref());
     let remaining = parse_u64(d.remaining.as_ref());
-    let used = parse_u64(d.used.as_ref())
-        .or_else(|| match (limit, remaining) {
-            (Some(l), Some(r)) => Some(l.saturating_sub(r)),
-            _ => None,
-        });
+    let used = parse_u64(d.used.as_ref()).or_else(|| match (limit, remaining) {
+        (Some(l), Some(r)) => Some(l.saturating_sub(r)),
+        _ => None,
+    });
     let used_pct = match (used, limit) {
         (Some(u), Some(l)) if l > 0 => (u as f64 / l as f64) * 100.0,
         _ => 0.0,
@@ -362,7 +363,9 @@ mod tests {
     #[test]
     fn coding_base_url_selects_usages_endpoint() {
         let e = resolve_endpoint(Some("https://api.kimi.com/coding"), None);
-        assert!(matches!(e, Endpoint::CodingUsages(u) if u == "https://api.kimi.com/coding/v1/usages"));
+        assert!(
+            matches!(e, Endpoint::CodingUsages(u) if u == "https://api.kimi.com/coding/v1/usages")
+        );
     }
 
     #[test]
@@ -371,7 +374,9 @@ mod tests {
             Some("https://api.kimi.com/coding"),
             Some("https://api.kimi.com/coding/v1"),
         );
-        assert!(matches!(e, Endpoint::CodingUsages(u) if u == "https://api.kimi.com/coding/v1/usages"));
+        assert!(
+            matches!(e, Endpoint::CodingUsages(u) if u == "https://api.kimi.com/coding/v1/usages")
+        );
     }
 
     #[test]

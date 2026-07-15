@@ -1130,6 +1130,7 @@ fn submit_non_oauth_save(
         openai_base_url: Some(&m.openai_base_url),
         reasoning_effort: m.reasoning_effort.as_option(),
         thinking_mode: m.thinking_mode.as_option(),
+        sanitize_empty_tools: m.sanitize_empty_tools,
 
         max_concurrent: m.max_concurrent,
         auth: &auth,
@@ -1203,6 +1204,9 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
                 m.thinking_mode.cycle_prev()
             };
         }
+        FormField::SanitizeEmptyTools => {
+            m.sanitize_empty_tools = !m.sanitize_empty_tools;
+        }
         FormField::AuthKind => {
             // AuthInputKind only has cycle(); use it for both directions
             // (5 variants → cycling 4 times == reverse). Fine for a TUI.
@@ -1268,6 +1272,7 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
             openai_base_url: Some(&m.openai_base_url),
             reasoning_effort: m.reasoning_effort.as_option(),
             thinking_mode: m.thinking_mode.as_option(),
+            sanitize_empty_tools: m.sanitize_empty_tools,
 
             max_concurrent: m.max_concurrent,
             auth: &placeholder_auth,
@@ -1710,6 +1715,7 @@ fn submit_oauth_edit(
         openai_base_url: Some(&m.openai_base_url),
         reasoning_effort: m.reasoning_effort.as_option(),
         thinking_mode: m.thinking_mode.as_option(),
+        sanitize_empty_tools: m.sanitize_empty_tools,
 
         max_concurrent: m.max_concurrent,
         auth: &original_auth,
@@ -1733,6 +1739,7 @@ fn submit_oauth_edit(
             || prev.openai_base_url != provider.openai_base_url
             || prev.reasoning_effort != provider.reasoning_effort
             || prev.thinking_mode != provider.thinking_mode
+            || prev.sanitize_empty_tools != provider.sanitize_empty_tools
     } else {
         m.error = Some("provider list changed; press Esc and reopen".into());
         return Modal::ProviderForm(m);

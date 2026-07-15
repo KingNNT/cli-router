@@ -126,6 +126,8 @@ pub struct ProviderPayload {
     pub thinking_mode: Option<String>,
     #[serde(default)]
     pub max_concurrent: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sanitize_empty_tools: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, utoipa::ToSchema)]
@@ -583,6 +585,7 @@ mod config_payload_tests {
                 reasoning_effort: Some("high".into()),
                 thinking_mode: None,
                 max_concurrent: None,
+                sanitize_empty_tools: None,
             }],
             routing: vec![],
             quota: vec![QuotaPayload {
