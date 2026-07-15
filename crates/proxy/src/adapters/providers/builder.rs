@@ -115,6 +115,7 @@ pub fn build_leaf(
             p.base_url.clone(),
             p.openai_base_url.clone(),
             auth,
+            p.sanitize_empty_tools,
         )),
     })
 }

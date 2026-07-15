@@ -23,8 +23,6 @@ pub fn is_noop_tool_use(block: &Value) -> bool {
 /// Drop no-op tool_use blocks from an Anthropic message body. If no `tool_use`
 /// block survives, force `stop_reason=end_turn`. Fail open: any parse failure
 /// or unexpected shape returns the original bytes unchanged.
-// Wired into KimiProvider in a later task; unused until then.
-#[allow(dead_code)]
 pub fn sanitize_buffered(body: &[u8]) -> Bytes {
     let Ok(mut value) = serde_json::from_slice::<Value>(body) else {
         return Bytes::copy_from_slice(body);
@@ -49,14 +47,10 @@ pub fn sanitize_buffered(body: &[u8]) -> Bytes {
         .unwrap_or_else(|_| Bytes::copy_from_slice(body))
 }
 
-// Wired into KimiProvider in a later task; unused until then.
-#[allow(dead_code)]
 fn sse(event: &str, data: &Value) -> String {
     format!("event: {event}\ndata: {}\n\n", data)
 }
 
-// Wired into KimiProvider in a later task; unused until then.
-#[allow(dead_code)]
 struct PendingTool {
     frames: Vec<String>, // raw start + delta frames, in order
     args: String,        // accumulated partial_json
@@ -68,8 +62,6 @@ struct PendingTool {
 /// logic in [`is_noop_tool_use`] / [`sanitize_buffered`] for the streaming
 /// case, where a tool_use block's `input` arrives incrementally across
 /// `input_json_delta` frames and can't be evaluated until `content_block_stop`.
-// Wired into KimiProvider in a later task; unused until then.
-#[allow(dead_code)]
 pub struct AnthropicNoopFilter {
     pending_tool: Option<PendingTool>,
     emitted_real_tool: bool,
@@ -83,8 +75,6 @@ impl Default for AnthropicNoopFilter {
     }
 }
 
-// Wired into KimiProvider in a later task; unused until then.
-#[allow(dead_code)]
 impl AnthropicNoopFilter {
     pub fn new() -> Self {
         Self {
@@ -191,8 +181,6 @@ impl AnthropicNoopFilter {
 /// Wrap an upstream Anthropic SSE byte stream, filtering no-op tool calls.
 /// Splits on blank-line frame boundaries, feeds each complete `event:/data:`
 /// frame through `AnthropicNoopFilter`, and re-emits the filtered frames.
-// Wired into KimiProvider in a later task; unused until then.
-#[allow(dead_code)]
 pub fn sanitize_stream(upstream: BoxedByteStream) -> BoxedByteStream {
     let mut filter = AnthropicNoopFilter::new();
     let mut buf = String::new();

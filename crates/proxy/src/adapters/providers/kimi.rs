@@ -24,6 +24,7 @@ pub struct KimiProvider {
     openai_base_url: Option<String>,
     http: reqwest::Client,
     auth: AuthHeader,
+    sanitize_empty_tools: bool,
 }
 
 impl KimiProvider {
@@ -33,6 +34,7 @@ impl KimiProvider {
             DEFAULT_BASE_URL.into(),
             Some(DEFAULT_OPENAI_BASE_URL.into()),
             AuthHeader::Passthrough,
+            false,
         )
     }
 
@@ -42,6 +44,7 @@ impl KimiProvider {
             DEFAULT_BASE_URL.into(),
             Some(DEFAULT_OPENAI_BASE_URL.into()),
             auth,
+            false,
         )
     }
 
@@ -50,12 +53,14 @@ impl KimiProvider {
         base_url: Option<String>,
         openai_base_url: Option<String>,
         auth: AuthHeader,
+        sanitize_empty_tools: bool,
     ) -> Self {
         Self::build(
             http,
             base_url.unwrap_or_else(|| DEFAULT_BASE_URL.into()),
             Some(openai_base_url.unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.into())),
             auth,
+            sanitize_empty_tools,
         )
     }
 
@@ -64,12 +69,14 @@ impl KimiProvider {
         base_url: String,
         openai_base_url: Option<String>,
         auth: AuthHeader,
+        sanitize_empty_tools: bool,
     ) -> Self {
         Self {
             base_url,
             openai_base_url,
             http,
             auth,
+            sanitize_empty_tools,
         }
     }
 }
@@ -111,7 +118,7 @@ impl Provider for KimiProvider {
         body: Bytes,
         streaming: bool,
     ) -> Result<UpstreamResponse, ProxyError> {
-        messages_protocol::forward(
+        let resp = messages_protocol::forward(
             &self.http,
             &self.base_url,
             &self.auth,
@@ -121,7 +128,41 @@ impl Provider for KimiProvider {
             streaming,
             self.name(),
         )
-        .await
+        .await?;
+
+        if !self.sanitize_empty_tools {
+            return Ok(resp);
+        }
+        // Only sanitize successful responses; error bodies pass through.
+        Ok(match resp {
+            UpstreamResponse::Buffered {
+                status,
+                headers,
+                body,
+                provider_id,
+                translation_direction,
+            } if (200..300).contains(&status) => UpstreamResponse::Buffered {
+                status,
+                headers,
+                body: super::tool_sanitizer::sanitize_buffered(&body),
+                provider_id,
+                translation_direction,
+            },
+            UpstreamResponse::Streaming {
+                status,
+                headers,
+                body,
+                provider_id,
+                translation_direction,
+            } if (200..300).contains(&status) => UpstreamResponse::Streaming {
+                status,
+                headers,
+                body: super::tool_sanitizer::sanitize_stream(body),
+                provider_id,
+                translation_direction,
+            },
+            other => other,
+        })
     }
 
     async fn forward_openai(
@@ -174,12 +215,29 @@ mod tests {
 
     #[test]
     fn configure_defaults_to_moonshot_ai() {
-        let p =
-            KimiProvider::configure(reqwest::Client::new(), None, None, AuthHeader::Passthrough);
+        let p = KimiProvider::configure(
+            reqwest::Client::new(),
+            None,
+            None,
+            AuthHeader::Passthrough,
+            false,
+        );
         assert_eq!(p.base_url, "https://api.moonshot.ai/anthropic");
         assert_eq!(
             p.openai_base_url.as_deref(),
             Some("https://api.moonshot.ai/v1")
         );
+    }
+
+    #[test]
+    fn configure_sets_sanitize_flag() {
+        let p = KimiProvider::configure(
+            reqwest::Client::new(),
+            None,
+            None,
+            AuthHeader::Passthrough,
+            true,
+        );
+        assert!(p.sanitize_empty_tools);
     }
 }
