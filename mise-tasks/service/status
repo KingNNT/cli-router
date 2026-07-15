@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#MISE description="Show launchd status for the proxy service"
+#MISE alias="ss"
+
+set -euo pipefail
+
+SERVICE_LABEL="com.cli-router.proxy"
+
+output=$(launchctl list | awk -v label="$SERVICE_LABEL" 'NR==1 || $0 ~ label')
+header=$(echo "$output" | head -1)
+lines=$(echo "$output" | tail -n +2)
+
+echo "$header"
+if [ -z "$lines" ]; then
+    echo "  (not loaded)"
+else
+    echo "$lines"
+fi

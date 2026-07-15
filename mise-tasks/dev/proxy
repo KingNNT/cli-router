@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#MISE description="Run proxy in foreground against the dev DB (port 8788)"
+#MISE alias="dp"
+
+set -euo pipefail
+
+DEV_DB="$HOME/.local/share/cli-router/dev/proxy.db"
+
+if [ ! -f "$DEV_DB" ]; then
+    echo "no dev DB at $DEV_DB. Run 'mise run dev:init' first."
+    exit 1
+fi
+
+if [ -f .env ]; then
+    set -a
+    . ./.env
+    set +a
+fi
+
+cargo run -p proxy -- --db "$DEV_DB"

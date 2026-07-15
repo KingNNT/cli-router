@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#MISE description="Insert mock requests into the dev DB"
+#MISE alias="dseed"
+
+set -euo pipefail
+
+DEV_DB="$HOME/.local/share/cli-router/dev/proxy.db"
+SEED_COUNT="${SEED_COUNT:-200}"
+
+if [ ! -f "$DEV_DB" ]; then
+    echo "error: $DEV_DB not found. Run 'mise run dev:init' first."
+    exit 1
+fi
+
+count_before=$(sqlite3 "$DEV_DB" "SELECT COUNT(*) FROM requests;" 2>/dev/null || echo 0)
+echo "requests before seed: $count_before"
+
+sqlite3 "$DEV_DB" <<EOF
+.param set :count $SEED_COUNT
+.read scripts/seed-dev-requests.sql
+EOF
+
+count_after=$(sqlite3 "$DEV_DB" "SELECT COUNT(*) FROM requests;")
+echo "requests after seed:  $count_after"

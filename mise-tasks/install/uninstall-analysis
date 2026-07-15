@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Uninstall the analysis binary"
+#MISE alias="una"
+
+set -euo pipefail
+
+CARGO="${CARGO:-cargo}"
+"$CARGO" uninstall analysis || true

@@ -1,16 +1,14 @@
 -- Seed mock requests into the dev proxy database.
 --
--- Usage:  make dev-seed-requests
---         make dev-seed-requests SEED_COUNT=500
+-- Usage:  mise run dev:seed-requests
+--         SEED_COUNT=500 mise run dev:seed-requests
 --
 -- Inserts randomized rows spanning the last 7 days with realistic
 -- provider/model/status distributions.  Safe to run multiple times
--- (rows accumulate; use 'make dev-reset' to wipe).
+-- (rows accumulate; use `mise run dev:reset` to wipe).
 
--- Default row count; override with:  sqlite3 dev/proxy.db ".read scripts/seed-dev-requests.sql"
--- The makefile passes SEED_COUNT via a parameter substitution below.
-
-.param set :count 200
+-- Default row count is set by the `mise run dev:seed-requests` task (default 200,
+-- override with SEED_COUNT=...). The SQL file expects :count to be set before it is read.
 
 WITH providers(name) AS (
     VALUES ('anthropic'), ('zai'), ('openai')

@@ -38,6 +38,34 @@ cargo coverage-html           # open HTML report
 
 Release binaries land at `target/release/{cli-router-proxy,cli-router-analysis,cli-router-proxy-tui}` after `cargo build --release --workspace`.
 
+## Mise tasks
+
+Development, install, and service workflows are exposed as [mise](https://mise.jdx.dev/) file tasks in `mise-tasks/`:
+
+```bash
+# Development
+mise run dev:init          # clone prod DB into dev with port override
+mise run dev:proxy         # run proxy in foreground against dev DB
+mise run dev:proxy-tui     # run proxy-tui pointed at dev proxy
+mise run dev:reset         # delete dev DBs and re-clone from prod
+mise run dev:paths         # print resolved dev paths and ports
+mise run dev:seed-requests # insert mock requests into dev DB
+
+# Install
+mise run install:all       # install proxy, proxy-tui, and analysis
+mise run install:prod      # install all binaries and register launchd service
+mise run install:proxy     # install proxy binary (restarts service if loaded)
+
+# Service (macOS)
+mise run service:install   # build proxy, install, and run as LaunchAgent
+mise run service:uninstall # stop and remove the LaunchAgent
+mise run service:restart   # restart the proxy service
+mise run service:status    # show launchd status
+mise run service:logs      # tail service stdout + stderr logs
+```
+
+Run `mise tasks` for the full list and short aliases (e.g., `mise run dp` for `dev:proxy`).
+
 Tests live alongside code (`#[cfg(test)] mod tests`), as crate-level integration tests under `crates/<crate>/tests/`, and as `///` doc examples on public value-object constructors.
 
 ## Architecture (at a glance)

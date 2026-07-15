@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Print resolved dev paths and ports"
+#MISE alias="dpaths"
+
+set -euo pipefail
+
+DEV_DATA_DIR="$HOME/.local/share/cli-router/dev"
+DEV_DB="$DEV_DATA_DIR/proxy.db"
+PROD_DB="$HOME/.local/share/cli-router/proxy.db"
+
+echo "dev DB:       $DEV_DB"
+echo "dev data dir: $DEV_DATA_DIR"
+echo "dev port:     8788"
+echo "prod DB:      $PROD_DB"
+echo "prod port:    8787 (managed by launchd via mise run service:install)"

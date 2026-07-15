@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Run proxy-tui pointed at the dev proxy"
+#MISE alias="dpt"
+
+set -euo pipefail
+
+if [ -f .env ]; then
+    set -a
+    . ./.env
+    set +a
+fi
+
+: "${CLI_ROUTER_PROXY_URL:=http://127.0.0.1:8788}"
+export CLI_ROUTER_PROXY_URL
+
+cargo run -p proxy-tui

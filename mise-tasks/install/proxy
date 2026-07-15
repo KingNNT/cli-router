@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Install the proxy binary into ~/.cargo/bin (restarts service if loaded)"
+#MISE alias="ip"
+
+set -euo pipefail
+
+CARGO="${CARGO:-cargo}"
+SERVICE_PLIST="$HOME/Library/LaunchAgents/com.cli-router.proxy.plist"
+
+"$CARGO" install --locked --force --path crates/proxy
+
+if [ -f "$SERVICE_PLIST" ]; then
+    echo "service plist detected — restarting to pick up new binary"
+    mise run service:restart
+fi

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Uninstall the proxy-tui binary"
+#MISE alias="unpt"
+
+set -euo pipefail
+
+CARGO="${CARGO:-cargo}"
+"$CARGO" uninstall proxy-tui
