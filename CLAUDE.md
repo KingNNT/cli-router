@@ -40,7 +40,7 @@ Release binaries land at `target/release/{cli-router-proxy,cli-router-analysis,c
 
 ## Mise tasks
 
-Development, install, and service workflows are exposed as [mise](https://mise.jdx.dev/) file tasks in `mise-tasks/`:
+Development, install, and service workflows are exposed as [mise](https://mise.jdx.dev/) file tasks in `.mise/tasks/`:
 
 ```bash
 # Development
