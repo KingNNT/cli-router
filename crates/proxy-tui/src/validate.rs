@@ -44,6 +44,7 @@ pub struct FormInputs<'a> {
     pub openai_base_url: Option<&'a str>,
     pub reasoning_effort: Option<&'a str>,
     pub thinking_mode: Option<&'a str>,
+    pub sanitize_empty_tools: bool,
     /// Preserved per-provider concurrency cap (not yet editable in the form).
     pub max_concurrent: Option<usize>,
     pub auth: &'a AuthPayload,
@@ -128,7 +129,11 @@ pub fn validate_provider_form(
             None
         },
         max_concurrent: input.max_concurrent,
-        sanitize_empty_tools: None,
+        sanitize_empty_tools: if input.kind == "kimi" {
+            Some(input.sanitize_empty_tools)
+        } else {
+            None
+        },
     })
 }
 
@@ -218,6 +223,7 @@ mod tests {
             auth,
             editing_index: None,
             original_name: None,
+            sanitize_empty_tools: false,
         }
     }
 
@@ -322,6 +328,7 @@ mod tests {
             auth: &auth,
             editing_index: None,
             original_name: None,
+            sanitize_empty_tools: false,
         };
 
         let provider = validate_provider_form(&input, &cfg).unwrap();
@@ -343,6 +350,7 @@ mod tests {
             auth: &auth,
             editing_index: None,
             original_name: None,
+            sanitize_empty_tools: false,
         };
 
         let provider = validate_provider_form(&input, &cfg).unwrap();
@@ -364,10 +372,55 @@ mod tests {
             auth: &auth,
             editing_index: None,
             original_name: None,
+            sanitize_empty_tools: false,
         };
 
         let provider = validate_provider_form(&input, &cfg).unwrap();
         assert_eq!(provider.reasoning_effort.as_deref(), Some("high"));
+    }
+
+    #[test]
+    fn kimi_provider_preserves_sanitize_empty_tools() {
+        let auth = AuthPayload::Passthrough;
+        let cfg = empty_cfg();
+        let input = FormInputs {
+            name: "kimi-main",
+            kind: "kimi",
+            base_url: None,
+            openai_base_url: None,
+            reasoning_effort: None,
+            thinking_mode: None,
+            max_concurrent: None,
+            auth: &auth,
+            editing_index: None,
+            original_name: None,
+            sanitize_empty_tools: true,
+        };
+
+        let provider = validate_provider_form(&input, &cfg).unwrap();
+        assert_eq!(provider.sanitize_empty_tools, Some(true));
+    }
+
+    #[test]
+    fn non_kimi_provider_drops_sanitize_empty_tools() {
+        let auth = AuthPayload::Passthrough;
+        let cfg = empty_cfg();
+        let input = FormInputs {
+            name: "zai-main",
+            kind: "zai",
+            base_url: None,
+            openai_base_url: None,
+            reasoning_effort: None,
+            thinking_mode: None,
+            max_concurrent: None,
+            auth: &auth,
+            editing_index: None,
+            original_name: None,
+            sanitize_empty_tools: true,
+        };
+
+        let provider = validate_provider_form(&input, &cfg).unwrap();
+        assert_eq!(provider.sanitize_empty_tools, None);
     }
 
     #[test]
