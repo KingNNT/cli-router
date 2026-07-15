@@ -1,8 +1,8 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the existing `Makefile` and `makefiles/` directory with native mise file tasks under `mise-tasks/`, organized by environment.
+**Goal:** Replace the existing `Makefile` and `makefiles/` directory with native mise file tasks under `.mise/tasks/`, organized by environment.
 
-**Architecture:** Move every Makefile recipe into an executable bash script inside `mise-tasks/{dev,install,service}/`. mise auto-discovers these files and applies `:` namespace prefixes from subdirectory names. Composite tasks (e.g., `install:all`, `install:prod`, `dev:reset`) use mise `depends` so they reuse smaller tasks instead of duplicating code. The repo-level `.mise.toml` stays minimal because file tasks are auto-discovered.
+**Architecture:** Move every Makefile recipe into an executable bash script inside `.mise/tasks/{dev,install,service}/`. mise auto-discovers these files and applies `:` namespace prefixes from subdirectory names. Composite tasks (e.g., `install:all`, `install:prod`, `dev:reset`) use mise `depends` so they reuse smaller tasks instead of duplicating code. The repo-level `.mise.toml` stays minimal because file tasks are auto-discovered.
 
 **Tech Stack:** mise, bash, cargo, sqlite3, launchctl (macOS service tasks only).
 
@@ -14,25 +14,25 @@
 
 | File | Responsibility |
 |------|--------------|
-| `mise-tasks/install/proxy` | Install proxy binary; restart service if already loaded |
-| `mise-tasks/install/proxy-tui` | Install proxy-tui binary |
-| `mise-tasks/install/analysis` | Install analysis binary |
-| `mise-tasks/install/all` | Composite: depends on all three install tasks |
-| `mise-tasks/install/prod` | Composite: production deploy (proxy-tui + analysis + service install) |
-| `mise-tasks/install/uninstall-proxy` | Uninstall proxy package |
-| `mise-tasks/install/uninstall-proxy-tui` | Uninstall proxy-tui package |
-| `mise-tasks/install/uninstall-analysis` | Uninstall analysis package (ignore errors) |
-| `mise-tasks/service/install` | Install proxy, generate LaunchAgent plist, bootstrap/kickstart |
-| `mise-tasks/service/uninstall` | Stop and remove LaunchAgent |
-| `mise-tasks/service/restart` | Atomic kickstart or bootstrap |
-| `mise-tasks/service/status` | Show launchd status |
-| `mise-tasks/service/logs` | Tail stdout + stderr logs |
-| `mise-tasks/dev/proxy` | Run proxy against dev DB |
-| `mise-tasks/dev/proxy-tui` | Run proxy-tui against dev proxy |
-| `mise-tasks/dev/init` | Clone prod DB into dev with port override |
-| `mise-tasks/dev/reset` | Remove dev DB and re-clone from prod |
-| `mise-tasks/dev/paths` | Print resolved paths |
-| `mise-tasks/dev/seed-requests` | Insert mock requests into dev DB |
+| `.mise/tasks/install/proxy` | Install proxy binary; restart service if already loaded |
+| `.mise/tasks/install/proxy-tui` | Install proxy-tui binary |
+| `.mise/tasks/install/analysis` | Install analysis binary |
+| `.mise/tasks/install/all` | Composite: depends on all three install tasks |
+| `.mise/tasks/install/prod` | Composite: production deploy (proxy-tui + analysis + service install) |
+| `.mise/tasks/install/uninstall-proxy` | Uninstall proxy package |
+| `.mise/tasks/install/uninstall-proxy-tui` | Uninstall proxy-tui package |
+| `.mise/tasks/install/uninstall-analysis` | Uninstall analysis package (ignore errors) |
+| `.mise/tasks/service/install` | Install proxy, generate LaunchAgent plist, bootstrap/kickstart |
+| `.mise/tasks/service/uninstall` | Stop and remove LaunchAgent |
+| `.mise/tasks/service/restart` | Atomic kickstart or bootstrap |
+| `.mise/tasks/service/status` | Show launchd status |
+| `.mise/tasks/service/logs` | Tail stdout + stderr logs |
+| `.mise/tasks/dev/proxy` | Run proxy against dev DB |
+| `.mise/tasks/dev/proxy-tui` | Run proxy-tui against dev proxy |
+| `.mise/tasks/dev/init` | Clone prod DB into dev with port override |
+| `.mise/tasks/dev/reset` | Remove dev DB and re-clone from prod |
+| `.mise/tasks/dev/paths` | Print resolved paths |
+| `.mise/tasks/dev/seed-requests` | Insert mock requests into dev DB |
 | `.mise.toml` | Existing header comment; no task definitions needed |
 | `Makefile` | Delete |
 | `makefiles/install.mk` | Delete |
@@ -46,24 +46,24 @@
 ### Task 1: Create directory structure
 
 **Files:**
-- Create: `mise-tasks/dev/`
-- Create: `mise-tasks/install/`
-- Create: `mise-tasks/service/`
+- Create: `.mise/tasks/dev/`
+- Create: `.mise/tasks/install/`
+- Create: `.mise/tasks/service/`
 
 - [ ] **Step 1: Create the three environment subdirectories**
 
 Run:
 
 ```bash
-mkdir -p mise-tasks/{dev,install,service}
+mkdir -p .mise/tasks/{dev,install,service}
 ```
 
-Expected: Three directories exist under `mise-tasks/`.
+Expected: Three directories exist under `.mise/tasks/`.
 
 - [ ] **Step 2: Commit the skeleton**
 
 ```bash
-git add mise-tasks
+git add .mise/tasks
 git commit -m "chore: add mise-tasks directory structure"
 ```
 
@@ -72,16 +72,16 @@ git commit -m "chore: add mise-tasks directory structure"
 ### Task 2: Create install tasks
 
 **Files:**
-- Create: `mise-tasks/install/proxy`
-- Create: `mise-tasks/install/proxy-tui`
-- Create: `mise-tasks/install/analysis`
-- Create: `mise-tasks/install/all`
-- Create: `mise-tasks/install/prod`
-- Create: `mise-tasks/install/uninstall-proxy`
-- Create: `mise-tasks/install/uninstall-proxy-tui`
-- Create: `mise-tasks/install/uninstall-analysis`
+- Create: `.mise/tasks/install/proxy`
+- Create: `.mise/tasks/install/proxy-tui`
+- Create: `.mise/tasks/install/analysis`
+- Create: `.mise/tasks/install/all`
+- Create: `.mise/tasks/install/prod`
+- Create: `.mise/tasks/install/uninstall-proxy`
+- Create: `.mise/tasks/install/uninstall-proxy-tui`
+- Create: `.mise/tasks/install/uninstall-analysis`
 
-- [ ] **Step 1: Write `mise-tasks/install/proxy`**
+- [ ] **Step 1: Write `.mise/tasks/install/proxy`**
 
 ```bash
 #!/usr/bin/env bash
@@ -101,7 +101,7 @@ if [ -f "$SERVICE_PLIST" ]; then
 fi
 ```
 
-- [ ] **Step 2: Write `mise-tasks/install/proxy-tui`**
+- [ ] **Step 2: Write `.mise/tasks/install/proxy-tui`**
 
 ```bash
 #!/usr/bin/env bash
@@ -114,7 +114,7 @@ CARGO="${CARGO:-cargo}"
 "$CARGO" install --locked --force --path crates/proxy-tui
 ```
 
-- [ ] **Step 3: Write `mise-tasks/install/analysis`**
+- [ ] **Step 3: Write `.mise/tasks/install/analysis`**
 
 ```bash
 #!/usr/bin/env bash
@@ -127,7 +127,7 @@ CARGO="${CARGO:-cargo}"
 "$CARGO" install --locked --force --path crates/analysis
 ```
 
-- [ ] **Step 4: Write `mise-tasks/install/all`**
+- [ ] **Step 4: Write `.mise/tasks/install/all`**
 
 ```bash
 #!/usr/bin/env bash
@@ -140,7 +140,7 @@ set -euo pipefail
 echo "All cli-router binaries installed."
 ```
 
-- [ ] **Step 5: Write `mise-tasks/install/prod`**
+- [ ] **Step 5: Write `.mise/tasks/install/prod`**
 
 ```bash
 #!/usr/bin/env bash
@@ -153,7 +153,7 @@ set -euo pipefail
 echo "Production deployment complete."
 ```
 
-- [ ] **Step 6: Write `mise-tasks/install/uninstall-proxy`**
+- [ ] **Step 6: Write `.mise/tasks/install/uninstall-proxy`**
 
 ```bash
 #!/usr/bin/env bash
@@ -166,7 +166,7 @@ CARGO="${CARGO:-cargo}"
 "$CARGO" uninstall proxy
 ```
 
-- [ ] **Step 7: Write `mise-tasks/install/uninstall-proxy-tui`**
+- [ ] **Step 7: Write `.mise/tasks/install/uninstall-proxy-tui`**
 
 ```bash
 #!/usr/bin/env bash
@@ -179,7 +179,7 @@ CARGO="${CARGO:-cargo}"
 "$CARGO" uninstall proxy-tui
 ```
 
-- [ ] **Step 8: Write `mise-tasks/install/uninstall-analysis`**
+- [ ] **Step 8: Write `.mise/tasks/install/uninstall-analysis`**
 
 ```bash
 #!/usr/bin/env bash
@@ -197,10 +197,10 @@ CARGO="${CARGO:-cargo}"
 Run:
 
 ```bash
-chmod +x mise-tasks/install/*
+chmod +x .mise/tasks/install/*
 ```
 
-Expected: All eight files in `mise-tasks/install/` are executable.
+Expected: All eight files in `.mise/tasks/install/` are executable.
 
 - [ ] **Step 10: Verify install tasks are discovered**
 
@@ -226,7 +226,7 @@ install:uninstall-proxy-tui
 - [ ] **Step 11: Commit install tasks**
 
 ```bash
-git add mise-tasks/install
+git add .mise/tasks/install
 git commit -m "feat(tasks): add mise install tasks"
 ```
 
@@ -235,13 +235,13 @@ git commit -m "feat(tasks): add mise install tasks"
 ### Task 3: Create service tasks
 
 **Files:**
-- Create: `mise-tasks/service/install`
-- Create: `mise-tasks/service/uninstall`
-- Create: `mise-tasks/service/restart`
-- Create: `mise-tasks/service/status`
-- Create: `mise-tasks/service/logs`
+- Create: `.mise/tasks/service/install`
+- Create: `.mise/tasks/service/uninstall`
+- Create: `.mise/tasks/service/restart`
+- Create: `.mise/tasks/service/status`
+- Create: `.mise/tasks/service/logs`
 
-- [ ] **Step 1: Write `mise-tasks/service/install`**
+- [ ] **Step 1: Write `.mise/tasks/service/install`**
 
 ```bash
 #!/usr/bin/env bash
@@ -332,7 +332,7 @@ echo "logs: $SERVICE_LOG_OUT"
 echo "      $SERVICE_LOG_ERR"
 ```
 
-- [ ] **Step 2: Write `mise-tasks/service/uninstall`**
+- [ ] **Step 2: Write `.mise/tasks/service/uninstall`**
 
 ```bash
 #!/usr/bin/env bash
@@ -355,7 +355,7 @@ else
 fi
 ```
 
-- [ ] **Step 3: Write `mise-tasks/service/restart`**
+- [ ] **Step 3: Write `.mise/tasks/service/restart`**
 
 ```bash
 #!/usr/bin/env bash
@@ -385,7 +385,7 @@ fi
 echo "service restarted"
 ```
 
-- [ ] **Step 4: Write `mise-tasks/service/status`**
+- [ ] **Step 4: Write `.mise/tasks/service/status`**
 
 ```bash
 #!/usr/bin/env bash
@@ -408,7 +408,7 @@ else
 fi
 ```
 
-- [ ] **Step 5: Write `mise-tasks/service/logs`**
+- [ ] **Step 5: Write `.mise/tasks/service/logs`**
 
 ```bash
 #!/usr/bin/env bash
@@ -429,10 +429,10 @@ tail -f "$SERVICE_LOG_OUT" "$SERVICE_LOG_ERR"
 Run:
 
 ```bash
-chmod +x mise-tasks/service/*
+chmod +x .mise/tasks/service/*
 ```
 
-Expected: All five files in `mise-tasks/service/` are executable.
+Expected: All five files in `.mise/tasks/service/` are executable.
 
 - [ ] **Step 7: Verify service tasks are discovered**
 
@@ -455,7 +455,7 @@ service:uninstall
 - [ ] **Step 8: Commit service tasks**
 
 ```bash
-git add mise-tasks/service
+git add .mise/tasks/service
 git commit -m "feat(tasks): add mise service tasks"
 ```
 
@@ -464,14 +464,14 @@ git commit -m "feat(tasks): add mise service tasks"
 ### Task 4: Create dev tasks
 
 **Files:**
-- Create: `mise-tasks/dev/proxy`
-- Create: `mise-tasks/dev/proxy-tui`
-- Create: `mise-tasks/dev/init`
-- Create: `mise-tasks/dev/reset`
-- Create: `mise-tasks/dev/paths`
-- Create: `mise-tasks/dev/seed-requests`
+- Create: `.mise/tasks/dev/proxy`
+- Create: `.mise/tasks/dev/proxy-tui`
+- Create: `.mise/tasks/dev/init`
+- Create: `.mise/tasks/dev/reset`
+- Create: `.mise/tasks/dev/paths`
+- Create: `.mise/tasks/dev/seed-requests`
 
-- [ ] **Step 1: Write `mise-tasks/dev/proxy`**
+- [ ] **Step 1: Write `.mise/tasks/dev/proxy`**
 
 ```bash
 #!/usr/bin/env bash
@@ -496,7 +496,7 @@ fi
 cargo run -p proxy -- --db "$DEV_DB"
 ```
 
-- [ ] **Step 2: Write `mise-tasks/dev/proxy-tui`**
+- [ ] **Step 2: Write `.mise/tasks/dev/proxy-tui`**
 
 ```bash
 #!/usr/bin/env bash
@@ -517,7 +517,7 @@ export CLI_ROUTER_PROXY_URL
 cargo run -p proxy-tui
 ```
 
-- [ ] **Step 3: Write `mise-tasks/dev/init`**
+- [ ] **Step 3: Write `.mise/tasks/dev/init`**
 
 ```bash
 #!/usr/bin/env bash
@@ -559,7 +559,7 @@ echo ""
 echo "providers/routing were copied from prod — edit via the admin API to change them."
 ```
 
-- [ ] **Step 4: Write `mise-tasks/dev/reset`**
+- [ ] **Step 4: Write `.mise/tasks/dev/reset`**
 
 ```bash
 #!/usr/bin/env bash
@@ -574,7 +574,7 @@ rm -rf "$DEV_DATA_DIR"
 mise run dev:init
 ```
 
-- [ ] **Step 5: Write `mise-tasks/dev/paths`**
+- [ ] **Step 5: Write `.mise/tasks/dev/paths`**
 
 ```bash
 #!/usr/bin/env bash
@@ -594,7 +594,7 @@ echo "prod DB:      $PROD_DB"
 echo "prod port:    8787 (managed by launchd via mise run service:install)"
 ```
 
-- [ ] **Step 6: Write `mise-tasks/dev/seed-requests`**
+- [ ] **Step 6: Write `.mise/tasks/dev/seed-requests`**
 
 ```bash
 #!/usr/bin/env bash
@@ -624,10 +624,10 @@ echo "requests after seed:  $count_after"
 Run:
 
 ```bash
-chmod +x mise-tasks/dev/*
+chmod +x .mise/tasks/dev/*
 ```
 
-Expected: All six files in `mise-tasks/dev/` are executable.
+Expected: All six files in `.mise/tasks/dev/` are executable.
 
 - [ ] **Step 8: Verify dev tasks are discovered**
 
@@ -651,7 +651,7 @@ dev:seed-requests
 - [ ] **Step 9: Commit dev tasks**
 
 ```bash
-git add mise-tasks/dev
+git add .mise/tasks/dev
 git commit -m "feat(tasks): add mise dev tasks"
 ```
 
@@ -744,7 +744,7 @@ Insert the following immediately after it (before the next `### Architecture` or
 ```markdown
 ## Mise tasks
 
-Development, install, and service workflows are exposed as [mise](https://mise.jdx.dev/) file tasks in `mise-tasks/`:
+Development, install, and service workflows are exposed as [mise](https://mise.jdx.dev/) file tasks in `.mise/tasks/`:
 
 ```bash
 # Development
@@ -845,7 +845,7 @@ git commit -m "docs: document mise tasks in README.md"
 ### Task 9: Verify tasks end-to-end
 
 **Files:**
-- All `mise-tasks/` scripts (indirectly)
+- All `.mise/tasks/` scripts (indirectly)
 
 - [ ] **Step 1: List all tasks and confirm 19 tasks are present**
 
@@ -888,7 +888,7 @@ Expected: Lists `install:proxy`, `install:proxy-tui`, and `install:analysis` as 
 Run:
 
 ```bash
-find mise-tasks -type f -perm +111
+find .mise/tasks -type f -perm +111
 ```
 
 Expected: Lists all 19 task files (some platforms may need `-executable` instead of `-perm +111`).

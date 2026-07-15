@@ -30,10 +30,10 @@ The project already has a `.mise.toml` (currently empty except for comments) and
 
 ### File-task layout
 
-File tasks are placed in `mise-tasks/` and grouped into environment subdirectories. mise auto-discovers executable files in this directory and automatically prefixes subdirectory names with `:`.
+File tasks are placed in `.mise/tasks/` and grouped into environment subdirectories. mise auto-discovers executable files in this directory and automatically prefixes subdirectory names with `:`.
 
 ```text
-mise-tasks/
+.mise/tasks/
 ├── dev/
 │   ├── proxy
 │   ├── proxy-tui
@@ -62,29 +62,29 @@ Rendered task names:
 
 | Task file | Task name |
 |---|---|
-| `mise-tasks/dev/proxy` | `dev:proxy` |
-| `mise-tasks/dev/proxy-tui` | `dev:proxy-tui` |
-| `mise-tasks/dev/init` | `dev:init` |
-| `mise-tasks/dev/reset` | `dev:reset` |
-| `mise-tasks/dev/paths` | `dev:paths` |
-| `mise-tasks/dev/seed-requests` | `dev:seed-requests` |
-| `mise-tasks/install/proxy` | `install:proxy` |
-| `mise-tasks/install/proxy-tui` | `install:proxy-tui` |
-| `mise-tasks/install/analysis` | `install:analysis` |
-| `mise-tasks/install/all` | `install:all` |
-| `mise-tasks/install/prod` | `install:prod` |
-| `mise-tasks/install/uninstall-proxy` | `install:uninstall-proxy` |
-| `mise-tasks/install/uninstall-proxy-tui` | `install:uninstall-proxy-tui` |
-| `mise-tasks/install/uninstall-analysis` | `install:uninstall-analysis` |
-| `mise-tasks/service/install` | `service:install` |
-| `mise-tasks/service/uninstall` | `service:uninstall` |
-| `mise-tasks/service/restart` | `service:restart` |
-| `mise-tasks/service/status` | `service:status` |
-| `mise-tasks/service/logs` | `service:logs` |
+| `.mise/tasks/dev/proxy` | `dev:proxy` |
+| `.mise/tasks/dev/proxy-tui` | `dev:proxy-tui` |
+| `.mise/tasks/dev/init` | `dev:init` |
+| `.mise/tasks/dev/reset` | `dev:reset` |
+| `.mise/tasks/dev/paths` | `dev:paths` |
+| `.mise/tasks/dev/seed-requests` | `dev:seed-requests` |
+| `.mise/tasks/install/proxy` | `install:proxy` |
+| `.mise/tasks/install/proxy-tui` | `install:proxy-tui` |
+| `.mise/tasks/install/analysis` | `install:analysis` |
+| `.mise/tasks/install/all` | `install:all` |
+| `.mise/tasks/install/prod` | `install:prod` |
+| `.mise/tasks/install/uninstall-proxy` | `install:uninstall-proxy` |
+| `.mise/tasks/install/uninstall-proxy-tui` | `install:uninstall-proxy-tui` |
+| `.mise/tasks/install/uninstall-analysis` | `install:uninstall-analysis` |
+| `.mise/tasks/service/install` | `service:install` |
+| `.mise/tasks/service/uninstall` | `service:uninstall` |
+| `.mise/tasks/service/restart` | `service:restart` |
+| `.mise/tasks/service/status` | `service:status` |
+| `.mise/tasks/service/logs` | `service:logs` |
 
 ### `.mise.toml`
 
-File tasks are auto-discovered from `mise-tasks/`, so `.mise.toml` only needs the existing header comment:
+File tasks are auto-discovered from `.mise/tasks/`, so `.mise.toml` only needs the existing header comment:
 
 ```toml
 # cli-router — mise config
@@ -239,11 +239,11 @@ DEV_DB="$DEV_DATA_DIR/proxy.db"
 PROD_DB="$HOME/.local/share/cli-router/proxy.db"
 ```
 
-If the repetition becomes awkward, a shared `mise-tasks/lib/common.sh` can be sourced by scripts. For the initial migration, scripts will inline these values to keep each file readable without indirection.
+If the repetition becomes awkward, a shared `.mise/tasks/lib/common.sh` can be sourced by scripts. For the initial migration, scripts will inline these values to keep each file readable without indirection.
 
 ## Implementation plan
 
-1. Create `mise-tasks/` directory and environment subdirectories.
+1. Create `.mise/tasks/` directory and environment subdirectories.
 2. Create each executable task script with the appropriate `#MISE` metadata (description, alias).
 3. Update `.mise.toml` to keep the minimal header comment.
 4. Delete `Makefile`, `makefiles/install.mk`, `makefiles/service.mk`, `makefiles/dev.mk`, and the empty `makefiles/` directory.
