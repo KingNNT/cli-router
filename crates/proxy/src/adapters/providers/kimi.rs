@@ -24,6 +24,7 @@ pub struct KimiProvider {
     openai_base_url: Option<String>,
     http: reqwest::Client,
     auth: AuthHeader,
+    sanitize_empty_tools: bool,
 }
 
 impl KimiProvider {
@@ -33,6 +34,7 @@ impl KimiProvider {
             DEFAULT_BASE_URL.into(),
             Some(DEFAULT_OPENAI_BASE_URL.into()),
             AuthHeader::Passthrough,
+            false,
         )
     }
 
@@ -42,6 +44,7 @@ impl KimiProvider {
             DEFAULT_BASE_URL.into(),
             Some(DEFAULT_OPENAI_BASE_URL.into()),
             auth,
+            false,
         )
     }
 
@@ -50,12 +53,14 @@ impl KimiProvider {
         base_url: Option<String>,
         openai_base_url: Option<String>,
         auth: AuthHeader,
+        sanitize_empty_tools: bool,
     ) -> Self {
         Self::build(
             http,
             base_url.unwrap_or_else(|| DEFAULT_BASE_URL.into()),
             Some(openai_base_url.unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.into())),
             auth,
+            sanitize_empty_tools,
         )
     }
 
@@ -64,12 +69,14 @@ impl KimiProvider {
         base_url: String,
         openai_base_url: Option<String>,
         auth: AuthHeader,
+        sanitize_empty_tools: bool,
     ) -> Self {
         Self {
             base_url,
             openai_base_url,
             http,
             auth,
+            sanitize_empty_tools,
         }
     }
 }
@@ -111,7 +118,7 @@ impl Provider for KimiProvider {
         body: Bytes,
         streaming: bool,
     ) -> Result<UpstreamResponse, ProxyError> {
-        messages_protocol::forward(
+        let resp = messages_protocol::forward(
             &self.http,
             &self.base_url,
             &self.auth,
@@ -121,7 +128,41 @@ impl Provider for KimiProvider {
             streaming,
             self.name(),
         )
-        .await
+        .await?;
+
+        if !self.sanitize_empty_tools {
+            return Ok(resp);
+        }
+        // Only sanitize successful responses; error bodies pass through.
+        Ok(match resp {
+            UpstreamResponse::Buffered {
+                status,
+                headers,
+                body,
+                provider_id,
+                translation_direction,
+            } if (200..300).contains(&status) => UpstreamResponse::Buffered {
+                status,
+                headers,
+                body: super::tool_sanitizer::sanitize_buffered(&body),
+                provider_id,
+                translation_direction,
+            },
+            UpstreamResponse::Streaming {
+                status,
+                headers,
+                body,
+                provider_id,
+                translation_direction,
+            } if (200..300).contains(&status) => UpstreamResponse::Streaming {
+                status,
+                headers,
+                body: super::tool_sanitizer::sanitize_stream(body),
+                provider_id,
+                translation_direction,
+            },
+            other => other,
+        })
     }
 
     async fn forward_openai(
@@ -159,6 +200,8 @@ impl Provider for KimiProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::UpstreamResponse;
+    use futures::StreamExt;
 
     #[test]
     fn name_is_kimi() {
@@ -174,12 +217,138 @@ mod tests {
 
     #[test]
     fn configure_defaults_to_moonshot_ai() {
-        let p =
-            KimiProvider::configure(reqwest::Client::new(), None, None, AuthHeader::Passthrough);
+        let p = KimiProvider::configure(
+            reqwest::Client::new(),
+            None,
+            None,
+            AuthHeader::Passthrough,
+            false,
+        );
         assert_eq!(p.base_url, "https://api.moonshot.ai/anthropic");
         assert_eq!(
             p.openai_base_url.as_deref(),
             Some("https://api.moonshot.ai/v1")
         );
+    }
+
+    #[test]
+    fn configure_sets_sanitize_flag() {
+        let p = KimiProvider::configure(
+            reqwest::Client::new(),
+            None,
+            None,
+            AuthHeader::Passthrough,
+            true,
+        );
+        assert!(p.sanitize_empty_tools);
+    }
+
+    #[tokio::test]
+    async fn forward_streaming_drops_noop_tool_and_forces_end_turn() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let sse = concat!(
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"model\":\"kimi\",\"content\":[]}}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"bash\",\"input\":{}}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\\\":\\\"}\"}}\n\n",
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":3}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = KimiProvider::configure(
+            reqwest::Client::new(),
+            Some(server.uri()),
+            None,
+            AuthHeader::Passthrough,
+            true, // sanitize ON
+        );
+        let resp = provider
+            .forward("/v1/messages", &HeaderMap::new(), Bytes::from("{}"), true)
+            .await
+            .unwrap();
+
+        let collected = collect_streaming_body(resp).await;
+        assert!(
+            !collected.contains("tool_use"),
+            "no-op tool_use must be dropped: {collected}"
+        );
+        assert!(
+            collected.contains("\"stop_reason\":\"end_turn\""),
+            "stop_reason must be rewritten: {collected}"
+        );
+    }
+
+    #[tokio::test]
+    async fn forward_streaming_passthrough_when_flag_off() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let sse = concat!(
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"model\":\"kimi\",\"content\":[]}}\n\n",
+            "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"bash\",\"input\":{}}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"command\\\":\\\":\\\"}\"}}\n\n",
+            "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":3}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(sse),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = KimiProvider::configure(
+            reqwest::Client::new(),
+            Some(server.uri()),
+            None,
+            AuthHeader::Passthrough,
+            false, // sanitize OFF
+        );
+        let resp = provider
+            .forward("/v1/messages", &HeaderMap::new(), Bytes::from("{}"), true)
+            .await
+            .unwrap();
+
+        let collected = collect_streaming_body(resp).await;
+        assert!(
+            collected.contains("tool_use"),
+            "flag off must pass tool_use through"
+        );
+        assert!(
+            collected.contains("\"stop_reason\":\"tool_use\""),
+            "flag off must keep stop_reason"
+        );
+    }
+
+    // Helper: drain a Streaming UpstreamResponse into a String.
+    async fn collect_streaming_body(resp: UpstreamResponse) -> String {
+        match resp {
+            UpstreamResponse::Streaming { body, .. } => {
+                let mut s = String::new();
+                let mut body = body;
+                while let Some(chunk) = body.next().await {
+                    s.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
+                }
+                s
+            }
+            UpstreamResponse::Buffered { body, .. } => String::from_utf8_lossy(&body).to_string(),
+        }
     }
 }

@@ -43,6 +43,12 @@ pub struct ProviderConfig {
     /// simultaneous requests; lower it to stay under a strict rate limit.
     #[serde(default)]
     pub max_concurrent: Option<usize>,
+    /// When true, drop no-op `bash` tool calls (empty / `:` / `true` command)
+    /// from this provider's Anthropic responses and force `stop_reason=end_turn`
+    /// when no real tool call remains. Off by default. Currently honored only by
+    /// the Kimi provider on the Anthropic path.
+    #[serde(default)]
+    pub sanitize_empty_tools: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -332,6 +338,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn provider_config_defaults_sanitize_empty_tools_to_false() {
+        let json = r#"{"name":"moonshot","kind":"kimi"}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
+        assert!(!provider.sanitize_empty_tools);
+    }
+
+    #[test]
+    fn provider_config_deserializes_sanitize_empty_tools() {
+        let json = r#"{"name":"moonshot","kind":"kimi","sanitize_empty_tools":true}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
+        assert!(provider.sanitize_empty_tools);
+    }
+
+    #[test]
     fn auth_config_debug_redacts_secrets() {
         let cases = [
             AuthConfig::ApiKey {
@@ -481,6 +501,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 max_concurrent: None,
+                sanitize_empty_tools: false,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -514,6 +535,7 @@ mod tests {
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     max_concurrent: None,
+                    sanitize_empty_tools: false,
                 },
                 ProviderConfig {
                     name: "x".into(),
@@ -524,6 +546,7 @@ mod tests {
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     max_concurrent: None,
+                    sanitize_empty_tools: false,
                 },
             ],
             routing: vec![RoutingRule {
@@ -556,6 +579,7 @@ mod tests {
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 max_concurrent: None,
+                sanitize_empty_tools: false,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {

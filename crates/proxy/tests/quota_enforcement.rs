@@ -146,6 +146,7 @@ fn hot_reload_preserves_quota_enforcement() {
             reasoning_effort: None,
             thinking_mode: proxy::config::ThinkingMode::SplitOnly,
             max_concurrent: None,
+            sanitize_empty_tools: false,
         }],
         routing: vec![RoutingRule {
             match_spec: MatchSpec {

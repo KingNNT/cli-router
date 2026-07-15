@@ -552,6 +552,7 @@ pub enum FormField {
     OpenaiBaseUrl,
     ReasoningEffort,
     ThinkingMode,
+    SanitizeEmptyTools,
     AuthKind,
     AuthValue,
     Save,
@@ -584,6 +585,9 @@ fn field_order(auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Vec<For
     }
     if provider_kind == ProviderKind::Minimax {
         order.push(FormField::ThinkingMode);
+    }
+    if provider_kind == ProviderKind::Kimi {
+        order.push(FormField::SanitizeEmptyTools);
     }
     order.push(FormField::AuthKind);
     if matches!(auth_kind, AuthInputKind::ApiKey | AuthInputKind::Bearer) {
@@ -625,6 +629,7 @@ pub struct ProviderFormModal {
     pub openai_base_url: String,
     pub reasoning_effort: ReasoningEffortInput,
     pub thinking_mode: ThinkingModeInput,
+    pub sanitize_empty_tools: bool,
     pub auth_kind: AuthInputKind,
     pub auth_value: String,
     /// Preserved across edits (not yet editable in the form UI). Carries the
@@ -647,6 +652,7 @@ impl ProviderFormModal {
             openai_base_url: String::new(),
             reasoning_effort: ReasoningEffortInput::Unset,
             thinking_mode: ThinkingModeInput::Unset,
+            sanitize_empty_tools: false,
             auth_kind: AuthInputKind::Passthrough,
             auth_value: String::new(),
             max_concurrent: None,
@@ -673,6 +679,7 @@ impl ProviderFormModal {
             openai_base_url: p.openai_base_url.clone().unwrap_or_default(),
             reasoning_effort: ReasoningEffortInput::from_option(p.reasoning_effort.as_deref()),
             thinking_mode: ThinkingModeInput::from_option(p.thinking_mode.as_deref()),
+            sanitize_empty_tools: p.sanitize_empty_tools.unwrap_or(false),
             auth_kind,
             auth_value,
             max_concurrent: p.max_concurrent,
@@ -1151,6 +1158,20 @@ mod form_field_tests {
         assert_eq!(ProviderKind::OpenAi.cycle_prev(), ProviderKind::DeepSeek);
         assert_eq!(ProviderKind::DeepSeek.cycle_prev(), ProviderKind::Zai);
         assert_eq!(ProviderKind::Zai.cycle_prev(), ProviderKind::Anthropic);
+    }
+
+    #[test]
+    fn kimi_includes_sanitize_empty_tools_field() {
+        use super::{AuthInputKind, FormField, ProviderKind, field_order};
+        let order = field_order(AuthInputKind::Passthrough, ProviderKind::Kimi);
+        assert!(order.contains(&FormField::SanitizeEmptyTools));
+    }
+
+    #[test]
+    fn non_kimi_excludes_sanitize_empty_tools_field() {
+        use super::{AuthInputKind, FormField, ProviderKind, field_order};
+        let order = field_order(AuthInputKind::Passthrough, ProviderKind::Zai);
+        assert!(!order.contains(&FormField::SanitizeEmptyTools));
     }
 
     #[test]
