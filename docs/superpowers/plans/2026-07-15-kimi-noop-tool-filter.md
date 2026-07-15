@@ -1070,6 +1070,157 @@ git commit -m "test(proxy): end-to-end no-op tool filter streaming tests"
 
 ---
 
+### Task 7: TUI provider-form toggle for `sanitize_empty_tools`
+
+**Why:** The proxy-tui provider form has no control for `sanitize_empty_tools`, so `validate_provider_form` hardcodes it to `None` and the edit path (`main.rs` `cfg.providers[*original_index] = provider`) fully replaces the provider — silently resetting a flag set via the admin API. This task adds a real boolean toggle to the form, shown only for Kimi providers, which both exposes the flag in the TUI and (by round-tripping it) fixes the silent-reset. Mirror the existing `thinking_mode` field end-to-end (`ThinkingModeInput` / `FormField::ThinkingMode`), but as a plain `bool`.
+
+**Files:**
+- Modify: `crates/proxy-tui/src/app.rs` — `FormField` enum (~:548), `ProviderFormModal` struct + `Default`/new (~:619-652), the edit constructor that populates from a `ProviderPayload` (~:675), and `field_order(auth, kind)` (~:586)
+- Modify: `crates/proxy-tui/src/ui.rs` — provider-form render (~:1263, the `FormField::ThinkingMode` row)
+- Modify: `crates/proxy-tui/src/main.rs` — `FormInputs` construction in the two provider-save paths (~:1132 and ~:1270) and the field cycle/toggle key handler (~:1200)
+- Modify: `crates/proxy-tui/src/validate.rs` — `FormInputs` struct (~:45) and `validate_provider_form` (~:104-131)
+- Test: `crates/proxy-tui/src/app.rs` tests mod; `crates/proxy-tui/src/validate.rs` tests mod
+
+**Interfaces:**
+- Consumes: `ProviderPayload.sanitize_empty_tools: Option<bool>` (Task 1).
+- Produces: `FormField::SanitizeEmptyTools`; `ProviderFormModal.sanitize_empty_tools: bool`; `validate::FormInputs.sanitize_empty_tools: bool`.
+
+**Decisions (fixed):**
+- The toggle is shown **only when the provider kind is Kimi** (`ProviderKind::Kimi`, label `"kimi"`), exactly as `ThinkingMode` is shown only for Minimax.
+- It is a `bool`. `←`/`→` on the field flips it (reuse the same key path that cycles `ThinkingMode`). Render as `< on >` / `< off >`.
+- On edit, populate from `p.sanitize_empty_tools.unwrap_or(false)` so the existing value is preserved.
+- `validate_provider_form` emits `sanitize_empty_tools: if input.kind == "kimi" { Some(input.sanitize_empty_tools) } else { None }`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to the `#[cfg(test)] mod tests` in `crates/proxy-tui/src/app.rs`:
+
+```rust
+#[test]
+fn kimi_includes_sanitize_empty_tools_field() {
+    use super::{AuthInputKind, FormField, ProviderKind, field_order};
+    let order = field_order(AuthInputKind::Passthrough, ProviderKind::Kimi);
+    assert!(order.contains(&FormField::SanitizeEmptyTools));
+}
+
+#[test]
+fn non_kimi_excludes_sanitize_empty_tools_field() {
+    use super::{AuthInputKind, FormField, ProviderKind, field_order};
+    let order = field_order(AuthInputKind::Passthrough, ProviderKind::Zai);
+    assert!(!order.contains(&FormField::SanitizeEmptyTools));
+}
+```
+
+Add to the `#[cfg(test)] mod tests` in `crates/proxy-tui/src/validate.rs` (copy the harness of the existing `codex_provider_preserves_reasoning_effort` test for `FormInputs`/`validate_provider_form` shape):
+
+```rust
+#[test]
+fn kimi_provider_preserves_sanitize_empty_tools() {
+    let input = FormInputs {
+        // …copy all other fields from a neighboring test's FormInputs literal,
+        // setting: kind: "kimi", sanitize_empty_tools: true …
+        sanitize_empty_tools: true,
+        ..
+    };
+    let cfg = ConfigPayload::default();
+    let provider = validate_provider_form(&input, &cfg).unwrap();
+    assert_eq!(provider.sanitize_empty_tools, Some(true));
+}
+
+#[test]
+fn non_kimi_provider_drops_sanitize_empty_tools() {
+    let input = FormInputs {
+        // …kind: "zai", sanitize_empty_tools: true …
+        sanitize_empty_tools: true,
+        ..
+    };
+    let cfg = ConfigPayload::default();
+    let provider = validate_provider_form(&input, &cfg).unwrap();
+    assert_eq!(provider.sanitize_empty_tools, None);
+}
+```
+
+(Fill the `..` with the exact fields the local `FormInputs` requires — the compiler lists them; there is no `Default` for `FormInputs`, so copy a neighboring test's literal.)
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `cargo test -p proxy-tui --lib -- sanitize_empty_tools`
+Expected: FAIL — `FormField::SanitizeEmptyTools` and the `FormInputs`/`ProviderFormModal` fields don't exist.
+
+- [ ] **Step 3: Add the enum variant + modal field (app.rs)**
+
+- In `enum FormField` (~:548) add `SanitizeEmptyTools`.
+- In `struct ProviderFormModal` (~:627) add `pub sanitize_empty_tools: bool,`; set `sanitize_empty_tools: false` in the `Default`/new init (~:652); in the edit constructor (~:675) set `sanitize_empty_tools: p.sanitize_empty_tools.unwrap_or(false),`.
+- In `field_order` (~:586), after the `ThinkingMode` push, add:
+
+```rust
+    if kind == ProviderKind::Kimi {
+        order.push(FormField::SanitizeEmptyTools);
+    }
+```
+
+- [ ] **Step 4: Add the toggle key handling (main.rs ~:1200)**
+
+In the same match arm that cycles `FormField::ThinkingMode` on `←`/`→`, add a case that flips the bool:
+
+```rust
+    FormField::SanitizeEmptyTools => {
+        m.sanitize_empty_tools = !m.sanitize_empty_tools;
+    }
+```
+
+(Both left and right flip it; a bool has two states.)
+
+- [ ] **Step 5: Render the row (ui.rs ~:1263)**
+
+Mirror the `FormField::ThinkingMode` render row:
+
+```rust
+    render_field_row(
+        // …same helper/args the ThinkingMode row uses…
+        FormField::SanitizeEmptyTools,
+        "Sanitize empty tools:",
+        format!("< {} >    [←/→ to toggle]", if m.sanitize_empty_tools { "on" } else { "off" }),
+    );
+```
+
+Gate its rendering the same way the ThinkingMode row is gated to Minimax — only draw it when the current kind is Kimi (follow however the surrounding code conditionally renders `ThinkingMode`).
+
+- [ ] **Step 6: Thread it through FormInputs (main.rs + validate.rs)**
+
+- In `validate::FormInputs` (~:45) add `pub sanitize_empty_tools: bool,`.
+- In both `FormInputs { … }` constructions in `main.rs` (~:1132, ~:1270) add `sanitize_empty_tools: m.sanitize_empty_tools,`.
+- In `validate_provider_form` (~:104), replace the hardcoded `sanitize_empty_tools: None,` (`:131`) with:
+
+```rust
+        sanitize_empty_tools: if input.kind == "kimi" {
+            Some(input.sanitize_empty_tools)
+        } else {
+            None
+        },
+```
+
+- Fix any other `FormInputs { … }` literals the compiler flags (existing tests) by adding `sanitize_empty_tools: false,`.
+
+- [ ] **Step 7: Run tests to verify they pass**
+
+Run: `cargo test -p proxy-tui --lib`
+Expected: PASS (including the four new tests).
+
+- [ ] **Step 8: Full gate**
+
+Run: `cargo test --workspace && cargo clippy --workspace -- -D warnings && cargo fmt --check`
+Expected: PASS / clean.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add crates/proxy-tui/src
+git commit -m "feat(proxy-tui): add sanitize_empty_tools toggle to provider form"
+```
+
+---
+
 ## Self-Review
 
 **Spec coverage:**
@@ -1084,6 +1235,7 @@ git commit -m "test(proxy): end-to-end no-op tool filter streaming tests"
 - Non-2xx responses not sanitized → Task 5 (`(200..300)` guard). ✔
 - wiremock integration, flag on & off → Task 6. ✔
 - Disable at runtime via admin API → Task 1 mapping (round-trips the flag). ✔
+- Set/toggle via TUI provider form (Kimi only), preserving the value on edit → Task 7. ✔
 
 **Placeholder scan:** No TBD/TODO. All code blocks are complete and self-contained.
 
