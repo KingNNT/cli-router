@@ -14,6 +14,7 @@ pub mod minimax_stream;
 pub mod openai;
 pub mod routing;
 pub mod token_refresh;
+mod tool_sanitizer;
 pub mod zai;
 
 pub use anthropic::AnthropicProvider;
