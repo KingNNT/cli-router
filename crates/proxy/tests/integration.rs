@@ -430,6 +430,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             thinking_mode: proxy::config::ThinkingMode::SplitOnly,
             max_concurrent: None,
             sanitize_empty_tools: false,
+            enabled: true,
         }],
         routing: vec![RoutingRule {
             match_spec: MatchSpec {

@@ -27,6 +27,8 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     pub kind: ProviderKind,
     #[serde(default)]
     pub auth: AuthConfig,
@@ -298,6 +300,21 @@ impl Config {
                 }
             }
         }
+        for (i, r) in self.routing.iter().enumerate() {
+            if let Some(p) = self.providers.iter().find(|p| p.name == r.provider) && !p.enabled {
+                return Err(ConfigError::Validation(format!(
+                    "routing rule {i} references disabled provider '{}'",
+                    r.provider
+                )));
+            }
+            for fb in &r.fallback {
+                if let Some(p) = self.providers.iter().find(|p| p.name == *fb) && !p.enabled {
+                    return Err(ConfigError::Validation(format!(
+                        "routing rule {i} fallback references disabled provider '{fb}'"
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -473,6 +490,100 @@ mod tests {
     }
 
     #[test]
+    fn provider_config_defaults_enabled_to_true() {
+        let json = r#"{"name":"moonshot","kind":"kimi"}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
+        assert!(provider.enabled);
+    }
+
+    #[test]
+    fn validate_rejects_disabled_provider_in_routing() {
+        let cfg = Config {
+            port: 8787,
+            proxy_db: PathBuf::new(),
+            pricing_db: PathBuf::new(),
+            providers: vec![ProviderConfig {
+                name: "disabled".into(),
+                kind: ProviderKind::Anthropic,
+                auth: AuthConfig::Passthrough,
+                base_url: None,
+                openai_base_url: None,
+                reasoning_effort: None,
+                thinking_mode: ThinkingMode::SplitOnly,
+                max_concurrent: None,
+                sanitize_empty_tools: false,
+                enabled: false,
+            }],
+            routing: vec![RoutingRule {
+                match_spec: MatchSpec {
+                    model: Some("*".into()),
+                },
+                provider: "disabled".into(),
+                fallback: vec![],
+                strategy: Default::default(),
+                priority: None,
+            }],
+            affinity: AffinityConfig::default(),
+            quota: Vec::new(),
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            format!("{err}").contains("routing rule 0 references disabled provider 'disabled'")
+        );
+    }
+
+    #[test]
+    fn validate_rejects_disabled_provider_in_fallback() {
+        let cfg = Config {
+            port: 8787,
+            proxy_db: PathBuf::new(),
+            pricing_db: PathBuf::new(),
+            providers: vec![
+                ProviderConfig {
+                    name: "main".into(),
+                    kind: ProviderKind::Anthropic,
+                    auth: AuthConfig::Passthrough,
+                    base_url: None,
+                    openai_base_url: None,
+                    reasoning_effort: None,
+                    thinking_mode: ThinkingMode::SplitOnly,
+                    max_concurrent: None,
+                    sanitize_empty_tools: false,
+                    enabled: true,
+                },
+                ProviderConfig {
+                    name: "fallback".into(),
+                    kind: ProviderKind::Zai,
+                    auth: AuthConfig::Passthrough,
+                    base_url: None,
+                    openai_base_url: None,
+                    reasoning_effort: None,
+                    thinking_mode: ThinkingMode::SplitOnly,
+                    max_concurrent: None,
+                    sanitize_empty_tools: false,
+                    enabled: false,
+                },
+            ],
+            routing: vec![RoutingRule {
+                match_spec: MatchSpec {
+                    model: Some("*".into()),
+                },
+                provider: "main".into(),
+                fallback: vec!["fallback".into()],
+                strategy: Default::default(),
+                priority: None,
+            }],
+            affinity: AffinityConfig::default(),
+            quota: Vec::new(),
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            format!("{err}")
+                .contains("routing rule 0 fallback references disabled provider 'fallback'")
+        );
+    }
+
+    #[test]
     fn validate_rejects_empty_providers() {
         let cfg = Config {
             port: 8787,
@@ -502,6 +613,7 @@ mod tests {
                 thinking_mode: ThinkingMode::SplitOnly,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
+                enabled: true,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -536,6 +648,7 @@ mod tests {
                     thinking_mode: ThinkingMode::SplitOnly,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
+                    enabled: true,
                 },
                 ProviderConfig {
                     name: "x".into(),
@@ -547,6 +660,7 @@ mod tests {
                     thinking_mode: ThinkingMode::SplitOnly,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
+                    enabled: true,
                 },
             ],
             routing: vec![RoutingRule {
@@ -580,6 +694,7 @@ mod tests {
                 thinking_mode: ThinkingMode::SplitOnly,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
+                enabled: true,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {

@@ -356,6 +356,7 @@ mod tests {
             thinking_mode: ThinkingMode::SplitOnly,
             max_concurrent: None,
             sanitize_empty_tools: false,
+            enabled: true,
         }
     }
 
@@ -398,6 +399,7 @@ mod tests {
                 thinking_mode: ThinkingMode::SplitOnly,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
+                enabled: true,
             }],
             ..Config {
                 port: 0,
@@ -452,6 +454,7 @@ mod tests {
             thinking_mode: ThinkingMode::SplitOnly,
             max_concurrent: None,
             sanitize_empty_tools: false,
+            enabled: true,
         });
 
         // The registry must surface the newly added provider without a restart.
@@ -479,6 +482,7 @@ mod tests {
             thinking_mode: ThinkingMode::SplitOnly,
             max_concurrent: None,
             sanitize_empty_tools: false,
+            enabled: true,
         });
         let live = LiveAccountUsage::new(Arc::new(std::sync::RwLock::new(config)));
 

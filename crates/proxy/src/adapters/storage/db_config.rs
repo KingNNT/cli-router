@@ -233,6 +233,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
                 ),
                 max_concurrent: row.get::<_, Option<i64>>(12)?.map(|v| v.max(0) as usize),
                 sanitize_empty_tools: row.get::<_, i64>(13)? != 0,
+                enabled: true,
             })
         })
         .map_err(db_err)?;
@@ -467,6 +468,7 @@ mod tests {
             thinking_mode: ThinkingMode::SplitOnly,
             max_concurrent: None,
             sanitize_empty_tools: false,
+            enabled: true,
         });
         cfg.routing.push(RoutingRule {
             match_spec: MatchSpec {
@@ -558,6 +560,7 @@ mod tests {
                 thinking_mode: ThinkingMode::SplitOnly,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
+                enabled: true,
             });
             repo.save(&cfg).unwrap();
             let loaded = repo.load().unwrap();
@@ -618,6 +621,7 @@ mod tests {
             thinking_mode: ThinkingMode::SplitOnly,
             max_concurrent: None,
             sanitize_empty_tools: true,
+            enabled: true,
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();

@@ -795,6 +795,7 @@ fn payload_to_config(
                 thinking_mode,
                 max_concurrent: pp.max_concurrent,
                 sanitize_empty_tools: pp.sanitize_empty_tools.unwrap_or(false),
+                enabled: true,
             })
         })
         .collect::<Result<Vec<_>, ProxyError>>()?;
@@ -1251,6 +1252,7 @@ mod tests {
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
+                enabled: true,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -1290,6 +1292,7 @@ mod tests {
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
+                enabled: true,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -1366,6 +1369,7 @@ mod tests {
                 thinking_mode: crate::config::ThinkingMode::StripAll,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
+                enabled: true,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -1407,6 +1411,7 @@ mod tests {
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 max_concurrent: None,
                 sanitize_empty_tools: true,
+                enabled: true,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
