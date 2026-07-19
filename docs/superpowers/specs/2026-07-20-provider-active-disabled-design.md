@@ -150,7 +150,7 @@ Error messages:
 ### Provider list
 
 - Disabled providers are rendered with a gray style (`Color::DarkGray`).
-- The provider list footer hints at the new hotkey (`d` toggle enable/disable).
+- The provider list footer hints at the new hotkey (`z` toggle enable/disable).
 - Pressing `d` on the selected provider flips its `enabled` flag.
 
 ### Disable-with-routing-references confirmation
