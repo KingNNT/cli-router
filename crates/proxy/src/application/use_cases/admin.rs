@@ -697,6 +697,7 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
             .map(|p| ProviderPayload {
                 name: p.name.clone(),
                 kind: kind_to_str(p.kind).into(),
+                enabled: p.enabled,
                 auth: auth_to_payload(&p.auth),
                 base_url: p.base_url.clone(),
                 openai_base_url: p.openai_base_url.clone(),
@@ -1325,6 +1326,7 @@ mod tests {
             providers: vec![ProviderPayload {
                 name: "codex-main".into(),
                 kind: "codex".into(),
+                enabled: true,
                 auth: AuthPayload::CodexAuto,
                 base_url: None,
                 openai_base_url: None,
@@ -1438,6 +1440,7 @@ mod tests {
             providers: vec![ProviderPayload {
                 name: "minimax".into(),
                 kind: "minimax".into(),
+                enabled: true,
                 auth: AuthPayload::Passthrough,
                 base_url: None,
                 openai_base_url: None,
@@ -1492,6 +1495,7 @@ mod tests {
             providers: vec![ProviderPayload {
                 name: "x".into(),
                 kind: "bogus".into(),
+                enabled: true,
                 auth: AuthPayload::Passthrough,
                 base_url: None,
                 openai_base_url: None,
