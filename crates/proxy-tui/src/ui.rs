@@ -1448,9 +1448,7 @@ fn draw_disable_confirm_modal(f: &mut Frame, m: &DisableConfirmModal) {
         lines.push(Line::from(Span::raw(rule.clone())));
     }
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::raw(
-        "Delete those rules when disabling?",
-    )));
+    lines.push(Line::from(Span::raw("Delete those rules when disabling?")));
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
         Span::styled("[y] Yes", Style::default().fg(Color::Green)),

@@ -626,10 +626,12 @@ mod tests {
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();
-        assert!(loaded
-            .providers
-            .iter()
-            .any(|p| p.name == "moonshot" && p.sanitize_empty_tools));
+        assert!(
+            loaded
+                .providers
+                .iter()
+                .any(|p| p.name == "moonshot" && p.sanitize_empty_tools)
+        );
     }
 
     #[test]
@@ -650,9 +652,11 @@ mod tests {
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();
-        assert!(loaded
-            .providers
-            .iter()
-            .any(|p| p.name == "off" && !p.enabled));
+        assert!(
+            loaded
+                .providers
+                .iter()
+                .any(|p| p.name == "off" && !p.enabled)
+        );
     }
 }

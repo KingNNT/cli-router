@@ -288,13 +288,16 @@ impl Config {
             ));
         }
         for (i, r) in self.routing.iter().enumerate() {
-            let primary = self.providers
+            let primary = self
+                .providers
                 .iter()
                 .find(|p| p.name == r.provider)
-                .ok_or_else(|| ConfigError::Validation(format!(
-                    "routing rule {i} references unknown provider '{}'",
-                    r.provider
-                )))?;
+                .ok_or_else(|| {
+                    ConfigError::Validation(format!(
+                        "routing rule {i} references unknown provider '{}'",
+                        r.provider
+                    ))
+                })?;
             if !primary.enabled {
                 return Err(ConfigError::Validation(format!(
                     "routing rule {i} references disabled provider '{}'",
@@ -302,12 +305,15 @@ impl Config {
                 )));
             }
             for fb in &r.fallback {
-                let fallback = self.providers
+                let fallback = self
+                    .providers
                     .iter()
                     .find(|p| p.name == *fb)
-                    .ok_or_else(|| ConfigError::Validation(format!(
-                        "routing rule {i} fallback references unknown provider '{fb}'"
-                    )))?;
+                    .ok_or_else(|| {
+                        ConfigError::Validation(format!(
+                            "routing rule {i} fallback references unknown provider '{fb}'"
+                        ))
+                    })?;
                 if !fallback.enabled {
                     return Err(ConfigError::Validation(format!(
                         "routing rule {i} fallback references disabled provider '{fb}'"

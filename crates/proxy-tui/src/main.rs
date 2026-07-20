@@ -11,10 +11,10 @@ mod views;
 
 use crate::app::{
     ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal,
-    DisableConfirmModal, FormField,
-    FormMode, FormState, Modal, PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderAction,
-    ProviderFormModal, ProviderKind, QuotaField, QuotaFormModal, RangePreset, RoutingField,
-    RoutingFormModal, TestProviderModal, TestState, View,
+    DisableConfirmModal, FormField, FormMode, FormState, Modal, PROVIDER_TOOLBAR,
+    PROVIDER_TOOLBAR_GAP, ProviderAction, ProviderFormModal, ProviderKind, QuotaField,
+    QuotaFormModal, RangePreset, RoutingField, RoutingFormModal, TestProviderModal, TestState,
+    View,
 };
 use crate::client::AdminClient;
 use chrono::{Datelike, Local, TimeZone};
@@ -1053,8 +1053,9 @@ fn handle_disable_confirm_key(
                 return Modal::None;
             }
             cfg.providers[m.provider_index].enabled = false;
-            cfg.routing
-                .retain(|r| r.provider != m.provider_name && !r.fallback.contains(&m.provider_name));
+            cfg.routing.retain(|r| {
+                r.provider != m.provider_name && !r.fallback.contains(&m.provider_name)
+            });
             match client.put_config(&cfg) {
                 Ok(updated) => {
                     state.set_config(Ok(updated));
