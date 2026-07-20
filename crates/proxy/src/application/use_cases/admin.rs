@@ -796,7 +796,7 @@ fn payload_to_config(
                 thinking_mode,
                 max_concurrent: pp.max_concurrent,
                 sanitize_empty_tools: pp.sanitize_empty_tools.unwrap_or(false),
-                enabled: true,
+                enabled: pp.enabled,
             })
         })
         .collect::<Result<Vec<_>, ProxyError>>()?;
@@ -1560,6 +1560,69 @@ mod tests {
             "quota rules must survive a config PUT round-trip"
         );
         assert_eq!(roundtripped.quota[0].provider, "zai");
+    }
+
+    #[test]
+    fn payload_to_config_parses_enabled() {
+        let original = Config {
+            port: 8787,
+            proxy_db: PathBuf::from("/tmp/proxy.db"),
+            pricing_db: PathBuf::from("/tmp/pricing.db"),
+            providers: vec![ProviderConfig {
+                name: "off".into(),
+                kind: ProviderKind::Anthropic,
+                auth: AuthConfig::Passthrough,
+                base_url: None,
+                openai_base_url: None,
+                reasoning_effort: None,
+                thinking_mode: crate::config::ThinkingMode::SplitOnly,
+                max_concurrent: None,
+                sanitize_empty_tools: false,
+                enabled: false,
+            }],
+            routing: vec![],
+            affinity: Default::default(),
+            quota: vec![],
+        };
+        let payload = config_to_payload(&original);
+        // A disabled provider with no routing references is a valid config.
+        let roundtripped = payload_to_config(
+            payload,
+            original.proxy_db.clone(),
+            original.pricing_db.clone(),
+            &original,
+        )
+        .unwrap();
+        assert!(
+            !roundtripped.providers[0].enabled,
+            "enabled=false must survive a config PUT round-trip"
+        );
+    }
+
+    #[test]
+    fn config_to_payload_round_trips_enabled() {
+        let cfg = Config {
+            port: 8787,
+            proxy_db: PathBuf::from("/tmp/proxy.db"),
+            pricing_db: PathBuf::from("/tmp/pricing.db"),
+            providers: vec![ProviderConfig {
+                name: "off".into(),
+                kind: ProviderKind::Anthropic,
+                auth: AuthConfig::Passthrough,
+                base_url: None,
+                openai_base_url: None,
+                reasoning_effort: None,
+                thinking_mode: crate::config::ThinkingMode::SplitOnly,
+                max_concurrent: None,
+                sanitize_empty_tools: false,
+                enabled: false,
+            }],
+            routing: vec![],
+            affinity: Default::default(),
+            quota: vec![],
+        };
+        let payload = config_to_payload(&cfg);
+        assert!(!payload.providers[0].enabled);
     }
 
     // --- GetAccountUsage tests ---
