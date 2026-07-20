@@ -560,6 +560,8 @@ fn draw_providers_content(f: &mut Frame, area: Rect, state: &AppState) {
         .map(|(i, p)| {
             let style = if i == state.providers_selected {
                 Style::default().fg(Color::Black).bg(Color::Yellow)
+            } else if !p.enabled {
+                Style::default().fg(Color::DarkGray)
             } else {
                 Style::default()
             };
