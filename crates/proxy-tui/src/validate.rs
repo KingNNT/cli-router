@@ -45,6 +45,8 @@ pub struct FormInputs<'a> {
     pub reasoning_effort: Option<&'a str>,
     pub thinking_mode: Option<&'a str>,
     pub sanitize_empty_tools: bool,
+    /// Whether the provider is active and eligible for routing.
+    pub enabled: bool,
     /// Preserved per-provider concurrency cap (not yet editable in the form).
     pub max_concurrent: Option<usize>,
     pub auth: &'a AuthPayload,
@@ -105,7 +107,7 @@ pub fn validate_provider_form(
     Ok(ProviderPayload {
         name: name.to_string(),
         kind: input.kind.to_string(),
-        enabled: true,
+        enabled: input.enabled,
         auth: input.auth.clone(),
         base_url: input
             .base_url
@@ -226,6 +228,7 @@ mod tests {
             editing_index: None,
             original_name: None,
             sanitize_empty_tools: false,
+            enabled: true,
         }
     }
 
@@ -331,6 +334,7 @@ mod tests {
             editing_index: None,
             original_name: None,
             sanitize_empty_tools: false,
+            enabled: true,
         };
 
         let provider = validate_provider_form(&input, &cfg).unwrap();
@@ -353,6 +357,7 @@ mod tests {
             editing_index: None,
             original_name: None,
             sanitize_empty_tools: false,
+            enabled: true,
         };
 
         let provider = validate_provider_form(&input, &cfg).unwrap();
@@ -375,6 +380,7 @@ mod tests {
             editing_index: None,
             original_name: None,
             sanitize_empty_tools: false,
+            enabled: true,
         };
 
         let provider = validate_provider_form(&input, &cfg).unwrap();
@@ -397,6 +403,7 @@ mod tests {
             editing_index: None,
             original_name: None,
             sanitize_empty_tools: true,
+            enabled: true,
         };
 
         let provider = validate_provider_form(&input, &cfg).unwrap();
@@ -419,6 +426,7 @@ mod tests {
             editing_index: None,
             original_name: None,
             sanitize_empty_tools: true,
+            enabled: true,
         };
 
         let provider = validate_provider_form(&input, &cfg).unwrap();

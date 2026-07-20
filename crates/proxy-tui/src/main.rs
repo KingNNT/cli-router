@@ -1131,6 +1131,7 @@ fn submit_non_oauth_save(
         reasoning_effort: m.reasoning_effort.as_option(),
         thinking_mode: m.thinking_mode.as_option(),
         sanitize_empty_tools: m.sanitize_empty_tools,
+        enabled: m.enabled,
 
         max_concurrent: m.max_concurrent,
         auth: &auth,
@@ -1273,6 +1274,7 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
             reasoning_effort: m.reasoning_effort.as_option(),
             thinking_mode: m.thinking_mode.as_option(),
             sanitize_empty_tools: m.sanitize_empty_tools,
+            enabled: m.enabled,
 
             max_concurrent: m.max_concurrent,
             auth: &placeholder_auth,
@@ -1716,6 +1718,7 @@ fn submit_oauth_edit(
         reasoning_effort: m.reasoning_effort.as_option(),
         thinking_mode: m.thinking_mode.as_option(),
         sanitize_empty_tools: m.sanitize_empty_tools,
+        enabled: m.enabled,
 
         max_concurrent: m.max_concurrent,
         auth: &original_auth,

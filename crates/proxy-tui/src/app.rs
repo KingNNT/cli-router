@@ -555,6 +555,7 @@ pub enum FormField {
     SanitizeEmptyTools,
     AuthKind,
     AuthValue,
+    Enabled,
     Save,
 }
 
@@ -593,6 +594,7 @@ fn field_order(auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Vec<For
     if matches!(auth_kind, AuthInputKind::ApiKey | AuthInputKind::Bearer) {
         order.push(FormField::AuthValue);
     }
+    order.push(FormField::Enabled);
     order.push(FormField::Save);
     order
 }
@@ -630,6 +632,8 @@ pub struct ProviderFormModal {
     pub reasoning_effort: ReasoningEffortInput,
     pub thinking_mode: ThinkingModeInput,
     pub sanitize_empty_tools: bool,
+    /// Whether this provider is active and eligible for routing.
+    pub enabled: bool,
     pub auth_kind: AuthInputKind,
     pub auth_value: String,
     /// Preserved across edits (not yet editable in the form UI). Carries the
@@ -653,6 +657,7 @@ impl ProviderFormModal {
             reasoning_effort: ReasoningEffortInput::Unset,
             thinking_mode: ThinkingModeInput::Unset,
             sanitize_empty_tools: false,
+            enabled: true,
             auth_kind: AuthInputKind::Passthrough,
             auth_value: String::new(),
             max_concurrent: None,
@@ -680,6 +685,7 @@ impl ProviderFormModal {
             reasoning_effort: ReasoningEffortInput::from_option(p.reasoning_effort.as_deref()),
             thinking_mode: ThinkingModeInput::from_option(p.thinking_mode.as_deref()),
             sanitize_empty_tools: p.sanitize_empty_tools.unwrap_or(false),
+            enabled: p.enabled,
             auth_kind,
             auth_value,
             max_concurrent: p.max_concurrent,
@@ -1044,8 +1050,15 @@ mod form_field_tests {
         let f = FormField::AuthKind;
         assert_eq!(
             f.next(AuthInputKind::Passthrough, ProviderKind::Anthropic),
-            FormField::Save
+            FormField::Enabled
         );
+    }
+
+    #[test]
+    fn field_order_includes_enabled() {
+        let order = field_order(AuthInputKind::Passthrough, ProviderKind::Anthropic);
+        assert!(order.contains(&FormField::Enabled));
+        assert_eq!(order.last().copied(), Some(FormField::Save));
     }
 
     #[test]
