@@ -10,7 +10,8 @@ mod validate;
 mod views;
 
 use crate::app::{
-    ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal, FormField,
+    ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal,
+    DisableConfirmModal, FormField,
     FormMode, FormState, Modal, PROVIDER_TOOLBAR, PROVIDER_TOOLBAR_GAP, ProviderAction,
     ProviderFormModal, ProviderKind, QuotaField, QuotaFormModal, RangePreset, RoutingField,
     RoutingFormModal, TestProviderModal, TestState, View,
@@ -363,6 +364,7 @@ fn handle_config_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
             KeyCode::Char('e') => open_edit_modal(state),
             KeyCode::Char('d') => open_delete_modal(state),
             KeyCode::Char('t') => open_test_modal(state),
+            KeyCode::Char('z') => toggle_provider_enabled(client, state),
             _ => {}
         },
         ConfigSection::Routing => match k.code {
@@ -852,6 +854,7 @@ fn handle_modal_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         Modal::None => Modal::None,
         Modal::ProviderForm(m) => handle_form_key(k, client, state, m),
         Modal::DeleteConfirm(m) => handle_delete_key(k, client, state, m),
+        Modal::DisableConfirm(m) => handle_disable_confirm_key(k, client, state, m),
         Modal::Help => match k.code {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => Modal::None,
             _ => Modal::Help,
@@ -972,6 +975,102 @@ fn handle_delete_key(
         }
         // Blocked-rules state: only Esc closes.
         _ => Modal::DeleteConfirm(m),
+    }
+}
+
+/// Toggle the selected provider's `enabled` flag. If disabling would affect
+/// routing rules, open a confirmation modal instead of toggling immediately.
+fn toggle_provider_enabled(client: &AdminClient, state: &mut AppState) {
+    let cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+        Some(c) => c,
+        None => return,
+    };
+    let provider_index = state.providers_selected;
+    let prov = match cfg.providers.get(provider_index) {
+        Some(p) => p,
+        None => return,
+    };
+    let provider_name = prov.name.clone();
+    let currently_enabled = prov.enabled;
+
+    // Disabling a referenced provider needs confirmation; enabling or
+    // disabling an unreferenced one can be applied immediately.
+    if !currently_enabled {
+        let mut cfg = cfg;
+        cfg.providers[provider_index].enabled = true;
+        apply_toggle(client, state, cfg, &provider_name, "enabled");
+        return;
+    }
+
+    let rules = crate::validate::rules_referencing(&provider_name, &cfg);
+    if rules.is_empty() {
+        let mut cfg = cfg;
+        cfg.providers[provider_index].enabled = false;
+        apply_toggle(client, state, cfg, &provider_name, "disabled");
+    } else {
+        state.modal = Modal::DisableConfirm(DisableConfirmModal {
+            provider_index,
+            provider_name,
+            rules,
+        });
+    }
+}
+
+fn apply_toggle(
+    client: &AdminClient,
+    state: &mut AppState,
+    cfg: proxy_admin_api::ConfigPayload,
+    provider_name: &str,
+    action: &str,
+) {
+    match client.put_config(&cfg) {
+        Ok(updated) => {
+            state.set_config(Ok(updated));
+            state.flash(format!("{action} {provider_name}"));
+        }
+        Err(e) => state.flash(format!("toggle failed: {e}")),
+    }
+}
+
+fn handle_disable_confirm_key(
+    k: crossterm::event::KeyEvent,
+    client: &AdminClient,
+    state: &mut AppState,
+    m: DisableConfirmModal,
+) -> Modal {
+    match k.code {
+        KeyCode::Esc | KeyCode::Char('n') => Modal::None,
+        KeyCode::Char('y') => {
+            let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
+                Some(c) => c,
+                None => {
+                    state.flash("toggle failed: config not loaded");
+                    return Modal::None;
+                }
+            };
+            if m.provider_index >= cfg.providers.len() {
+                state.flash("toggle failed: provider index out of range");
+                return Modal::None;
+            }
+            cfg.providers[m.provider_index].enabled = false;
+            cfg.routing
+                .retain(|r| r.provider != m.provider_name && !r.fallback.contains(&m.provider_name));
+            match client.put_config(&cfg) {
+                Ok(updated) => {
+                    state.set_config(Ok(updated));
+                    state.flash(format!(
+                        "disabled {} and removed referenced rules",
+                        m.provider_name
+                    ));
+                    Modal::None
+                }
+                Err(e) => {
+                    state.flash(format!("disable failed: {e}"));
+                    Modal::None
+                }
+            }
+        }
+        _ => Modal::DisableConfirm(m),
     }
 }
 

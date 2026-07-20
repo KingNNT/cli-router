@@ -182,6 +182,7 @@ pub enum Modal {
     TestProvider(TestProviderModal),
     ProviderForm(ProviderFormModal),
     DeleteConfirm(DeleteConfirmModal),
+    DisableConfirm(DisableConfirmModal),
     Help,
     RoutingForm(RoutingFormModal),
     QuotaForm(QuotaFormModal),
@@ -701,6 +702,15 @@ pub struct DeleteConfirmModal {
     pub provider_name: String,
     /// Non-empty means delete is blocked. UI must not offer `[y]` in that case.
     pub blocking_rules: Vec<String>,
+}
+
+/// Confirmation modal shown when disabling a provider that is referenced by
+/// one or more routing rules. `rules` is non-empty by construction.
+#[derive(Debug, Clone)]
+pub struct DisableConfirmModal {
+    pub provider_index: usize,
+    pub provider_name: String,
+    pub rules: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -2,9 +2,9 @@
 //! layout: tab bar, body for the active view, status line, optional modal.
 
 use crate::app::{
-    ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal, FormField,
-    FormMode, FormState, Modal, ProviderFormModal, QuotaField, QuotaFormModal, RoutingField,
-    RoutingFormModal, TestProviderModal, TestState, View,
+    ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal,
+    DisableConfirmModal, FormField, FormMode, FormState, Modal, ProviderFormModal, QuotaField,
+    QuotaFormModal, RoutingField, RoutingFormModal, TestProviderModal, TestState, View,
 };
 use chrono::{Local, TimeZone};
 use proxy_admin_api::{
@@ -41,6 +41,7 @@ pub fn draw(f: &mut Frame, state: &AppState) {
         Modal::TestProvider(m) => draw_test_modal(f, m),
         Modal::ProviderForm(m) => draw_form_modal(f, m),
         Modal::DeleteConfirm(m) => draw_delete_confirm_modal(f, m),
+        Modal::DisableConfirm(m) => draw_disable_confirm_modal(f, m),
         Modal::Help => draw_help_modal(f),
         Modal::RoutingForm(m) => draw_routing_form_modal(f, m),
         Modal::QuotaForm(m) => draw_quota_form_modal(f, m),
@@ -421,6 +422,7 @@ fn selected_provider_footer(
         parts.push(base_url.to_string());
     }
     parts.push("[t] test".into());
+    parts.push("[z] toggle active".into());
     Some(parts.join(" · "))
 }
 
@@ -879,6 +881,7 @@ fn draw_provider_toolbar(f: &mut Frame, area: Rect) {
             "[a] Add",
             "[e/Enter] Edit",
             "[d] Delete",
+            "[z] Toggle",
             "[t] Test",
             "[r] Refresh",
         ],
@@ -1417,6 +1420,42 @@ fn draw_delete_confirm_modal(f: &mut Frame, m: &DeleteConfirmModal) {
             Style::default().add_modifier(Modifier::BOLD),
         )));
     }
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn draw_disable_confirm_modal(f: &mut Frame, m: &DisableConfirmModal) {
+    let area = centered_rect(70, 60, f.area());
+    f.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Disable provider ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(
+            "Provider '{}' is referenced by {} routing rule(s).",
+            m.provider_name,
+            m.rules.len()
+        ),
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+    for rule in &m.rules {
+        lines.push(Line::from(Span::raw(rule.clone())));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::raw(
+        "Delete those rules when disabling?",
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("[y] Yes", Style::default().fg(Color::Green)),
+        Span::raw("   "),
+        Span::styled("[n] No", Style::default().fg(Color::Red)),
+    ]));
+
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
