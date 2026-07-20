@@ -23,6 +23,7 @@ Thumbs.db
 .env.*
 !.env.example
 .mise.local.toml
+mise.local.toml
 
 # Worktrees
 /.worktrees/

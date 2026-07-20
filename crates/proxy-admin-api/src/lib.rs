@@ -114,6 +114,8 @@ pub struct ConfigPayload {
 pub struct ProviderPayload {
     pub name: String,
     pub kind: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     #[serde(default)]
     pub auth: AuthPayload,
     #[serde(default)]
@@ -579,6 +581,7 @@ mod config_payload_tests {
             providers: vec![ProviderPayload {
                 name: "anthropic".into(),
                 kind: "anthropic".into(),
+                enabled: true,
                 auth: AuthPayload::Passthrough,
                 base_url: None,
                 openai_base_url: None,
@@ -624,5 +627,19 @@ mod config_payload_tests {
         assert!(parsed.routing.is_empty());
         assert!(parsed.quota.is_empty());
         assert!(parsed.affinity.enabled);
+    }
+
+    #[test]
+    fn provider_payload_defaults_enabled_to_true() {
+        let json = r#"{"name":"anthropic","kind":"anthropic","auth":{"type":"passthrough"}}"#;
+        let payload: ProviderPayload = serde_json::from_str(json).unwrap();
+        assert!(payload.enabled);
+    }
+
+    #[test]
+    fn provider_payload_deserializes_enabled_false() {
+        let json = r#"{"name":"anthropic","kind":"anthropic","auth":{"type":"passthrough"},"enabled":false}"#;
+        let payload: ProviderPayload = serde_json::from_str(json).unwrap();
+        assert!(!payload.enabled);
     }
 }

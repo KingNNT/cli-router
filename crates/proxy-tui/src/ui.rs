@@ -2,9 +2,9 @@
 //! layout: tab bar, body for the active view, status line, optional modal.
 
 use crate::app::{
-    ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal, FormField,
-    FormMode, FormState, Modal, ProviderFormModal, QuotaField, QuotaFormModal, RoutingField,
-    RoutingFormModal, TestProviderModal, TestState, View,
+    ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal,
+    DisableConfirmModal, FormField, FormMode, FormState, Modal, ProviderFormModal, QuotaField,
+    QuotaFormModal, RoutingField, RoutingFormModal, TestProviderModal, TestState, View,
 };
 use chrono::{Local, TimeZone};
 use proxy_admin_api::{
@@ -41,6 +41,7 @@ pub fn draw(f: &mut Frame, state: &AppState) {
         Modal::TestProvider(m) => draw_test_modal(f, m),
         Modal::ProviderForm(m) => draw_form_modal(f, m),
         Modal::DeleteConfirm(m) => draw_delete_confirm_modal(f, m),
+        Modal::DisableConfirm(m) => draw_disable_confirm_modal(f, m),
         Modal::Help => draw_help_modal(f),
         Modal::RoutingForm(m) => draw_routing_form_modal(f, m),
         Modal::QuotaForm(m) => draw_quota_form_modal(f, m),
@@ -421,6 +422,7 @@ fn selected_provider_footer(
         parts.push(base_url.to_string());
     }
     parts.push("[t] test".into());
+    parts.push("[z] toggle active".into());
     Some(parts.join(" · "))
 }
 
@@ -558,6 +560,8 @@ fn draw_providers_content(f: &mut Frame, area: Rect, state: &AppState) {
         .map(|(i, p)| {
             let style = if i == state.providers_selected {
                 Style::default().fg(Color::Black).bg(Color::Yellow)
+            } else if !p.enabled {
+                Style::default().fg(Color::DarkGray)
             } else {
                 Style::default()
             };
@@ -879,6 +883,7 @@ fn draw_provider_toolbar(f: &mut Frame, area: Rect) {
             "[a] Add",
             "[e/Enter] Edit",
             "[d] Delete",
+            "[z] Toggle",
             "[t] Test",
             "[r] Refresh",
         ],
@@ -1289,6 +1294,14 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
         };
         lines.push(row(FormField::AuthValue, "Auth Value:", display));
     }
+    lines.push(row(
+        FormField::Enabled,
+        "Active:",
+        format!(
+            "< {} >    [←/→ to toggle]",
+            if m.enabled { "yes" } else { "no" }
+        ),
+    ));
     lines.push(Line::from(""));
     lines.push(row(FormField::Save, "[ Save ]", "(Enter to submit)".into()));
     lines.push(Line::from(""));
@@ -1409,6 +1422,40 @@ fn draw_delete_confirm_modal(f: &mut Frame, m: &DeleteConfirmModal) {
             Style::default().add_modifier(Modifier::BOLD),
         )));
     }
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn draw_disable_confirm_modal(f: &mut Frame, m: &DisableConfirmModal) {
+    let area = centered_rect(70, 60, f.area());
+    f.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Disable provider ");
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(Line::from(Span::styled(
+        format!(
+            "Provider '{}' is referenced by {} routing rule(s).",
+            m.provider_name,
+            m.rules.len()
+        ),
+        Style::default().add_modifier(Modifier::BOLD),
+    )));
+    lines.push(Line::from(""));
+    for rule in &m.rules {
+        lines.push(Line::from(Span::raw(rule.clone())));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::raw("Delete those rules when disabling?")));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("[y] Yes", Style::default().fg(Color::Green)),
+        Span::raw("   "),
+        Span::styled("[n] No", Style::default().fg(Color::Red)),
+    ]));
+
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
@@ -1751,6 +1798,7 @@ mod tests {
             ProviderPayload {
                 name: "anthropic".into(),
                 kind: "anthropic".into(),
+                enabled: true,
                 auth: AuthPayload::AnthropicOAuth {
                     access_token: "access".into(),
                     refresh_token: "refresh".into(),
@@ -1766,6 +1814,7 @@ mod tests {
             ProviderPayload {
                 name: "openai".into(),
                 kind: "openai".into(),
+                enabled: true,
                 auth: AuthPayload::ApiKey {
                     value: "sk-test-secret-value".into(),
                 },
@@ -1999,6 +2048,19 @@ mod tests {
         assert!(output.contains("←/→: cycle"));
         assert!(output.contains("Enter on Save: submit"));
         assert!(!output.contains("Tab/Shift+Tab: move"));
+    }
+
+    #[test]
+    fn provider_form_shows_active_toggle() {
+        let mut state = AppState::new();
+        let mut modal = crate::app::ProviderFormModal::new_for_add();
+        modal.enabled = false;
+        state.modal = Modal::ProviderForm(modal);
+
+        let output = render_state(&state, 120, 30);
+
+        assert!(output.contains("Active:"));
+        assert!(output.contains("< no >"));
     }
 
     #[test]

@@ -10,6 +10,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (5, MIGRATION_V5),
     (6, MIGRATION_V6),
     (7, MIGRATION_V7),
+    (8, MIGRATION_V8),
 ];
 
 const MIGRATION_V1: &str = r#"
@@ -115,6 +116,10 @@ ALTER TABLE providers ADD COLUMN max_concurrent INTEGER;
 
 const MIGRATION_V7: &str = r#"
 ALTER TABLE providers ADD COLUMN sanitize_empty_tools INTEGER NOT NULL DEFAULT 0;
+"#;
+
+const MIGRATION_V8: &str = r#"
+ALTER TABLE providers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
 "#;
 
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
