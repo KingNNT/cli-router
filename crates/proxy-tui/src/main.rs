@@ -369,7 +369,13 @@ fn handle_config_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
         },
         ConfigSection::Routing => match k.code {
             KeyCode::Char('a') => {
-                state.modal = Modal::RoutingForm(RoutingFormModal::new_for_add());
+                let providers = state
+                    .config
+                    .as_ref()
+                    .and_then(|r| r.as_ref().ok())
+                    .map(|c| c.providers.iter().map(|p| p.name.clone()).collect())
+                    .unwrap_or_default();
+                state.modal = Modal::RoutingForm(RoutingFormModal::new_for_add(providers));
             }
             KeyCode::Char('e') => {
                 open_routing_edit_modal(state);
@@ -1444,15 +1450,22 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
 
 fn open_routing_edit_modal(state: &mut AppState) {
     let cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()) {
-        Some(c) => c,
+        Some(c) => c.clone(),
         None => return,
     };
     let idx = state.routing_selected;
     let rule = match cfg.routing.get(idx) {
-        Some(r) => r,
+        Some(r) => r.clone(),
         None => return,
     };
-    state.modal = Modal::RoutingForm(RoutingFormModal::from_rule(idx, rule));
+    let available_providers: Vec<String> = cfg.providers.iter().map(|p| p.name.clone()).collect();
+    if !available_providers.contains(&rule.provider) {
+        state.flash(format!(
+            "\u{26a0} original provider '{}' no longer exists",
+            rule.provider
+        ));
+    }
+    state.modal = Modal::RoutingForm(RoutingFormModal::from_rule(idx, &rule, available_providers));
 }
 
 fn open_quota_edit_modal(state: &mut AppState) {
@@ -1547,6 +1560,51 @@ fn handle_routing_form_key(
             m.focused = m.focused.prev();
             Modal::RoutingForm(m)
         }
+        KeyCode::Left | KeyCode::Right | KeyCode::Enter if m.focused == RoutingField::Provider => {
+            if m.available_providers.is_empty() {
+                return Modal::RoutingForm(m);
+            }
+            let len = m.available_providers.len();
+            let forward = matches!(k.code, KeyCode::Right | KeyCode::Enter);
+            m.provider_index = if forward {
+                (m.provider_index + 1) % len
+            } else if m.provider_index == 0 {
+                len - 1
+            } else {
+                m.provider_index - 1
+            };
+            Modal::RoutingForm(m)
+        }
+        KeyCode::Left | KeyCode::Right if m.focused == RoutingField::Fallback => {
+            if m.available_providers.is_empty() {
+                return Modal::RoutingForm(m);
+            }
+            let len = m.available_providers.len();
+            m.fallback_cursor = if matches!(k.code, KeyCode::Right) {
+                (m.fallback_cursor + 1) % len
+            } else if m.fallback_cursor == 0 {
+                len - 1
+            } else {
+                m.fallback_cursor - 1
+            };
+            Modal::RoutingForm(m)
+        }
+        KeyCode::Enter if m.focused == RoutingField::Fallback => {
+            if m.available_providers.is_empty() {
+                return Modal::RoutingForm(m);
+            }
+            let candidate = m.available_providers[m.fallback_cursor].clone();
+            if let Some(pos) = m.fallback.iter().position(|f| f == &candidate) {
+                m.fallback.remove(pos);
+            } else {
+                m.fallback.push(candidate);
+            }
+            Modal::RoutingForm(m)
+        }
+        KeyCode::Backspace if m.focused == RoutingField::Fallback => {
+            m.fallback.pop();
+            Modal::RoutingForm(m)
+        }
         KeyCode::Enter if m.focused == RoutingField::Strategy => {
             m.strategy = strategy_cycle(&m.strategy);
             Modal::RoutingForm(m)
@@ -1557,8 +1615,13 @@ fn handle_routing_form_key(
                 m.error = Some("match model is required".into());
                 return Modal::RoutingForm(m);
             }
-            if m.provider.trim().is_empty() {
-                m.error = Some("provider is required".into());
+            if m.available_providers.is_empty() {
+                m.error = Some("no providers configured; add a provider first".into());
+                return Modal::RoutingForm(m);
+            }
+            let provider_name = m.available_providers[m.provider_index].clone();
+            if m.fallback.iter().any(|f| f == &provider_name) {
+                m.error = Some("fallback must not contain the primary provider".into());
                 return Modal::RoutingForm(m);
             }
 
@@ -1574,13 +1637,8 @@ fn handle_routing_form_key(
                 r#match: proxy_admin_api::MatchPayload {
                     model: Some(m.match_model.trim().to_string()),
                 },
-                provider: m.provider.trim().to_string(),
-                fallback: m
-                    .fallback
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect(),
+                provider: provider_name,
+                fallback: m.fallback.clone(),
                 strategy: m.strategy.clone(),
                 priority: m.priority.trim().parse::<u32>().ok(),
             };
@@ -1619,7 +1677,9 @@ fn handle_routing_form_key(
             Modal::RoutingForm(m)
         }
         KeyCode::Char(c) => {
-            edit_routing_text(&mut m, |s| s.push(c));
+            edit_routing_text(&mut m, |s| {
+                s.push(c);
+            });
             Modal::RoutingForm(m)
         }
         _ => Modal::RoutingForm(m),
@@ -1630,8 +1690,6 @@ fn edit_routing_text(m: &mut RoutingFormModal, f: impl FnOnce(&mut String)) {
     m.error = None;
     let target: Option<&mut String> = match m.focused {
         RoutingField::MatchModel => Some(&mut m.match_model),
-        RoutingField::Provider => Some(&mut m.provider),
-        RoutingField::Fallback => Some(&mut m.fallback),
         RoutingField::Priority => Some(&mut m.priority),
         _ => None,
     };
@@ -2036,9 +2094,8 @@ mod modal_key_tests {
     fn routing_form_enter_on_non_save_does_not_submit() {
         let client = client();
         let mut state = app_state_with_config();
-        let mut form = RoutingFormModal::new_for_add();
+        let mut form = RoutingFormModal::new_for_add(vec!["anthropic".to_string()]);
         form.match_model = "claude-*".into();
-        form.provider = "anthropic".into();
         form.focused = RoutingField::Provider;
 
         let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, form);
@@ -2046,6 +2103,7 @@ mod modal_key_tests {
             panic!("expected routing form modal");
         };
         assert_eq!(m.focused, RoutingField::Provider);
+        assert_eq!(m.provider_index, 0); // Enter cycles, but with 1 provider it stays at 0
         assert!(
             state
                 .config
@@ -2062,7 +2120,7 @@ mod modal_key_tests {
     fn routing_form_down_can_focus_save() {
         let client = client();
         let mut state = app_state_with_config();
-        let mut form = RoutingFormModal::new_for_add();
+        let mut form = RoutingFormModal::new_for_add(vec!["anthropic".to_string()]);
         form.focused = RoutingField::Priority;
 
         let modal = handle_routing_form_key(key(KeyCode::Down), &client, &mut state, form);
@@ -2076,16 +2134,15 @@ mod modal_key_tests {
     fn routing_form_s_no_longer_submits() {
         let client = client();
         let mut state = app_state_with_config();
-        let mut form = RoutingFormModal::new_for_add();
+        let mut form = RoutingFormModal::new_for_add(vec!["anthropic".to_string()]);
         form.match_model = "claude-*".into();
-        form.provider = "anthropic".into();
         form.focused = RoutingField::Save;
 
         let modal = handle_routing_form_key(key(KeyCode::Char('s')), &client, &mut state, form);
         let Modal::RoutingForm(m) = modal else {
             panic!("expected routing form modal");
         };
-        assert_eq!(m.provider, "anthropic");
+        assert_eq!(m.available_providers[m.provider_index], "anthropic");
         assert!(
             state
                 .config
@@ -2095,6 +2152,280 @@ mod modal_key_tests {
                 .unwrap()
                 .routing
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn routing_provider_cycles_with_left_right() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec![
+            "anthropic".to_string(),
+            "zai".to_string(),
+            "openai".to_string(),
+        ];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.focused = RoutingField::Provider;
+        assert_eq!(form.provider_index, 0);
+
+        // Right cycles forward
+        let modal = handle_routing_form_key(key(KeyCode::Right), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.provider_index, 1);
+
+        // Right again
+        let modal = handle_routing_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.provider_index, 2);
+
+        // Right wraps to 0
+        let modal = handle_routing_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.provider_index, 0);
+
+        // Left wraps to last (2)
+        let modal = handle_routing_form_key(key(KeyCode::Left), &client, &mut state, m);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.provider_index, 2);
+    }
+
+    #[test]
+    fn routing_provider_enter_cycles_forward() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec![
+            "anthropic".to_string(),
+            "zai".to_string(),
+            "openai".to_string(),
+        ];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.focused = RoutingField::Provider;
+
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.provider_index, 1);
+    }
+
+    #[test]
+    fn routing_provider_no_providers_configured_blocks_save() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut form = RoutingFormModal::new_for_add(vec![]);
+        form.match_model = "claude-*".into();
+        form.focused = RoutingField::Save;
+
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(
+            m.error.as_deref(),
+            Some("no providers configured; add a provider first")
+        );
+    }
+
+    #[test]
+    fn routing_fallback_enter_toggles_add_then_remove() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec!["anthropic".to_string(), "zai".to_string()];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.focused = RoutingField::Fallback;
+        form.fallback_cursor = 1; // points at "zai"
+
+        // First Enter: add "zai"
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.fallback, vec!["zai".to_string()]);
+
+        // Second Enter: remove "zai"
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, m);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert!(m.fallback.is_empty());
+    }
+
+    #[test]
+    fn routing_fallback_appends_in_order() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec![
+            "anthropic".to_string(),
+            "zai".to_string(),
+            "openai".to_string(),
+        ];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.focused = RoutingField::Fallback;
+        form.fallback_cursor = 2; // openai first
+
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, form);
+        let Modal::RoutingForm(mut m) = modal else {
+            panic!("expected routing form modal");
+        };
+        m.fallback_cursor = 0; // anthropic second
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, m);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(
+            m.fallback,
+            vec!["openai".to_string(), "anthropic".to_string()]
+        );
+    }
+
+    #[test]
+    fn routing_fallback_backspace_removes_last() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec!["anthropic".to_string(), "zai".to_string()];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.focused = RoutingField::Fallback;
+        form.fallback = vec!["anthropic".to_string(), "zai".to_string()];
+
+        let modal = handle_routing_form_key(key(KeyCode::Backspace), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.fallback, vec!["anthropic".to_string()]);
+    }
+
+    #[test]
+    fn routing_fallback_cycles_cursor_independently_of_selection() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec![
+            "anthropic".to_string(),
+            "zai".to_string(),
+            "openai".to_string(),
+        ];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.focused = RoutingField::Fallback;
+        form.fallback = vec!["zai".to_string()];
+        form.fallback_cursor = 1;
+
+        // Right moves cursor to 2 but leaves selection alone
+        let modal = handle_routing_form_key(key(KeyCode::Right), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.fallback_cursor, 2);
+        assert_eq!(m.fallback, vec!["zai".to_string()]);
+    }
+
+    #[test]
+    fn routing_save_blocks_when_fallback_contains_primary() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec!["anthropic".to_string(), "zai".to_string()];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.match_model = "claude-*".into();
+        form.focused = RoutingField::Save;
+        // provider_index = 0 → "anthropic"
+        form.fallback = vec!["anthropic".to_string()];
+
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(
+            m.error.as_deref(),
+            Some("fallback must not contain the primary provider")
+        );
+    }
+
+    #[test]
+    fn routing_from_rule_filters_stale_fallback() {
+        let rule = proxy_admin_api::RoutingRulePayload {
+            r#match: proxy_admin_api::MatchPayload {
+                model: Some("claude-*".into()),
+            },
+            provider: "anthropic".to_string(),
+            fallback: vec!["gone".to_string(), "kept".to_string()],
+            strategy: proxy_admin_api::RoutingStrategyPayload::Failover,
+            priority: None,
+        };
+        let m = RoutingFormModal::from_rule(0, &rule, vec!["anthropic".into(), "kept".into()]);
+        assert_eq!(m.fallback, vec!["kept".to_string()]);
+    }
+
+    #[test]
+    fn routing_from_rule_provider_not_in_snapshot_defaults_to_zero() {
+        let rule = proxy_admin_api::RoutingRulePayload {
+            r#match: proxy_admin_api::MatchPayload {
+                model: Some("claude-*".into()),
+            },
+            provider: "ghost".to_string(),
+            fallback: vec![],
+            strategy: proxy_admin_api::RoutingStrategyPayload::Failover,
+            priority: None,
+        };
+        let m =
+            RoutingFormModal::from_rule(0, &rule, vec!["anthropic".to_string(), "zai".to_string()]);
+        assert_eq!(m.provider_index, 0);
+        assert_eq!(m.available_providers[0], "anthropic");
+    }
+
+    #[test]
+    fn open_routing_edit_modal_flashes_when_provider_stale() {
+        let mut state = AppState::new();
+        let rule = proxy_admin_api::RoutingRulePayload {
+            r#match: proxy_admin_api::MatchPayload {
+                model: Some("claude-*".into()),
+            },
+            provider: "ghost".to_string(),
+            fallback: vec!["also-gone".to_string(), "anthropic".to_string()],
+            strategy: proxy_admin_api::RoutingStrategyPayload::Failover,
+            priority: None,
+        };
+        state.set_config(Ok(ConfigPayload {
+            port: 3456,
+            providers: vec![proxy_admin_api::ProviderPayload {
+                name: "anthropic".into(),
+                kind: "anthropic".into(),
+                enabled: true,
+                auth: proxy_admin_api::AuthPayload::Passthrough,
+                base_url: None,
+                openai_base_url: None,
+                reasoning_effort: None,
+                thinking_mode: None,
+                max_concurrent: None,
+                sanitize_empty_tools: None,
+            }],
+            routing: vec![rule],
+            quota: vec![],
+            affinity: AffinityPayload::default(),
+            proxy_db: None,
+            pricing_db: None,
+        }));
+        state.routing_selected = 0;
+
+        open_routing_edit_modal(&mut state);
+
+        match &state.modal {
+            Modal::RoutingForm(m) => {
+                assert_eq!(m.provider_index, 0); // defaulted
+                assert_eq!(m.available_providers, vec!["anthropic".to_string()]);
+                assert_eq!(m.fallback, vec!["anthropic".to_string()]); // "also-gone" filtered out
+            }
+            other => panic!("expected RoutingForm modal, got {other:?}"),
+        }
+        assert!(
+            state.flash.as_ref().map_or(false, |f| f.contains("ghost")),
+            "expected flash to mention stale provider, got: {:?}",
+            state.flash
         );
     }
 

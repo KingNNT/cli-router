@@ -752,28 +752,46 @@ pub struct RoutingFormModal {
     pub mode: FormMode,
     pub focused: RoutingField,
     pub match_model: String,
-    pub provider: String,
-    pub fallback: String,
+    pub available_providers: Vec<String>,
+    pub provider_index: usize,
+    pub fallback: Vec<String>,
+    pub fallback_cursor: usize,
     pub strategy: proxy_admin_api::RoutingStrategyPayload,
     pub priority: String,
     pub error: Option<String>,
 }
 
 impl RoutingFormModal {
-    pub fn new_for_add() -> Self {
+    pub fn new_for_add(available_providers: Vec<String>) -> Self {
         Self {
             mode: FormMode::Add,
             focused: RoutingField::MatchModel,
             match_model: String::new(),
-            provider: String::new(),
-            fallback: String::new(),
+            provider_index: 0,
+            available_providers,
+            fallback: Vec::new(),
+            fallback_cursor: 0,
             strategy: proxy_admin_api::RoutingStrategyPayload::default(),
             priority: String::new(),
             error: None,
         }
     }
 
-    pub fn from_rule(index: usize, rule: &proxy_admin_api::RoutingRulePayload) -> Self {
+    pub fn from_rule(
+        index: usize,
+        rule: &proxy_admin_api::RoutingRulePayload,
+        available_providers: Vec<String>,
+    ) -> Self {
+        let provider_index = available_providers
+            .iter()
+            .position(|p| p == &rule.provider)
+            .unwrap_or(0);
+        let fallback: Vec<String> = rule
+            .fallback
+            .iter()
+            .filter(|f| available_providers.contains(f))
+            .cloned()
+            .collect();
         Self {
             mode: FormMode::Edit {
                 original_index: index,
@@ -781,8 +799,10 @@ impl RoutingFormModal {
             },
             focused: RoutingField::MatchModel,
             match_model: rule.r#match.model.clone().unwrap_or_default(),
-            provider: rule.provider.clone(),
-            fallback: rule.fallback.join(", "),
+            provider_index,
+            available_providers,
+            fallback,
+            fallback_cursor: 0,
             strategy: rule.strategy.clone(),
             priority: rule.priority.map(|p| p.to_string()).unwrap_or_default(),
             error: None,
@@ -1145,6 +1165,20 @@ mod form_field_tests {
         assert_eq!(RoutingField::Save.next(), RoutingField::MatchModel);
         assert_eq!(RoutingField::MatchModel.prev(), RoutingField::Save);
         assert_eq!(RoutingField::Save.prev(), RoutingField::Priority);
+    }
+
+    #[test]
+    fn routing_form_construction_preserves_providers_order() {
+        let providers = vec![
+            "zai".to_string(),
+            "anthropic".to_string(),
+            "openai".to_string(),
+        ];
+        let m = super::RoutingFormModal::new_for_add(providers.clone());
+        assert_eq!(m.available_providers, providers);
+        assert_eq!(m.provider_index, 0);
+        assert!(m.fallback.is_empty());
+        assert_eq!(m.fallback_cursor, 0);
     }
 
     #[test]

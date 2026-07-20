@@ -1575,16 +1575,30 @@ fn draw_routing_form_modal(f: &mut Frame, m: &RoutingFormModal) {
         "Match Model:",
         show_or_placeholder(&m.match_model),
     ));
-    lines.push(row(
-        RoutingField::Provider,
-        "Provider:",
-        show_or_placeholder(&m.provider),
-    ));
-    lines.push(row(
-        RoutingField::Fallback,
-        "Fallback:",
-        show_or_placeholder(&m.fallback),
-    ));
+    let provider_display = if m.available_providers.is_empty() {
+        "(no providers configured)".to_string()
+    } else {
+        format!(
+            "< {} >    [←/→ or Enter to cycle]",
+            m.available_providers[m.provider_index]
+        )
+    };
+    lines.push(row(RoutingField::Provider, "Provider:", provider_display));
+
+    let fallback_display = if m.available_providers.is_empty() {
+        "(no providers configured)".to_string()
+    } else {
+        let cursor_name = &m.available_providers[m.fallback_cursor];
+        let selected = if m.fallback.is_empty() {
+            "(none)".to_string()
+        } else {
+            m.fallback.join(", ")
+        };
+        format!(
+            "< {cursor_name} > | selected: [{selected}]    [Enter toggles, Backspace removes last]"
+        )
+    };
+    lines.push(row(RoutingField::Fallback, "Fallback:", fallback_display));
     let strategy_str = strategy_label(&m.strategy);
     lines.push(row(
         RoutingField::Strategy,
@@ -1604,7 +1618,11 @@ fn draw_routing_form_modal(f: &mut Frame, m: &RoutingFormModal) {
     ));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "↑/↓: move  Enter on Strategy: cycle  Enter on Save: submit  Esc: cancel",
+        "↑/↓: move  ←/→/Enter: cycle  Enter on Fallback: toggle  Enter on Strategy: cycle",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Enter on Save: submit  Esc: cancel",
         Style::default().fg(Color::DarkGray),
     )));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
@@ -2066,7 +2084,9 @@ mod tests {
     #[test]
     fn routing_form_renders_save_row_and_arrow_help() {
         let mut state = AppState::new();
-        state.modal = Modal::RoutingForm(crate::app::RoutingFormModal::new_for_add());
+        state.modal = Modal::RoutingForm(crate::app::RoutingFormModal::new_for_add(vec![
+            "anthropic".to_string(),
+        ]));
 
         let output = render_state(&state, 120, 30);
 
@@ -2075,6 +2095,54 @@ mod tests {
         assert!(output.contains("Enter on Save: submit"));
         assert!(!output.contains("s: submit"));
         assert!(!output.contains("Tab/Shift+Tab: move"));
+    }
+
+    #[test]
+    fn routing_form_renders_provider_as_cycle() {
+        use crate::app::{FormMode, RoutingField, RoutingFormModal};
+
+        let m = RoutingFormModal {
+            mode: FormMode::Add,
+            focused: RoutingField::Provider,
+            match_model: "claude-*".into(),
+            available_providers: vec!["anthropic".into(), "zai".into()],
+            provider_index: 0,
+            fallback: vec![],
+            fallback_cursor: 0,
+            strategy: proxy_admin_api::RoutingStrategyPayload::Failover,
+            priority: String::new(),
+            error: None,
+        };
+        let mut state = AppState::new();
+        state.modal = Modal::RoutingForm(m);
+        // Wide buffer so the modal body line does not wrap.
+        let out = render_state(&state, 200, 40);
+        assert!(out.contains("< anthropic >"), "got: {out}");
+        assert!(out.contains("←/→"), "got: {out}");
+    }
+
+    #[test]
+    fn routing_form_renders_fallback_with_selected_list() {
+        use crate::app::{FormMode, RoutingField, RoutingFormModal};
+
+        let m = RoutingFormModal {
+            mode: FormMode::Add,
+            focused: RoutingField::Fallback,
+            match_model: "claude-*".into(),
+            available_providers: vec!["anthropic".into(), "zai".into(), "openai".into()],
+            provider_index: 0,
+            fallback: vec!["zai".into(), "openai".into()],
+            fallback_cursor: 1,
+            strategy: proxy_admin_api::RoutingStrategyPayload::Failover,
+            priority: String::new(),
+            error: None,
+        };
+        let mut state = AppState::new();
+        state.modal = Modal::RoutingForm(m);
+        // Wide buffer so the modal body line does not wrap.
+        let out = render_state(&state, 200, 40);
+        assert!(out.contains("selected: [zai, openai]"), "got: {out}");
+        assert!(out.contains("Enter toggles"), "got: {out}");
     }
 
     #[test]
