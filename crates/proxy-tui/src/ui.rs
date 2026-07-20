@@ -1618,7 +1618,11 @@ fn draw_routing_form_modal(f: &mut Frame, m: &RoutingFormModal) {
     ));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "↑/↓: move  ←/→/Enter on Provider/Fallback: cycle  Enter on Fallback: toggle  Enter on Strategy: cycle  Enter on Save: submit  Esc: cancel",
+        "↑/↓: move  ←/→/Enter: cycle  Enter on Fallback: toggle  Enter on Strategy: cycle",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(Span::styled(
+        "Enter on Save: submit  Esc: cancel",
         Style::default().fg(Color::DarkGray),
     )));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);

@@ -2198,6 +2198,187 @@ mod modal_key_tests {
     }
 
     #[test]
+    fn routing_provider_enter_cycles_forward() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec![
+            "anthropic".to_string(),
+            "zai".to_string(),
+            "openai".to_string(),
+        ];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.focused = RoutingField::Provider;
+
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.provider_index, 1);
+    }
+
+    #[test]
+    fn routing_provider_no_providers_configured_blocks_save() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut form = RoutingFormModal::new_for_add(vec![]);
+        form.match_model = "claude-*".into();
+        form.focused = RoutingField::Save;
+
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(
+            m.error.as_deref(),
+            Some("no providers configured; add a provider first")
+        );
+    }
+
+    #[test]
+    fn routing_fallback_enter_toggles_add_then_remove() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec!["anthropic".to_string(), "zai".to_string()];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.focused = RoutingField::Fallback;
+        form.fallback_cursor = 1; // points at "zai"
+
+        // First Enter: add "zai"
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.fallback, vec!["zai".to_string()]);
+
+        // Second Enter: remove "zai"
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, m);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert!(m.fallback.is_empty());
+    }
+
+    #[test]
+    fn routing_fallback_appends_in_order() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec![
+            "anthropic".to_string(),
+            "zai".to_string(),
+            "openai".to_string(),
+        ];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.focused = RoutingField::Fallback;
+        form.fallback_cursor = 2; // openai first
+
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, form);
+        let Modal::RoutingForm(mut m) = modal else {
+            panic!("expected routing form modal");
+        };
+        m.fallback_cursor = 0; // anthropic second
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, m);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(
+            m.fallback,
+            vec!["openai".to_string(), "anthropic".to_string()]
+        );
+    }
+
+    #[test]
+    fn routing_fallback_backspace_removes_last() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec!["anthropic".to_string(), "zai".to_string()];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.focused = RoutingField::Fallback;
+        form.fallback = vec!["anthropic".to_string(), "zai".to_string()];
+
+        let modal = handle_routing_form_key(key(KeyCode::Backspace), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.fallback, vec!["anthropic".to_string()]);
+    }
+
+    #[test]
+    fn routing_fallback_cycles_cursor_independently_of_selection() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec![
+            "anthropic".to_string(),
+            "zai".to_string(),
+            "openai".to_string(),
+        ];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.focused = RoutingField::Fallback;
+        form.fallback = vec!["zai".to_string()];
+        form.fallback_cursor = 1;
+
+        // Right moves cursor to 2 but leaves selection alone
+        let modal = handle_routing_form_key(key(KeyCode::Right), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(m.fallback_cursor, 2);
+        assert_eq!(m.fallback, vec!["zai".to_string()]);
+    }
+
+    #[test]
+    fn routing_save_blocks_when_fallback_contains_primary() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let providers = vec!["anthropic".to_string(), "zai".to_string()];
+        let mut form = RoutingFormModal::new_for_add(providers);
+        form.match_model = "claude-*".into();
+        form.focused = RoutingField::Save;
+        // provider_index = 0 → "anthropic"
+        form.fallback = vec!["anthropic".to_string()];
+
+        let modal = handle_routing_form_key(key(KeyCode::Enter), &client, &mut state, form);
+        let Modal::RoutingForm(m) = modal else {
+            panic!("expected routing form modal");
+        };
+        assert_eq!(
+            m.error.as_deref(),
+            Some("fallback must not contain the primary provider")
+        );
+    }
+
+    #[test]
+    fn routing_from_rule_filters_stale_fallback() {
+        let rule = proxy_admin_api::RoutingRulePayload {
+            r#match: proxy_admin_api::MatchPayload {
+                model: Some("claude-*".into()),
+            },
+            provider: "anthropic".to_string(),
+            fallback: vec!["gone".to_string(), "kept".to_string()],
+            strategy: proxy_admin_api::RoutingStrategyPayload::Failover,
+            priority: None,
+        };
+        let m = RoutingFormModal::from_rule(0, &rule, vec!["anthropic".into(), "kept".into()]);
+        assert_eq!(m.fallback, vec!["kept".to_string()]);
+    }
+
+    #[test]
+    fn routing_from_rule_provider_not_in_snapshot_defaults_to_zero() {
+        let rule = proxy_admin_api::RoutingRulePayload {
+            r#match: proxy_admin_api::MatchPayload {
+                model: Some("claude-*".into()),
+            },
+            provider: "ghost".to_string(),
+            fallback: vec![],
+            strategy: proxy_admin_api::RoutingStrategyPayload::Failover,
+            priority: None,
+        };
+        let m =
+            RoutingFormModal::from_rule(0, &rule, vec!["anthropic".to_string(), "zai".to_string()]);
+        assert_eq!(m.provider_index, 0);
+        assert_eq!(m.available_providers[0], "anthropic");
+    }
+
+    #[test]
     fn open_routing_edit_modal_flashes_when_provider_stale() {
         let mut state = AppState::new();
         let rule = proxy_admin_api::RoutingRulePayload {
