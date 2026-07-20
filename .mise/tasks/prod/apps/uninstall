@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#MISE description="Uninstall all cli-router binaries"
+#MISE alias="unall"
+#MISE depends=["prod:apps:uninstall-proxy", "prod:apps:uninstall-proxy-tui", "prod:apps:uninstall-analysis"]
+
+set -euo pipefail
+
+echo "All cli-router binaries uninstalled."

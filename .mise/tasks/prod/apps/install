@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Install all cli-router binaries globally"
 #MISE alias="iall"
-#MISE depends=["install:proxy", "install:proxy-tui", "install:analysis"]
+#MISE depends=["prod:apps:install-proxy", "prod:apps:install-proxy-tui", "prod:apps:install-analysis"]
 
 set -euo pipefail
 

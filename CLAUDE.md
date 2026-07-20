@@ -51,17 +51,18 @@ mise run dev:reset         # delete dev DBs and re-clone from prod
 mise run dev:paths         # print resolved dev paths and ports
 mise run dev:seed-requests # insert mock requests into dev DB
 
-# Install
-mise run install:all       # install proxy, proxy-tui, and analysis
-mise run install:prod      # install all binaries and register launchd service
-mise run install:proxy     # install proxy binary (restarts service if loaded)
+# Apps (production install into ~/.cargo/bin)
+mise run prod:apps:install         # install proxy, proxy-tui, and analysis
+mise run prod:apps:install-proxy   # install proxy binary (restarts service if loaded)
+mise run prod:apps:uninstall       # uninstall all binaries
+mise run prod:deploy               # install all binaries and register launchd service
 
 # Service (macOS)
-mise run service:install   # build proxy, install, and run as LaunchAgent
-mise run service:uninstall # stop and remove the LaunchAgent
-mise run service:restart   # restart the proxy service
-mise run service:status    # show launchd status
-mise run service:logs      # tail service stdout + stderr logs
+mise run prod:service:install   # build proxy, install, and run as LaunchAgent
+mise run prod:service:uninstall # stop and remove the LaunchAgent
+mise run prod:service:restart   # restart the proxy service
+mise run prod:service:status    # show launchd status
+mise run prod:service:logs      # tail service stdout + stderr logs
 ```
 
 Run `mise tasks` for the full list and short aliases (e.g., `mise run dp` for `dev:proxy`).

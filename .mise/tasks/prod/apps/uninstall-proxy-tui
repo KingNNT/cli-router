@@ -5,4 +5,4 @@
 set -euo pipefail
 
 CARGO="${CARGO:-cargo}"
-"$CARGO" uninstall proxy-tui
+"$CARGO" uninstall proxy-tui || true
