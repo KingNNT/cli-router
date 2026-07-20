@@ -127,6 +127,7 @@ pub fn build_leaves(
 ) -> Result<HashMap<String, Arc<dyn Provider>>, BuildError> {
     providers
         .iter()
+        .filter(|p| p.enabled)
         .map(|p| Ok((p.name.clone(), build_leaf(p, http.clone())?)))
         .collect()
 }
@@ -358,6 +359,47 @@ mod tests {
             sanitize_empty_tools: false,
             enabled: true,
         }
+    }
+
+    #[test]
+    fn build_leaves_excludes_disabled_provider() {
+        let cfg = Config {
+            providers: vec![
+                ProviderConfig {
+                    name: "on".into(),
+                    kind: ProviderKind::Anthropic,
+                    enabled: true,
+                    auth: AuthConfig::Passthrough,
+                    base_url: None,
+                    openai_base_url: None,
+                    reasoning_effort: None,
+                    thinking_mode: ThinkingMode::SplitOnly,
+                    max_concurrent: None,
+                    sanitize_empty_tools: false,
+                },
+                ProviderConfig {
+                    name: "off".into(),
+                    kind: ProviderKind::Anthropic,
+                    enabled: false,
+                    auth: AuthConfig::Passthrough,
+                    base_url: None,
+                    openai_base_url: None,
+                    reasoning_effort: None,
+                    thinking_mode: ThinkingMode::SplitOnly,
+                    max_concurrent: None,
+                    sanitize_empty_tools: false,
+                },
+            ],
+            port: 0,
+            proxy_db: std::path::PathBuf::new(),
+            pricing_db: std::path::PathBuf::new(),
+            routing: vec![],
+            affinity: Default::default(),
+            quota: vec![],
+        };
+        let leaves = build_leaves(&cfg.providers, reqwest::Client::new()).unwrap();
+        assert!(leaves.contains_key("on"));
+        assert!(!leaves.contains_key("off"));
     }
 
     #[test]
