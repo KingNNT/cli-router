@@ -1289,6 +1289,14 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
         };
         lines.push(row(FormField::AuthValue, "Auth Value:", display));
     }
+    lines.push(row(
+        FormField::Enabled,
+        "Active:",
+        format!(
+            "< {} >    [←/→ to toggle]",
+            if m.enabled { "yes" } else { "no" }
+        ),
+    ));
     lines.push(Line::from(""));
     lines.push(row(FormField::Save, "[ Save ]", "(Enter to submit)".into()));
     lines.push(Line::from(""));
@@ -2001,6 +2009,19 @@ mod tests {
         assert!(output.contains("←/→: cycle"));
         assert!(output.contains("Enter on Save: submit"));
         assert!(!output.contains("Tab/Shift+Tab: move"));
+    }
+
+    #[test]
+    fn provider_form_shows_active_toggle() {
+        let mut state = AppState::new();
+        let mut modal = crate::app::ProviderFormModal::new_for_add();
+        modal.enabled = false;
+        state.modal = Modal::ProviderForm(modal);
+
+        let output = render_state(&state, 120, 30);
+
+        assert!(output.contains("Active:"));
+        assert!(output.contains("< no >"));
     }
 
     #[test]

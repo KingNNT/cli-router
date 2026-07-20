@@ -1208,6 +1208,9 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
         FormField::SanitizeEmptyTools => {
             m.sanitize_empty_tools = !m.sanitize_empty_tools;
         }
+        FormField::Enabled => {
+            m.enabled = !m.enabled;
+        }
         FormField::AuthKind => {
             // AuthInputKind only has cycle(); use it for both directions
             // (5 variants → cycling 4 times == reverse). Fine for a TUI.
