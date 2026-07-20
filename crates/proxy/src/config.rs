@@ -27,6 +27,8 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub name: String,
+    /// Whether this provider is active and eligible for routing. Disabled
+    /// providers are kept in config but excluded from the request path.
     #[serde(default = "default_true")]
     pub enabled: bool,
     pub kind: ProviderKind,
@@ -286,29 +288,27 @@ impl Config {
             ));
         }
         for (i, r) in self.routing.iter().enumerate() {
-            if !self.providers.iter().any(|p| p.name == r.provider) {
-                return Err(ConfigError::Validation(format!(
+            let primary = self.providers
+                .iter()
+                .find(|p| p.name == r.provider)
+                .ok_or_else(|| ConfigError::Validation(format!(
                     "routing rule {i} references unknown provider '{}'",
                     r.provider
-                )));
-            }
-            for fb in &r.fallback {
-                if !self.providers.iter().any(|p| p.name == *fb) {
-                    return Err(ConfigError::Validation(format!(
-                        "routing rule {i} fallback references unknown provider '{fb}'"
-                    )));
-                }
-            }
-        }
-        for (i, r) in self.routing.iter().enumerate() {
-            if let Some(p) = self.providers.iter().find(|p| p.name == r.provider) && !p.enabled {
+                )))?;
+            if !primary.enabled {
                 return Err(ConfigError::Validation(format!(
                     "routing rule {i} references disabled provider '{}'",
                     r.provider
                 )));
             }
             for fb in &r.fallback {
-                if let Some(p) = self.providers.iter().find(|p| p.name == *fb) && !p.enabled {
+                let fallback = self.providers
+                    .iter()
+                    .find(|p| p.name == *fb)
+                    .ok_or_else(|| ConfigError::Validation(format!(
+                        "routing rule {i} fallback references unknown provider '{fb}'"
+                    )))?;
+                if !fallback.enabled {
                     return Err(ConfigError::Validation(format!(
                         "routing rule {i} fallback references disabled provider '{fb}'"
                     )));
