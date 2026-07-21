@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Ship to production: install all binaries and register the proxy service"
 #MISE alias="prod"
-#MISE depends=["install:proxy-tui", "install:analysis", "service:install"]
+#MISE depends=["prod:apps:install-proxy-tui", "prod:apps:install-analysis", "prod:service:install"]
 
 set -euo pipefail
 

@@ -11,7 +11,7 @@ SERVICE_TARGET="$SERVICE_DOMAIN/$SERVICE_LABEL"
 SERVICE_LOG_ERR="$HOME/Library/Logs/cli-router-proxy.err"
 
 if [ ! -f "$SERVICE_PLIST" ]; then
-    echo "error: service not installed. Run 'mise run service:install' first."
+    echo "error: service not installed. Run 'mise run prod:service:install' first."
     exit 1
 fi
 
