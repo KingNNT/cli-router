@@ -219,6 +219,7 @@ pub fn build_account_usage(
     };
     providers
         .iter()
+        .filter(|p| p.enabled)
         .map(|p| {
             let adapter: Arc<dyn AccountUsagePort> = match p.kind {
                 ProviderKind::Zai => {
@@ -296,9 +297,17 @@ impl LiveAccountUsage {
 
 impl AccountUsageRegistry for LiveAccountUsage {
     fn adapters(&self) -> HashMap<String, Arc<dyn AccountUsagePort>> {
+        // Key on the *enabled* provider set so toggling a provider's `enabled`
+        // flag rebuilds the map (disabled providers are excluded from the
+        // account tab).
         let names = {
             let cfg = self.config.read().expect("config rwlock poisoned");
-            let mut n: Vec<String> = cfg.providers.iter().map(|p| p.name.clone()).collect();
+            let mut n: Vec<String> = cfg
+                .providers
+                .iter()
+                .filter(|p| p.enabled)
+                .map(|p| p.name.clone())
+                .collect();
             n.sort();
             n
         };
@@ -424,6 +433,84 @@ mod tests {
     fn derive_monitor_base_url_defaults_when_unset() {
         let url = derive_monitor_base_url(&cfg(None, None));
         assert_eq!(url, "https://api.z.ai");
+    }
+
+    #[test]
+    fn build_account_usage_excludes_disabled_provider() {
+        let config = Config {
+            providers: vec![
+                ProviderConfig {
+                    name: "on".into(),
+                    kind: ProviderKind::Codex,
+                    enabled: true,
+                    auth: AuthConfig::Bearer {
+                        value: "token".into(),
+                    },
+                    base_url: Some("https://example.test/backend-api/codex".into()),
+                    openai_base_url: None,
+                    reasoning_effort: None,
+                    thinking_mode: ThinkingMode::SplitOnly,
+                    max_concurrent: None,
+                    sanitize_empty_tools: false,
+                },
+                ProviderConfig {
+                    name: "off".into(),
+                    kind: ProviderKind::Codex,
+                    enabled: false,
+                    auth: AuthConfig::Bearer {
+                        value: "token".into(),
+                    },
+                    base_url: Some("https://example.test/backend-api/codex".into()),
+                    openai_base_url: None,
+                    reasoning_effort: None,
+                    thinking_mode: ThinkingMode::SplitOnly,
+                    max_concurrent: None,
+                    sanitize_empty_tools: false,
+                },
+            ],
+            ..empty_config()
+        };
+        let adapters = build_account_usage(Arc::new(std::sync::RwLock::new(config)));
+        assert!(adapters.contains_key("on"));
+        assert!(
+            !adapters.contains_key("off"),
+            "disabled providers must not appear in the account-usage map"
+        );
+    }
+
+    #[test]
+    fn live_account_usage_drops_provider_when_disabled() {
+        let config = Arc::new(std::sync::RwLock::new(empty_config()));
+        config.write().unwrap().providers.push(ProviderConfig {
+            name: "claude".to_string(),
+            kind: ProviderKind::Anthropic,
+            auth: AuthConfig::AnthropicOAuth {
+                access_token: "sk-ant-oat01-x".to_string(),
+                refresh_token: "r".to_string(),
+                expires_at_ms: 0,
+            },
+            base_url: None,
+            openai_base_url: None,
+            reasoning_effort: None,
+            thinking_mode: ThinkingMode::SplitOnly,
+            max_concurrent: None,
+            sanitize_empty_tools: false,
+            enabled: true,
+        });
+        let live = LiveAccountUsage::new(config.clone());
+
+        assert!(
+            live.adapters().contains_key("claude"),
+            "enabled provider should appear"
+        );
+
+        // Toggle it off at runtime, as the admin API does.
+        config.write().unwrap().providers[0].enabled = false;
+
+        assert!(
+            !live.adapters().contains_key("claude"),
+            "disabling a provider must remove it from the account-usage map"
+        );
     }
 
     #[test]
