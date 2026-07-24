@@ -28,7 +28,7 @@ pub struct CodexProvider {
     base_url: String,
     http: reqwest::Client,
     auth: AuthHeader,
-    default_reasoning_effort: Option<String>,
+    thinking: Option<super::thinking::ThinkingInjection>,
 }
 
 impl CodexProvider {
@@ -45,20 +45,20 @@ impl CodexProvider {
     }
 
     pub fn configure(http: reqwest::Client, base_url: Option<String>, auth: AuthHeader) -> Self {
-        Self::configure_with_reasoning_effort(http, base_url, auth, None)
+        Self::configure_with_thinking(http, base_url, auth, None)
     }
 
-    pub fn configure_with_reasoning_effort(
+    pub fn configure_with_thinking(
         http: reqwest::Client,
         base_url: Option<String>,
         auth: AuthHeader,
-        default_reasoning_effort: Option<String>,
+        thinking: Option<super::thinking::ThinkingInjection>,
     ) -> Self {
         Self::build(
             http,
             base_url.unwrap_or_else(|| DEFAULT_BASE_URL.into()),
             auth,
-            default_reasoning_effort,
+            thinking,
         )
     }
 
@@ -66,13 +66,13 @@ impl CodexProvider {
         http: reqwest::Client,
         base_url: String,
         auth: AuthHeader,
-        default_reasoning_effort: Option<String>,
+        thinking: Option<super::thinking::ThinkingInjection>,
     ) -> Self {
         Self {
             base_url,
             http,
             auth,
-            default_reasoning_effort,
+            thinking,
         }
     }
 }
@@ -131,16 +131,19 @@ impl Provider for CodexProvider {
         body: Bytes,
         streaming: bool,
     ) -> Result<UpstreamResponse, ProxyError> {
+        let body = match &self.thinking {
+            Some(injection) => injection.apply(body),
+            None => body,
+        };
+
         // Parse incoming Chat Completions body
         let chat_body: Value = serde_json::from_slice(&body)
             .map_err(|e| ProxyError::BadRequest(format!("invalid JSON body: {e}")))?;
 
         // Translate to Responses API payload (always sets stream:true)
-        let responses_body = translate_request_with_default_reasoning_effort(
-            &chat_body,
-            self.default_reasoning_effort.as_deref(),
-        )
-        .map_err(|e| ProxyError::BadRequest(format!("codex request translation failed: {e}")))?;
+        let responses_body = translate_request(&chat_body).map_err(|e| {
+            ProxyError::BadRequest(format!("codex request translation failed: {e}"))
+        })?;
 
         let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
         let serialized = serde_json::to_vec(&responses_body).map_err(|e| {
@@ -443,15 +446,7 @@ fn text_content_to_string(content: Option<&Value>) -> String {
     String::new()
 }
 
-#[cfg(test)]
 fn translate_request(chat: &Value) -> Result<Value, String> {
-    translate_request_with_default_reasoning_effort(chat, None)
-}
-
-fn translate_request_with_default_reasoning_effort(
-    chat: &Value,
-    default_reasoning_effort: Option<&str>,
-) -> Result<Value, String> {
     let mut out = serde_json::Map::new();
 
     // model → passthrough
@@ -537,8 +532,6 @@ fn translate_request_with_default_reasoning_effort(
 
     // reasoning_effort → reasoning.effort
     if let Some(effort) = chat.get("reasoning_effort") {
-        out.insert("reasoning".into(), json!({ "effort": effort }));
-    } else if let Some(effort) = default_reasoning_effort {
         out.insert("reasoning".into(), json!({ "effort": effort }));
     }
 
@@ -1242,34 +1235,30 @@ mod tests {
     }
 
     #[test]
-    fn translate_uses_default_reasoning_effort_when_request_omits_it() {
+    fn translate_without_reasoning_effort_keeps_reasoning_absent() {
         let chat = json!({
             "model": "codex-mini",
             "messages": [{"role": "user", "content": "Hello"}]
         });
-        let result = translate_request_with_default_reasoning_effort(&chat, Some("high")).unwrap();
-        assert_eq!(result["reasoning"]["effort"], "high");
-    }
-
-    #[test]
-    fn translate_request_reasoning_effort_overrides_provider_default() {
-        let chat = json!({
-            "model": "codex-mini",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "reasoning_effort": "low"
-        });
-        let result = translate_request_with_default_reasoning_effort(&chat, Some("high")).unwrap();
-        assert_eq!(result["reasoning"]["effort"], "low");
-    }
-
-    #[test]
-    fn translate_without_default_keeps_reasoning_absent() {
-        let chat = json!({
-            "model": "codex-mini",
-            "messages": [{"role": "user", "content": "Hello"}]
-        });
-        let result = translate_request_with_default_reasoning_effort(&chat, None).unwrap();
+        let result = translate_request(&chat).unwrap();
         assert!(result.get("reasoning").is_none());
+    }
+
+    /// Codex takes a Chat Completions body and translates it to the Responses
+    /// API. The patch must land before that translation so the existing
+    /// `reasoning_effort` → `reasoning.effort` mapping picks it up.
+    #[test]
+    fn thinking_patch_reaches_reasoning_effort_through_translation() {
+        let injection = crate::adapters::providers::thinking::ThinkingInjection::new(
+            serde_json::json!({"reasoning_effort": "xhigh"}),
+            true,
+        );
+        let patched = injection.apply(Bytes::from(
+            r#"{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}]}"#,
+        ));
+        let chat: Value = serde_json::from_slice(&patched).unwrap();
+        let responses = translate_request(&chat).unwrap();
+        assert_eq!(responses["reasoning"]["effort"], "xhigh");
     }
 
     #[test]

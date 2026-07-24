@@ -71,11 +71,13 @@ pub fn build_leaf(
     };
     // Codex is bespoke: translates to the OpenAI Responses API.
     if let ProviderKind::Codex = p.kind {
-        return Ok(Arc::new(CodexProvider::configure_with_reasoning_effort(
+        // TODO(task 5): resolve a real ThinkingInjection from p.reasoning_effort
+        // and pass it here instead of None.
+        return Ok(Arc::new(CodexProvider::configure_with_thinking(
             http,
             p.openai_base_url.clone(),
             auth,
-            p.reasoning_effort.clone(),
+            None,
         )));
     }
 
