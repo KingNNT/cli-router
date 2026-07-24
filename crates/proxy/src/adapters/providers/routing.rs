@@ -20,6 +20,7 @@ use crate::application::errors::ProxyError;
 use crate::application::ports::{
     ApiFormat, Direction, Provider, QuotaPort, UpstreamResponse, UsageParser,
 };
+use crate::application::ports::provider::FormatSupport;
 use crate::config::RoutingStrategy;
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
@@ -562,6 +563,22 @@ impl RoutingProvider {
                 _ => path,
             },
         }
+    }
+
+    /// Given the client's format and a provider's capability, pick the
+    /// upstream format (passthrough when supported, otherwise the provider's
+    /// sole supported format) and the translation direction to apply.
+    #[allow(dead_code)]
+    fn select_direction(
+        client_format: ApiFormat,
+        sup: FormatSupport,
+    ) -> (Direction, ApiFormat) {
+        let upstream_format = if sup.has(client_format) {
+            client_format
+        } else {
+            sup.sole()
+        };
+        (Direction::from_pair(client_format, upstream_format), upstream_format)
     }
 
     /// Pre-flight quota check for a leaf provider. Returns `Err(QuotaExceeded)`
@@ -1371,5 +1388,38 @@ mod tests {
             }
             _other => panic!("expected BadRequest, got success response"),
         }
+    }
+
+    #[test]
+    fn select_direction_passthrough_when_client_format_supported() {
+        // dual provider — every client format is a passthrough
+        let (dir, up) =
+            RoutingProvider::select_direction(ApiFormat::Anthropic, FormatSupport::both());
+        assert_eq!(dir, Direction::Passthrough);
+        assert_eq!(up, ApiFormat::Anthropic);
+
+        let (dir, up) =
+            RoutingProvider::select_direction(ApiFormat::OpenAI, FormatSupport::both());
+        assert_eq!(dir, Direction::Passthrough);
+        assert_eq!(up, ApiFormat::OpenAI);
+    }
+
+    #[test]
+    fn select_direction_translates_when_client_format_unsupported() {
+        // provider only speaks OpenAI; an Anthropic client must be translated
+        let (dir, up) = RoutingProvider::select_direction(
+            ApiFormat::Anthropic,
+            FormatSupport::single(ApiFormat::OpenAI),
+        );
+        assert_eq!(dir, Direction::AnthropicToOpenAI);
+        assert_eq!(up, ApiFormat::OpenAI);
+
+        // provider only speaks Anthropic; an OpenAI client must be translated
+        let (dir, up) = RoutingProvider::select_direction(
+            ApiFormat::OpenAI,
+            FormatSupport::single(ApiFormat::Anthropic),
+        );
+        assert_eq!(dir, Direction::OpenAIToAnthropic);
+        assert_eq!(up, ApiFormat::Anthropic);
     }
 }
