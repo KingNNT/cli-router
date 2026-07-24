@@ -15,6 +15,7 @@ pub mod openai;
 pub mod routing;
 pub mod token_refresh;
 mod tool_sanitizer;
+pub mod upstream;
 pub mod zai;
 
 pub use anthropic::AnthropicProvider;
