@@ -102,76 +102,6 @@ pub fn wrap_openai_to_anthropic(upstream: BoxedByteStream) -> BoxedByteStream {
     Box::pin(translated)
 }
 
-#[cfg(test)]
-mod done_sentinel_tests {
-    use super::*;
-
-    fn collect(chunks: Vec<&'static str>) -> String {
-        let items: Vec<Result<Bytes, BoxedError>> =
-            chunks.into_iter().map(|s| Ok(Bytes::from(s))).collect();
-        let upstream: BoxedByteStream = Box::pin(futures::stream::iter(items));
-        let wrapped = wrap_openai_to_anthropic(upstream);
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let out: Vec<_> = rt.block_on(async { wrapped.collect::<Vec<_>>().await });
-        out.into_iter()
-            .filter_map(|r| r.ok())
-            .map(|b| String::from_utf8_lossy(&b).to_string())
-            .collect()
-    }
-
-    /// MiniMax terminates its OpenAI SSE stream with a `finish_reason` chunk and
-    /// then simply closes the connection — it never sends `data: [DONE]`.
-    #[test]
-    fn stream_without_done_sentinel_still_terminates() {
-        let s = collect(vec![
-            "data: {\"id\":\"abc\",\"model\":\"MiniMax-M2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"}}]}\n\n",
-            "data: {\"id\":\"abc\",\"model\":\"MiniMax-M2\",\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"delta\":{\"content\":\" world\"}}]}\n\n",
-        ]);
-
-        assert!(s.contains("Hello"), "text missing: {s}");
-        assert!(s.contains(" world"), "tail text missing: {s}");
-        assert!(s.contains("content_block_stop"), "no content_block_stop: {s}");
-        assert!(s.contains("message_delta"), "no message_delta: {s}");
-        assert!(s.contains("message_stop"), "no message_stop: {s}");
-    }
-
-    /// A TCP/reqwest chunk boundary can fall inside a multi-byte UTF-8 character.
-    /// The wrapper must not destroy that character.
-    #[test]
-    fn split_multibyte_char_across_chunks_is_not_corrupted() {
-        let frame = "data: {\"id\":\"a\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hà Nội\"}}]}\n\ndata: [DONE]\n\n";
-        let bytes = frame.as_bytes();
-        // Split inside the 2-byte 'à' (0xC3 0xA0) which follows "...content\":\"H".
-        let cut = frame.find('à').unwrap() + 1;
-        let items: Vec<Result<Bytes, BoxedError>> = vec![
-            Ok(Bytes::copy_from_slice(&bytes[..cut])),
-            Ok(Bytes::copy_from_slice(&bytes[cut..])),
-        ];
-        let upstream: BoxedByteStream = Box::pin(futures::stream::iter(items));
-        let wrapped = wrap_openai_to_anthropic(upstream);
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let out: Vec<_> = rt.block_on(async { wrapped.collect::<Vec<_>>().await });
-        let s: String = out
-            .into_iter()
-            .filter_map(|r| r.ok())
-            .map(|b| String::from_utf8_lossy(&b).to_string())
-            .collect();
-
-        assert!(!s.contains('\u{FFFD}'), "character destroyed: {s}");
-        assert!(s.contains("Hà Nội"), "text corrupted: {s}");
-    }
-
-    /// Control: with `[DONE]` present the terminator events are emitted today.
-    #[test]
-    fn stream_with_done_sentinel_terminates() {
-        let s = collect(vec![
-            "data: {\"id\":\"abc\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"}}]}\n\n",
-            "data: [DONE]\n\n",
-        ]);
-        assert!(s.contains("message_stop"), "no message_stop: {s}");
-    }
-}
-
 /// Wrap an upstream Anthropic SSE stream so the client receives OpenAI chat.completion.chunk SSE.
 ///
 /// The wrapper buffers partial SSE frames (separated by `\n\n`), parses the
@@ -250,4 +180,77 @@ pub fn wrap_anthropic_to_openai(upstream: BoxedByteStream) -> BoxedByteStream {
     });
 
     Box::pin(translated)
+}
+
+#[cfg(test)]
+mod done_sentinel_tests {
+    use super::*;
+
+    fn collect(chunks: Vec<&'static str>) -> String {
+        let items: Vec<Result<Bytes, BoxedError>> =
+            chunks.into_iter().map(|s| Ok(Bytes::from(s))).collect();
+        let upstream: BoxedByteStream = Box::pin(futures::stream::iter(items));
+        let wrapped = wrap_openai_to_anthropic(upstream);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let out: Vec<_> = rt.block_on(async { wrapped.collect::<Vec<_>>().await });
+        out.into_iter()
+            .filter_map(|r| r.ok())
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+            .collect()
+    }
+
+    /// MiniMax terminates its OpenAI SSE stream with a `finish_reason` chunk and
+    /// then simply closes the connection — it never sends `data: [DONE]`.
+    #[test]
+    fn stream_without_done_sentinel_still_terminates() {
+        let s = collect(vec![
+            "data: {\"id\":\"abc\",\"model\":\"MiniMax-M2\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"}}]}\n\n",
+            "data: {\"id\":\"abc\",\"model\":\"MiniMax-M2\",\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"delta\":{\"content\":\" world\"}}]}\n\n",
+        ]);
+
+        assert!(s.contains("Hello"), "text missing: {s}");
+        assert!(s.contains(" world"), "tail text missing: {s}");
+        assert!(
+            s.contains("content_block_stop"),
+            "no content_block_stop: {s}"
+        );
+        assert!(s.contains("message_delta"), "no message_delta: {s}");
+        assert!(s.contains("message_stop"), "no message_stop: {s}");
+    }
+
+    /// A TCP/reqwest chunk boundary can fall inside a multi-byte UTF-8 character.
+    /// The wrapper must not destroy that character.
+    #[test]
+    fn split_multibyte_char_across_chunks_is_not_corrupted() {
+        let frame = "data: {\"id\":\"a\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hà Nội\"}}]}\n\ndata: [DONE]\n\n";
+        let bytes = frame.as_bytes();
+        // Split inside the 2-byte 'à' (0xC3 0xA0) which follows "...content\":\"H".
+        let cut = frame.find('à').unwrap() + 1;
+        let items: Vec<Result<Bytes, BoxedError>> = vec![
+            Ok(Bytes::copy_from_slice(&bytes[..cut])),
+            Ok(Bytes::copy_from_slice(&bytes[cut..])),
+        ];
+        let upstream: BoxedByteStream = Box::pin(futures::stream::iter(items));
+        let wrapped = wrap_openai_to_anthropic(upstream);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let out: Vec<_> = rt.block_on(async { wrapped.collect::<Vec<_>>().await });
+        let s: String = out
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .map(|b| String::from_utf8_lossy(&b).to_string())
+            .collect();
+
+        assert!(!s.contains('\u{FFFD}'), "character destroyed: {s}");
+        assert!(s.contains("Hà Nội"), "text corrupted: {s}");
+    }
+
+    /// Control: with `[DONE]` present the terminator events are emitted today.
+    #[test]
+    fn stream_with_done_sentinel_terminates() {
+        let s = collect(vec![
+            "data: {\"id\":\"abc\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        ]);
+        assert!(s.contains("message_stop"), "no message_stop: {s}");
+    }
 }

@@ -2572,7 +2572,7 @@ mod modal_key_tests {
             other => panic!("expected RoutingForm modal, got {other:?}"),
         }
         assert!(
-            state.flash.as_ref().map_or(false, |f| f.contains("ghost")),
+            state.flash.as_ref().is_some_and(|f| f.contains("ghost")),
             "expected flash to mention stale provider, got: {:?}",
             state.flash
         );

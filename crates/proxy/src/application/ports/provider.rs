@@ -52,14 +52,23 @@ impl FormatSupport {
     /// Support exactly one format.
     pub fn single(format: ApiFormat) -> Self {
         match format {
-            ApiFormat::Anthropic => Self { anthropic: true, openai: false },
-            ApiFormat::OpenAI => Self { anthropic: false, openai: true },
+            ApiFormat::Anthropic => Self {
+                anthropic: true,
+                openai: false,
+            },
+            ApiFormat::OpenAI => Self {
+                anthropic: false,
+                openai: true,
+            },
         }
     }
 
     /// Support both formats (dual-endpoint provider).
     pub fn both() -> Self {
-        Self { anthropic: true, openai: true }
+        Self {
+            anthropic: true,
+            openai: true,
+        }
     }
 
     /// Whether the given format is supported.

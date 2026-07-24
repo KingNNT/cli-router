@@ -18,8 +18,7 @@ use crate::adapters::translation::stream_wrap;
 use crate::adapters::translation::{anthropic_to_openai, openai_to_anthropic};
 use crate::application::errors::ProxyError;
 use crate::application::ports::{
-    ApiFormat, Direction, FormatSupport, Provider, QuotaPort, UpstreamResponse,
-    UsageParser,
+    ApiFormat, Direction, FormatSupport, Provider, QuotaPort, UpstreamResponse, UsageParser,
 };
 use crate::config::RoutingStrategy;
 use crate::domain::UsageRecord;
@@ -574,16 +573,16 @@ impl RoutingProvider {
     /// Given the client's format and a provider's capability, pick the
     /// upstream format (passthrough when supported, otherwise the provider's
     /// sole supported format) and the translation direction to apply.
-    fn select_direction(
-        client_format: ApiFormat,
-        sup: FormatSupport,
-    ) -> (Direction, ApiFormat) {
+    fn select_direction(client_format: ApiFormat, sup: FormatSupport) -> (Direction, ApiFormat) {
         let upstream_format = if sup.has(client_format) {
             client_format
         } else {
             sup.sole()
         };
-        (Direction::from_pair(client_format, upstream_format), upstream_format)
+        (
+            Direction::from_pair(client_format, upstream_format),
+            upstream_format,
+        )
     }
 
     /// Pre-flight quota check for a leaf provider. Returns `Err(QuotaExceeded)`
@@ -1417,8 +1416,7 @@ mod tests {
         assert_eq!(dir, Direction::Passthrough);
         assert_eq!(up, ApiFormat::Anthropic);
 
-        let (dir, up) =
-            RoutingProvider::select_direction(ApiFormat::OpenAI, FormatSupport::both());
+        let (dir, up) = RoutingProvider::select_direction(ApiFormat::OpenAI, FormatSupport::both());
         assert_eq!(dir, Direction::Passthrough);
         assert_eq!(up, ApiFormat::OpenAI);
     }
