@@ -6,10 +6,9 @@ use super::account_usage::{
     AnthropicAccountUsage, CodexAccountUsage, DeepSeekAccountUsage, KimiAccountUsage,
     MinimaxAccountUsage, ZaiAccountUsage,
 };
-use super::{
-    AnthropicProvider, AuthHeader, CodexProvider, DeepSeekProvider, KimiProvider, MinimaxProvider,
-    OpenAiProvider, RoutingProvider, ZaiProvider,
-};
+use super::minimax_stream;
+use super::upstream::{UpstreamProvider, quirks_for};
+use super::{AuthHeader, CodexProvider, RoutingProvider};
 use crate::application::ports::{AccountUsagePort, AccountUsageRegistry, Provider, QuotaPort};
 use crate::config::{AuthConfig, Config, ProviderConfig, ProviderKind};
 use std::collections::HashMap;
@@ -70,60 +69,47 @@ pub fn build_leaf(
             }
         }
     };
-    Ok(match p.kind {
-        ProviderKind::Anthropic => Arc::new(AnthropicProvider::configure_with_effort(
-            http,
-            p.anthropic_base_url.clone(),
-            auth,
-            p.reasoning_effort.clone(),
-        )),
-        ProviderKind::Zai => Arc::new(ZaiProvider::configure(
-            http,
-            p.anthropic_base_url.clone(),
-            p.openai_base_url.clone(),
-            auth,
-        )),
-        ProviderKind::DeepSeek => Arc::new(DeepSeekProvider::configure(
-            http,
-            p.openai_base_url.clone(),
-            auth,
-        )),
-        ProviderKind::OpenAi => Arc::new(OpenAiProvider::configure(
-            http,
-            p.openai_base_url.clone(),
-            auth,
-        )),
-        ProviderKind::Codex => Arc::new(CodexProvider::configure_with_reasoning_effort(
+    // Codex is bespoke: translates to the OpenAI Responses API.
+    if let ProviderKind::Codex = p.kind {
+        return Ok(Arc::new(CodexProvider::configure_with_reasoning_effort(
             http,
             p.openai_base_url.clone(),
             auth,
             p.reasoning_effort.clone(),
-        )),
-        ProviderKind::Minimax => {
-            let mode = match p.thinking_mode {
-                crate::config::ThinkingMode::SplitOnly => {
-                    crate::adapters::providers::minimax_stream::ThinkingMode::SplitOnly
-                }
-                crate::config::ThinkingMode::StripAll => {
-                    crate::adapters::providers::minimax_stream::ThinkingMode::StripAll
-                }
-            };
-            Arc::new(MinimaxProvider::configure(
-                http,
-                p.anthropic_base_url.clone(),
-                p.openai_base_url.clone(),
-                auth,
-                mode,
-            ))
-        }
-        ProviderKind::Kimi => Arc::new(KimiProvider::configure(
-            http,
-            p.anthropic_base_url.clone(),
-            p.openai_base_url.clone(),
-            auth,
-            p.sanitize_empty_tools,
-        )),
-    })
+        )));
+    }
+
+    // Validate at least one endpoint is configured.
+    let has_anthropic = p
+        .anthropic_base_url
+        .as_deref()
+        .is_some_and(|s| !s.is_empty());
+    let has_openai = p.openai_base_url.as_deref().is_some_and(|s| !s.is_empty());
+    if !has_anthropic && !has_openai {
+        return Err(BuildError::AuthResolve(format!(
+            "provider '{}': at least one of anthropic_base_url / openai_base_url is required",
+            p.name
+        )));
+    }
+
+    let thinking = match p.thinking_mode {
+        crate::config::ThinkingMode::SplitOnly => minimax_stream::ThinkingMode::SplitOnly,
+        crate::config::ThinkingMode::StripAll => minimax_stream::ThinkingMode::StripAll,
+    };
+    let quirks = quirks_for(
+        p.kind,
+        thinking,
+        p.reasoning_effort.clone(),
+        p.sanitize_empty_tools,
+    );
+    Ok(Arc::new(UpstreamProvider::new(
+        p.name.clone(),
+        p.anthropic_base_url.clone(),
+        p.openai_base_url.clone(),
+        auth,
+        quirks,
+        http,
+    )))
 }
 
 /// Build the per-name leaf map.
@@ -377,6 +363,48 @@ mod tests {
     }
 
     #[test]
+    fn minimax_config_builds_dual_capable_provider() {
+        let p = build_leaf(
+            &ProviderConfig {
+                name: "mm".into(),
+                kind: ProviderKind::Minimax,
+                enabled: true,
+                auth: AuthConfig::Bearer { value: "k".into() },
+                anthropic_base_url: Some("https://api.minimax.io/anthropic".into()),
+                openai_base_url: Some("https://api.minimax.io/v1".into()),
+                reasoning_effort: None,
+                thinking_mode: crate::config::ThinkingMode::SplitOnly,
+                max_concurrent: None,
+                sanitize_empty_tools: false,
+            },
+            reqwest::Client::new(),
+        )
+        .unwrap();
+        let sup = p.supported_formats();
+        assert!(sup.anthropic && sup.openai);
+    }
+
+    #[test]
+    fn provider_with_no_urls_is_rejected() {
+        let err = build_leaf(
+            &ProviderConfig {
+                name: "bad".into(),
+                kind: ProviderKind::DeepSeek,
+                enabled: true,
+                auth: AuthConfig::Bearer { value: "k".into() },
+                anthropic_base_url: None,
+                openai_base_url: None,
+                reasoning_effort: None,
+                thinking_mode: crate::config::ThinkingMode::SplitOnly,
+                max_concurrent: None,
+                sanitize_empty_tools: false,
+            },
+            reqwest::Client::new(),
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
     fn build_leaves_excludes_disabled_provider() {
         let cfg = Config {
             providers: vec![
@@ -385,7 +413,7 @@ mod tests {
                     kind: ProviderKind::Anthropic,
                     enabled: true,
                     auth: AuthConfig::Passthrough,
-                    anthropic_base_url: None,
+                    anthropic_base_url: Some("https://api.anthropic.com".into()),
                     openai_base_url: None,
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,

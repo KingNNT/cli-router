@@ -317,7 +317,7 @@ async fn admin_config_put_saves_to_db_and_replaces_in_memory() {
             "name": "anthropic",
             "kind": "anthropic",
             "auth": {"type": "api_key", "value": "sk-test"},
-            "anthropic_base_url": null,
+            "anthropic_base_url": "https://api.anthropic.com",
         }],
         "routing": [{
             "match": {"model": "*"},
