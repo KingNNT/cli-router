@@ -123,11 +123,20 @@ path, as plain data:
 pub struct Quirks {
     reasoning_split: bool,                 // MiniMax: inject reasoning_split:true (OpenAI req)
     strip_thinking: Option<ThinkingMode>,  // MiniMax: filter thinking (OpenAI resp)
-    reasoning_effort: Option<String>,      // Codex / Anthropic: inject into req
-    reorder_tool_responses: bool,          // DeepSeek: reorder tool responses after tool_calls
-    sanitize_empty_tools: bool,            // Kimi
+    reasoning_effort: Option<String>,      // Anthropic: inject into Anthropic req (inject_effort)
+    strip_tool_choice: bool,               // DeepSeek: strip tool_choice for models that don't support it (OpenAI req)
+    sanitize_empty_tools: bool,            // Kimi: sanitize empty-tool responses (Anthropic-path resp, 2xx)
 }
 ```
+
+Note (discovered during implementation): the earlier draft named the DeepSeek
+quirk `reorder_tool_responses` — but reordering tool responses is a
+**translation-layer** step (`anthropic_to_openai/request.rs`), applied to every
+A→O translation, not a provider quirk. DeepSeek's real provider quirk is
+`strip_tool_choice_if_unsupported` (keyed on model name). Quirk→path mapping:
+`reasoning_effort` → Anthropic request; `reasoning_split` + `strip_tool_choice`
+→ OpenAI request; `strip_thinking` → OpenAI response; `sanitize_empty_tools` →
+Anthropic-path response (2xx), matching where the current Kimi code applies it.
 
 Quirks are applied inside `forward` / `forward_openai`. The existing quirk
 implementations move verbatim; only their call site changes. `minimax_stream`
