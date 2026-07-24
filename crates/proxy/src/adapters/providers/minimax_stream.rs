@@ -11,6 +11,11 @@ use bytes::Bytes;
 use futures::StreamExt;
 use serde_json::Value;
 
+/// Find the byte offset of the first `\n\n` SSE frame terminator in `buf`.
+fn find_frame_end(buf: &[u8]) -> Option<usize> {
+    buf.windows(2).position(|w| w == b"\n\n")
+}
+
 /// Controls how thinking content is stripped from MiniMax responses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThinkingMode {
@@ -171,7 +176,9 @@ fn skip_until_end_tag<I: Iterator<Item = char> + Clone>(
 pub fn strip_thinking_stream(
     upstream: crate::application::ports::BoxedByteStream,
 ) -> crate::application::ports::BoxedByteStream {
-    let mut buf = String::new();
+    // Byte buffer, not String: an upstream chunk boundary can fall inside a
+    // multi-byte UTF-8 character; lossy-decoding partial bytes would destroy it.
+    let mut buf: Vec<u8> = Vec::new();
 
     let filtered = upstream.flat_map(move |chunk_result| {
         let mut emit: Vec<Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> = Vec::new();
@@ -181,11 +188,11 @@ pub fn strip_thinking_stream(
                 emit.push(Err(e));
             }
             Ok(chunk_bytes) => {
-                buf.push_str(&String::from_utf8_lossy(&chunk_bytes));
+                buf.extend_from_slice(&chunk_bytes);
 
-                while let Some(idx) = buf.find("\n\n") {
-                    let frame = buf[..idx].to_string();
-                    buf.drain(..idx + 2);
+                while let Some(idx) = find_frame_end(&buf) {
+                    let frame_bytes: Vec<u8> = buf.drain(..idx + 2).collect();
+                    let frame = String::from_utf8_lossy(&frame_bytes[..idx]);
 
                     if frame.trim().is_empty() {
                         continue;
@@ -236,7 +243,9 @@ pub fn clean_thinking_stream(
 fn strip_tags_only_stream(
     upstream: crate::application::ports::BoxedByteStream,
 ) -> crate::application::ports::BoxedByteStream {
-    let mut buf = String::new();
+    // Byte buffer, not String: guard against a multi-byte UTF-8 character being
+    // split across upstream chunk boundaries.
+    let mut buf: Vec<u8> = Vec::new();
 
     let filtered = upstream.flat_map(move |chunk_result| {
         let mut emit: Vec<Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> = Vec::new();
@@ -246,11 +255,11 @@ fn strip_tags_only_stream(
                 emit.push(Err(e));
             }
             Ok(chunk_bytes) => {
-                buf.push_str(&String::from_utf8_lossy(&chunk_bytes));
+                buf.extend_from_slice(&chunk_bytes);
 
-                while let Some(idx) = buf.find("\n\n") {
-                    let frame = buf[..idx].to_string();
-                    buf.drain(..idx + 2);
+                while let Some(idx) = find_frame_end(&buf) {
+                    let frame_bytes: Vec<u8> = buf.drain(..idx + 2).collect();
+                    let frame = String::from_utf8_lossy(&frame_bytes[..idx]);
 
                     if frame.trim().is_empty() {
                         continue;
