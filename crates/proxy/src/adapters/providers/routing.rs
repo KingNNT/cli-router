@@ -18,9 +18,9 @@ use crate::adapters::translation::stream_wrap;
 use crate::adapters::translation::{anthropic_to_openai, openai_to_anthropic};
 use crate::application::errors::ProxyError;
 use crate::application::ports::{
-    ApiFormat, Direction, Provider, QuotaPort, UpstreamResponse, UsageParser,
+    ApiFormat, Direction, FormatSupport, Provider, QuotaPort, UpstreamResponse,
+    UsageParser,
 };
-use crate::application::ports::provider::FormatSupport;
 use crate::config::RoutingStrategy;
 use crate::domain::UsageRecord;
 use async_trait::async_trait;

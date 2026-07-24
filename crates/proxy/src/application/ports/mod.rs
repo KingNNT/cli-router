@@ -11,7 +11,7 @@ pub mod usage_parser;
 
 pub use account_usage::{AccountUsagePort, AccountUsageRegistry};
 pub use config::ConfigRepository;
-pub use provider::{ApiFormat, Direction, Provider};
+pub use provider::{ApiFormat, Direction, FormatSupport, Provider};
 pub use quota::QuotaPort;
 pub use request_log::RequestLogPort;
 pub use request_log_read::{
