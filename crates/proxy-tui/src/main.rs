@@ -1296,6 +1296,22 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
             if m.kind != ProviderKind::Minimax {
                 m.thinking_mode = crate::app::ThinkingModeInput::Unset;
             }
+            // Prefill endpoint URLs from the new kind's defaults, but only
+            // in the add flow and only into fields the user hasn't typed
+            // into yet — never clobber existing text (add or edit).
+            if matches!(m.mode, FormMode::Add) {
+                let (anthropic_default, openai_default) = m.kind.default_urls();
+                if m.anthropic_base_url.is_empty()
+                    && let Some(url) = anthropic_default
+                {
+                    m.anthropic_base_url = url.to_string();
+                }
+                if m.openai_base_url.is_empty()
+                    && let Some(url) = openai_default
+                {
+                    m.openai_base_url = url.to_string();
+                }
+            }
         }
         FormField::ReasoningEffort => {
             m.reasoning_effort = if forward {
@@ -2088,6 +2104,80 @@ mod modal_key_tests {
             panic!("expected provider form modal");
         };
         assert_eq!(m.focused, FormField::Name);
+    }
+
+    #[test]
+    fn provider_form_kind_change_prefills_empty_urls_in_add_flow() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut m = ProviderFormModal::new_for_add();
+        m.focused = FormField::Kind;
+        // Start from Codex (both URL buffers untouched) and cycle forward
+        // one step to Minimax, its immediate successor.
+        m.kind = ProviderKind::Codex;
+        assert!(m.anthropic_base_url.is_empty());
+        assert!(m.openai_base_url.is_empty());
+
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+
+        assert_eq!(m.kind, ProviderKind::Minimax);
+        assert_eq!(m.anthropic_base_url, "https://api.minimaxi.com/anthropic");
+        assert_eq!(m.openai_base_url, "https://api.minimaxi.com/v1");
+    }
+
+    #[test]
+    fn provider_form_kind_change_does_not_overwrite_typed_url() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut m = ProviderFormModal::new_for_add();
+        m.focused = FormField::Kind;
+        m.anthropic_base_url = "https://custom.example.com".into();
+
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+
+        assert_eq!(m.kind, ProviderKind::Zai);
+        // User-typed value survives the kind change untouched.
+        assert_eq!(m.anthropic_base_url, "https://custom.example.com");
+        // The other, still-empty buffer gets prefilled from Zai's defaults.
+        assert_eq!(m.openai_base_url, "https://api.z.ai/api/paas/v4");
+    }
+
+    #[test]
+    fn provider_form_kind_change_does_not_prefill_in_edit_flow() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let payload = proxy_admin_api::ProviderPayload {
+            name: "anthropic".into(),
+            kind: "anthropic".into(),
+            enabled: true,
+            auth: proxy_admin_api::AuthPayload::Passthrough,
+            anthropic_base_url: None,
+            openai_base_url: None,
+            reasoning_effort: None,
+            thinking_mode: None,
+            max_concurrent: None,
+            sanitize_empty_tools: None,
+        };
+        let mut m = ProviderFormModal::from_provider(0, &payload);
+        m.focused = FormField::Kind;
+        assert!(m.anthropic_base_url.is_empty());
+        assert!(m.openai_base_url.is_empty());
+
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+
+        assert_eq!(m.kind, ProviderKind::Zai);
+        // Edit flow never prefills, even though both buffers were empty.
+        assert!(m.anthropic_base_url.is_empty());
+        assert!(m.openai_base_url.is_empty());
     }
 
     #[test]
