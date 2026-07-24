@@ -122,10 +122,6 @@ pub struct ProviderPayload {
     pub anthropic_base_url: Option<String>,
     #[serde(default)]
     pub openai_base_url: Option<String>,
-    /// Retired: no longer read by the proxy. Superseded by `thinking_level`.
-    /// Removed together with the TUI code that sets it (a later task).
-    #[serde(default)]
-    pub reasoning_effort: Option<String>,
     #[serde(default)]
     pub thinking_mode: Option<String>,
     /// Thinking level for this provider, from the kind's offered list:
@@ -601,7 +597,6 @@ mod config_payload_tests {
                 auth: AuthPayload::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: Some("high".into()),
                 thinking_mode: None,
                 thinking_level: Some("high".into()),
                 thinking_force: Some(true),
@@ -629,10 +624,6 @@ mod config_payload_tests {
         let parsed: ConfigPayload = serde_json::from_str(&json_str).unwrap();
         assert_eq!(parsed.port, 8787);
         assert_eq!(parsed.providers.len(), 1);
-        assert_eq!(
-            parsed.providers[0].reasoning_effort.as_deref(),
-            Some("high")
-        );
         assert_eq!(parsed.providers[0].thinking_level.as_deref(), Some("high"));
         assert_eq!(parsed.providers[0].thinking_force, Some(true));
         assert_eq!(parsed.quota.len(), 1);

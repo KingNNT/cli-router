@@ -701,7 +701,6 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                 auth: auth_to_payload(&p.auth),
                 anthropic_base_url: p.anthropic_base_url.clone(),
                 openai_base_url: p.openai_base_url.clone(),
-                reasoning_effort: None,
                 thinking_level: Some(p.thinking_level.as_str().to_string()),
                 thinking_force: Some(p.thinking_force),
                 thinking_mode: Some(match p.thinking_mode {
@@ -1507,7 +1506,6 @@ mod tests {
                 auth: AuthPayload::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: Some("garbage".into()),
                 thinking_level: None,
                 thinking_force: None,
@@ -1565,7 +1563,6 @@ mod tests {
                 auth: AuthPayload::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: None,
                 thinking_level: None,
                 thinking_force: None,
