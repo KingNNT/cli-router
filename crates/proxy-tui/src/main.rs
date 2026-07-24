@@ -1232,7 +1232,7 @@ fn submit_non_oauth_save(
     let input = FormInputs {
         name: &m.name,
         kind: m.kind.label(),
-        base_url: Some(&m.base_url),
+        anthropic_base_url: Some(&m.anthropic_base_url),
         openai_base_url: Some(&m.openai_base_url),
         reasoning_effort: m.reasoning_effort.as_option(),
         thinking_mode: m.thinking_mode.as_option(),
@@ -1344,7 +1344,7 @@ fn edit_focused_text(m: &mut ProviderFormModal, f: impl FnOnce(&mut String)) {
     m.error = None;
     let target: Option<&mut String> = match m.focused {
         FormField::Name => Some(&mut m.name),
-        FormField::BaseUrl => Some(&mut m.base_url),
+        FormField::AnthropicBaseUrl => Some(&mut m.anthropic_base_url),
         FormField::OpenaiBaseUrl => Some(&mut m.openai_base_url),
         FormField::AuthValue => Some(&mut m.auth_value),
         _ => None,
@@ -1378,7 +1378,7 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
         let input = FormInputs {
             name: &m.name,
             kind: m.kind.label(),
-            base_url: Some(&m.base_url),
+            anthropic_base_url: Some(&m.anthropic_base_url),
             openai_base_url: Some(&m.openai_base_url),
             reasoning_effort: m.reasoning_effort.as_option(),
             thinking_mode: m.thinking_mode.as_option(),
@@ -1874,7 +1874,7 @@ fn submit_oauth_edit(
     let input = FormInputs {
         name: &m.name,
         kind: m.kind.label(),
-        base_url: Some(&m.base_url),
+        anthropic_base_url: Some(&m.anthropic_base_url),
         openai_base_url: Some(&m.openai_base_url),
         reasoning_effort: m.reasoning_effort.as_option(),
         thinking_mode: m.thinking_mode.as_option(),
@@ -1899,7 +1899,7 @@ fn submit_oauth_edit(
         let prev = &cfg.providers[original_index];
         prev.name != provider.name
             || prev.kind != provider.kind
-            || prev.base_url != provider.base_url
+            || prev.anthropic_base_url != provider.anthropic_base_url
             || prev.openai_base_url != provider.openai_base_url
             || prev.reasoning_effort != provider.reasoning_effort
             || prev.thinking_mode != provider.thinking_mode
@@ -2397,7 +2397,7 @@ mod modal_key_tests {
                 kind: "anthropic".into(),
                 enabled: true,
                 auth: proxy_admin_api::AuthPayload::Passthrough,
-                base_url: None,
+                anthropic_base_url: None,
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: None,

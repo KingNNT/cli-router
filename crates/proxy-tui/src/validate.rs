@@ -40,7 +40,7 @@ impl std::fmt::Display for FormError {
 pub struct FormInputs<'a> {
     pub name: &'a str,
     pub kind: &'a str,
-    pub base_url: Option<&'a str>,
+    pub anthropic_base_url: Option<&'a str>,
     pub openai_base_url: Option<&'a str>,
     pub reasoning_effort: Option<&'a str>,
     pub thinking_mode: Option<&'a str>,
@@ -109,8 +109,8 @@ pub fn validate_provider_form(
         kind: input.kind.to_string(),
         enabled: input.enabled,
         auth: input.auth.clone(),
-        base_url: input
-            .base_url
+        anthropic_base_url: input
+            .anthropic_base_url
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
         openai_base_url: input
@@ -194,7 +194,7 @@ mod tests {
             kind: "anthropic".into(),
             enabled: true,
             auth: AuthPayload::Passthrough,
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: None,
@@ -219,7 +219,7 @@ mod tests {
         FormInputs {
             name,
             kind: "anthropic",
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: None,
@@ -325,7 +325,7 @@ mod tests {
         let input = FormInputs {
             name: "codex-main",
             kind: "codex",
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: Some("high"),
             thinking_mode: None,
@@ -348,7 +348,7 @@ mod tests {
         let input = FormInputs {
             name: "zai-main",
             kind: "zai",
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: Some("high"),
             thinking_mode: None,
@@ -371,7 +371,7 @@ mod tests {
         let input = FormInputs {
             name: "anthropic-main",
             kind: "anthropic",
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: Some("high"),
             thinking_mode: None,
@@ -394,7 +394,7 @@ mod tests {
         let input = FormInputs {
             name: "kimi-main",
             kind: "kimi",
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: None,
@@ -417,7 +417,7 @@ mod tests {
         let input = FormInputs {
             name: "zai-main",
             kind: "zai",
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: None,
@@ -472,10 +472,10 @@ mod tests {
         let cfg = empty_cfg();
         let auth = AuthPayload::Passthrough;
         let mut input = inputs("foo", &auth);
-        input.base_url = Some("  https://api.example  ");
+        input.anthropic_base_url = Some("  https://api.example  ");
         input.openai_base_url = Some("");
         let p = validate_provider_form(&input, &cfg).unwrap();
-        assert_eq!(p.base_url.as_deref(), Some("https://api.example"));
+        assert_eq!(p.anthropic_base_url.as_deref(), Some("https://api.example"));
         assert_eq!(p.openai_base_url, None);
     }
 }

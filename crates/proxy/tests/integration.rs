@@ -317,7 +317,7 @@ async fn admin_config_put_saves_to_db_and_replaces_in_memory() {
             "name": "anthropic",
             "kind": "anthropic",
             "auth": {"type": "api_key", "value": "sk-test"},
-            "base_url": null,
+            "anthropic_base_url": null,
         }],
         "routing": [{
             "match": {"model": "*"},
@@ -548,7 +548,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             "name": "anthropic",
             "kind": "anthropic",
             "auth": {"type": "passthrough"},
-            "base_url": upstream_b.uri(),
+            "anthropic_base_url": upstream_b.uri(),
         }],
         "routing": [{
             "match": {"model": "*"},

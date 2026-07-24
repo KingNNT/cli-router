@@ -413,13 +413,13 @@ fn selected_provider_footer(
     if let Some(auth) = provider_detail_label(&provider.auth) {
         parts.push(auth);
     }
-    if let Some(base_url) = provider
-        .base_url
+    if let Some(url) = provider
+        .anthropic_base_url
         .as_deref()
         .or(provider.openai_base_url.as_deref())
         .filter(|s| !s.is_empty())
     {
-        parts.push(base_url.to_string());
+        parts.push(url.to_string());
     }
     parts.push("[t] test".into());
     parts.push("[z] toggle active".into());
@@ -570,7 +570,7 @@ fn draw_providers_content(f: &mut Frame, area: Rect, state: &AppState) {
                 Cell::from(p.kind.clone()),
                 Cell::from(auth_summary(&p.auth)),
                 Cell::from(
-                    p.base_url
+                    p.anthropic_base_url
                         .as_deref()
                         .or(p.openai_base_url.as_deref())
                         .unwrap_or_default()
@@ -1247,13 +1247,13 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
         format!("< {} >    [←/→ to cycle]", m.kind.label()),
     ));
     lines.push(row(
-        FormField::BaseUrl,
-        "Base URL:",
-        show_or_placeholder(&m.base_url),
+        FormField::AnthropicBaseUrl,
+        "Anthropic URL:",
+        show_or_placeholder(&m.anthropic_base_url),
     ));
     lines.push(row(
         FormField::OpenaiBaseUrl,
-        "OpenAI Base URL:",
+        "OpenAI URL:",
         show_or_placeholder(&m.openai_base_url),
     ));
     if m.kind == crate::app::ProviderKind::Codex {
@@ -1822,7 +1822,7 @@ mod tests {
                     refresh_token: "refresh".into(),
                     expires_at_ms: 9_999,
                 },
-                base_url: Some("https://api.anthropic.com".into()),
+                anthropic_base_url: Some("https://api.anthropic.com".into()),
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: None,
@@ -1836,7 +1836,7 @@ mod tests {
                 auth: AuthPayload::ApiKey {
                     value: "sk-test-secret-value".into(),
                 },
-                base_url: None,
+                anthropic_base_url: None,
                 openai_base_url: Some("https://api.openai.com/v1".into()),
                 reasoning_effort: None,
                 thinking_mode: None,
@@ -2079,6 +2079,22 @@ mod tests {
 
         assert!(output.contains("Active:"));
         assert!(output.contains("< no >"));
+    }
+
+    #[test]
+    fn provider_form_shows_both_anthropic_and_openai_url_fields() {
+        let mut state = AppState::new();
+        let mut modal = crate::app::ProviderFormModal::new_for_add();
+        modal.anthropic_base_url = "https://api.anthropic.com".into();
+        modal.openai_base_url = "https://api.openai.com/v1".into();
+        state.modal = Modal::ProviderForm(modal);
+
+        let output = render_state(&state, 120, 30);
+
+        assert!(output.contains("Anthropic URL:"));
+        assert!(output.contains("https://api.anthropic.com"));
+        assert!(output.contains("OpenAI URL:"));
+        assert!(output.contains("https://api.openai.com/v1"));
     }
 
     #[test]
