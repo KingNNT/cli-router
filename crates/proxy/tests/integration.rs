@@ -424,7 +424,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             name: "anthropic".into(),
             kind: ProviderKind::Anthropic,
             auth: AuthConfig::Passthrough,
-            base_url: Some(upstream_a.uri()),
+            anthropic_base_url: Some(upstream_a.uri()),
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: proxy::config::ThinkingMode::SplitOnly,

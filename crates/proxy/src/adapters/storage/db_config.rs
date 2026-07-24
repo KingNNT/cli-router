@@ -117,7 +117,7 @@ impl ConfigRepository for DbConfigRepository {
                 stmt.execute(rusqlite::params![
                     p.name,
                     kind_str,
-                    p.base_url,
+                    p.anthropic_base_url,
                     p.openai_base_url,
                     p.reasoning_effort,
                     match p.thinking_mode {
@@ -215,7 +215,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
             Ok(ProviderConfig {
                 name: row.get(0)?,
                 kind: parse_kind(&kind_str),
-                base_url: row.get(2)?,
+                anthropic_base_url: row.get(2)?,
                 openai_base_url: row.get(3)?,
                 reasoning_effort: row.get(4)?,
                 thinking_mode: {
@@ -463,7 +463,7 @@ mod tests {
             auth: AuthConfig::Bearer {
                 value: "secret".into(),
             },
-            base_url: Some("https://example.com".into()),
+            anthropic_base_url: Some("https://example.com".into()),
             openai_base_url: Some("https://example.com/v1".into()),
             reasoning_effort: Some("high".into()),
             thinking_mode: ThinkingMode::SplitOnly,
@@ -555,7 +555,7 @@ mod tests {
                 name: format!("p{i}"),
                 kind: ProviderKind::Anthropic,
                 auth: auth.clone(),
-                base_url: None,
+                anthropic_base_url: None,
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
@@ -616,7 +616,7 @@ mod tests {
             name: "moonshot".into(),
             kind: ProviderKind::Kimi,
             auth: AuthConfig::Passthrough,
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
@@ -642,7 +642,7 @@ mod tests {
             name: "off".into(),
             kind: ProviderKind::Anthropic,
             auth: AuthConfig::Passthrough,
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,

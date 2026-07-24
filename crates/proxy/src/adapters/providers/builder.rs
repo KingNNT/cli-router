@@ -73,23 +73,29 @@ pub fn build_leaf(
     Ok(match p.kind {
         ProviderKind::Anthropic => Arc::new(AnthropicProvider::configure_with_effort(
             http,
-            p.base_url.clone(),
+            p.anthropic_base_url.clone(),
             auth,
             p.reasoning_effort.clone(),
         )),
         ProviderKind::Zai => Arc::new(ZaiProvider::configure(
             http,
-            p.base_url.clone(),
+            p.anthropic_base_url.clone(),
             p.openai_base_url.clone(),
             auth,
         )),
-        ProviderKind::DeepSeek => {
-            Arc::new(DeepSeekProvider::configure(http, p.base_url.clone(), auth))
-        }
-        ProviderKind::OpenAi => Arc::new(OpenAiProvider::configure(http, p.base_url.clone(), auth)),
+        ProviderKind::DeepSeek => Arc::new(DeepSeekProvider::configure(
+            http,
+            p.openai_base_url.clone(),
+            auth,
+        )),
+        ProviderKind::OpenAi => Arc::new(OpenAiProvider::configure(
+            http,
+            p.openai_base_url.clone(),
+            auth,
+        )),
         ProviderKind::Codex => Arc::new(CodexProvider::configure_with_reasoning_effort(
             http,
-            p.base_url.clone(),
+            p.openai_base_url.clone(),
             auth,
             p.reasoning_effort.clone(),
         )),
@@ -104,7 +110,7 @@ pub fn build_leaf(
             };
             Arc::new(MinimaxProvider::configure(
                 http,
-                p.base_url.clone(),
+                p.anthropic_base_url.clone(),
                 p.openai_base_url.clone(),
                 auth,
                 mode,
@@ -112,7 +118,7 @@ pub fn build_leaf(
         }
         ProviderKind::Kimi => Arc::new(KimiProvider::configure(
             http,
-            p.base_url.clone(),
+            p.anthropic_base_url.clone(),
             p.openai_base_url.clone(),
             auth,
             p.sanitize_empty_tools,
@@ -237,7 +243,7 @@ pub fn build_account_usage(
                 ProviderKind::OpenAi => Arc::new(super::account_usage::noop::NoopAccountUsage),
                 ProviderKind::Codex => Arc::new(CodexAccountUsage::new(
                     p.name.clone(),
-                    p.base_url.clone(),
+                    p.openai_base_url.clone(),
                     p.auth.clone(),
                 )),
                 ProviderKind::Minimax => {
@@ -245,7 +251,7 @@ pub fn build_account_usage(
                     Arc::new(MinimaxAccountUsage::new(
                         p.name.clone(),
                         token,
-                        p.base_url.clone(),
+                        p.anthropic_base_url.clone(),
                     ))
                 }
                 ProviderKind::Kimi => {
@@ -253,7 +259,7 @@ pub fn build_account_usage(
                     Arc::new(KimiAccountUsage::new(
                         p.name.clone(),
                         token,
-                        p.base_url.clone(),
+                        p.anthropic_base_url.clone(),
                         p.openai_base_url.clone(),
                     ))
                 }
@@ -337,10 +343,10 @@ fn resolve_auth_token(auth: &AuthConfig) -> String {
 /// The Z.ai monitoring API lives at scheme+host (e.g. "https://api.z.ai"),
 /// not at the full openai_base_url path.
 fn derive_monitor_base_url(p: &ProviderConfig) -> String {
-    // Try to extract scheme+host from openai_base_url first, then base_url.
+    // Try to extract scheme+host from openai_base_url first, then anthropic_base_url.
     p.openai_base_url
         .as_deref()
-        .or(p.base_url.as_deref())
+        .or(p.anthropic_base_url.as_deref())
         .and_then(|u| {
             let idx = u.find("://")?;
             let rest = &u[idx + 3..];
@@ -360,7 +366,7 @@ mod tests {
             name: "zai".into(),
             kind: ProviderKind::Zai,
             auth: AuthConfig::Bearer { value: "x".into() },
-            base_url: base.map(str::to_string),
+            anthropic_base_url: base.map(str::to_string),
             openai_base_url: openai.map(str::to_string),
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
@@ -379,7 +385,7 @@ mod tests {
                     kind: ProviderKind::Anthropic,
                     enabled: true,
                     auth: AuthConfig::Passthrough,
-                    base_url: None,
+                    anthropic_base_url: None,
                     openai_base_url: None,
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
@@ -391,7 +397,7 @@ mod tests {
                     kind: ProviderKind::Anthropic,
                     enabled: false,
                     auth: AuthConfig::Passthrough,
-                    base_url: None,
+                    anthropic_base_url: None,
                     openai_base_url: None,
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
@@ -446,8 +452,8 @@ mod tests {
                     auth: AuthConfig::Bearer {
                         value: "token".into(),
                     },
-                    base_url: Some("https://example.test/backend-api/codex".into()),
-                    openai_base_url: None,
+                    anthropic_base_url: None,
+                    openai_base_url: Some("https://example.test/backend-api/codex".into()),
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     max_concurrent: None,
@@ -460,8 +466,8 @@ mod tests {
                     auth: AuthConfig::Bearer {
                         value: "token".into(),
                     },
-                    base_url: Some("https://example.test/backend-api/codex".into()),
-                    openai_base_url: None,
+                    anthropic_base_url: None,
+                    openai_base_url: Some("https://example.test/backend-api/codex".into()),
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     max_concurrent: None,
@@ -489,7 +495,7 @@ mod tests {
                 refresh_token: "r".to_string(),
                 expires_at_ms: 0,
             },
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
@@ -519,8 +525,8 @@ mod tests {
             providers: vec![ProviderConfig {
                 name: "codex-main".to_string(),
                 kind: ProviderKind::Codex,
-                base_url: Some("https://example.test/backend-api/codex".to_string()),
-                openai_base_url: None,
+                anthropic_base_url: None,
+                openai_base_url: Some("https://example.test/backend-api/codex".to_string()),
                 auth: AuthConfig::Bearer {
                     value: "token-123".to_string(),
                 },
@@ -577,7 +583,7 @@ mod tests {
                 refresh_token: "r".to_string(),
                 expires_at_ms: 0,
             },
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
@@ -605,7 +611,7 @@ mod tests {
                 refresh_token: "r".to_string(),
                 expires_at_ms: 0,
             },
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
