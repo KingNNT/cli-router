@@ -2,6 +2,7 @@
 //! actually supports and the request patch each one produces.
 
 use crate::config::{ProviderKind, ThinkingLevel};
+use bytes::Bytes;
 use serde_json::{Value, json};
 
 /// The provider-specific request patch for one thinking level, in each wire
@@ -83,6 +84,92 @@ pub fn thinking_patch(kind: ProviderKind, level: ThinkingLevel) -> Option<Thinki
         }
         (ProviderKind::Minimax, _) => both(json!({"thinking": {"type": "adaptive"}})),
     })
+}
+
+/// RFC 7396 JSON Merge Patch. Objects merge recursively, `null` deletes the
+/// key, anything else replaces. Chosen over replacing whole top-level keys so
+/// that setting `output_config.effort` cannot wipe a client's
+/// `output_config.format`.
+pub fn merge_patch(target: &mut Value, patch: &Value) {
+    let Some(patch_obj) = patch.as_object() else {
+        *target = patch.clone();
+        return;
+    };
+    if !target.is_object() {
+        *target = Value::Object(serde_json::Map::new());
+    }
+    let target_obj = target
+        .as_object_mut()
+        .expect("target was just coerced to an object");
+    for (key, value) in patch_obj {
+        if value.is_null() {
+            target_obj.remove(key);
+        } else {
+            let slot = target_obj.entry(key.clone()).or_insert(Value::Null);
+            merge_patch(slot, value);
+        }
+    }
+}
+
+/// Drop every leaf of `patch` whose path already exists in `body`, so a
+/// non-forcing provider level acts as a default and never overwrites what the
+/// client asked for. Returns `None` when nothing is left to apply.
+pub fn prune_existing(patch: &Value, body: &Value) -> Option<Value> {
+    let (Some(patch_obj), Some(body_obj)) = (patch.as_object(), body.as_object()) else {
+        return Some(patch.clone());
+    };
+    let mut out = serde_json::Map::new();
+    for (key, value) in patch_obj {
+        match body_obj.get(key) {
+            None => {
+                out.insert(key.clone(), value.clone());
+            }
+            Some(existing) if value.is_object() && existing.is_object() => {
+                if let Some(nested) = prune_existing(value, existing) {
+                    out.insert(key.clone(), nested);
+                }
+            }
+            // The client already set this leaf — leave theirs in place.
+            Some(_) => {}
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(Value::Object(out))
+    }
+}
+
+/// One provider's resolved thinking patch for one wire format, plus whether it
+/// overrides the client or merely fills in what the client omitted.
+#[derive(Debug, Clone)]
+pub struct ThinkingInjection {
+    patch: Value,
+    force: bool,
+}
+
+impl ThinkingInjection {
+    pub fn new(patch: Value, force: bool) -> Self {
+        Self { patch, force }
+    }
+
+    /// Merge the patch into a JSON request body. A body that isn't JSON, or
+    /// that would fail to re-serialize, passes through untouched.
+    pub fn apply(&self, body: Bytes) -> Bytes {
+        let Ok(mut value) = serde_json::from_slice::<Value>(&body) else {
+            return body;
+        };
+        let effective = if self.force {
+            self.patch.clone()
+        } else {
+            match prune_existing(&self.patch, &value) {
+                Some(patch) => patch,
+                None => return body,
+            }
+        };
+        merge_patch(&mut value, &effective);
+        serde_json::to_vec(&value).map(Bytes::from).unwrap_or(body)
+    }
 }
 
 #[cfg(test)]
@@ -199,5 +286,77 @@ mod tests {
         ] {
             assert!(!thinking_levels(kind).contains(&ThinkingLevel::Unset));
         }
+    }
+
+    use bytes::Bytes;
+
+    #[test]
+    fn merge_patch_replaces_scalars_and_recurses_into_objects() {
+        let mut target = json!({"output_config": {"format": {"type": "json_schema"}}});
+        merge_patch(&mut target, &json!({"output_config": {"effort": "high"}}));
+        assert_eq!(
+            target,
+            json!({"output_config": {"format": {"type": "json_schema"}, "effort": "high"}}),
+            "a sibling key the client sent must survive"
+        );
+    }
+
+    #[test]
+    fn merge_patch_deletes_keys_set_to_null() {
+        let mut target = json!({"thinking": {"type": "enabled", "budget_tokens": 8000}});
+        merge_patch(
+            &mut target,
+            &json!({"thinking": {"type": "disabled", "budget_tokens": null}}),
+        );
+        assert_eq!(target, json!({"thinking": {"type": "disabled"}}));
+    }
+
+    #[test]
+    fn prune_existing_drops_leaves_the_body_already_has() {
+        let patch = json!({"output_config": {"effort": "high"}, "reasoning_effort": "high"});
+        let body = json!({"output_config": {"effort": "low"}});
+        assert_eq!(
+            prune_existing(&patch, &body),
+            Some(json!({"reasoning_effort": "high"})),
+            "effort was already set by the client; only the untouched key remains"
+        );
+    }
+
+    #[test]
+    fn prune_existing_returns_none_when_the_body_covers_everything() {
+        let patch = json!({"reasoning_effort": "high"});
+        let body = json!({"reasoning_effort": "low"});
+        assert_eq!(prune_existing(&patch, &body), None);
+    }
+
+    #[test]
+    fn injection_without_force_leaves_a_client_value_alone() {
+        let inj = ThinkingInjection::new(json!({"reasoning_effort": "max"}), false);
+        let out = inj.apply(Bytes::from(r#"{"model":"m","reasoning_effort":"low"}"#));
+        let v: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["reasoning_effort"], "low");
+    }
+
+    #[test]
+    fn injection_without_force_fills_in_a_missing_value() {
+        let inj = ThinkingInjection::new(json!({"reasoning_effort": "max"}), false);
+        let out = inj.apply(Bytes::from(r#"{"model":"m"}"#));
+        let v: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["reasoning_effort"], "max");
+    }
+
+    #[test]
+    fn injection_with_force_overrides_a_client_value() {
+        let inj = ThinkingInjection::new(json!({"reasoning_effort": "max"}), true);
+        let out = inj.apply(Bytes::from(r#"{"model":"m","reasoning_effort":"low"}"#));
+        let v: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["reasoning_effort"], "max");
+    }
+
+    #[test]
+    fn injection_passes_non_json_bodies_through_untouched() {
+        let inj = ThinkingInjection::new(json!({"reasoning_effort": "max"}), true);
+        let body = Bytes::from_static(b"not json at all");
+        assert_eq!(inj.apply(body.clone()), body);
     }
 }
