@@ -63,6 +63,28 @@ pub fn quirks_for(
     }
 }
 
+/// Return default endpoint URLs (Anthropic format, OpenAI format) for TUI prefill.
+pub fn default_urls(kind: ProviderKind) -> (Option<&'static str>, Option<&'static str>) {
+    match kind {
+        ProviderKind::Anthropic => (Some("https://api.anthropic.com"), None),
+        ProviderKind::Minimax => (
+            Some("https://api.minimaxi.com/anthropic"),
+            Some("https://api.minimaxi.com/v1"),
+        ),
+        ProviderKind::Zai => (
+            Some("https://api.z.ai/api/anthropic"),
+            Some("https://api.z.ai/api/paas/v4"),
+        ),
+        ProviderKind::DeepSeek => (None, Some("https://api.deepseek.com/v1")),
+        ProviderKind::OpenAi => (None, Some("https://api.openai.com/v1")),
+        ProviderKind::Kimi => (
+            Some("https://api.moonshot.ai/anthropic"),
+            Some("https://api.moonshot.ai/v1"),
+        ),
+        ProviderKind::Codex => (None, Some("https://chatgpt.com/backend-api/codex")),
+    }
+}
+
 pub struct UpstreamProvider {
     name: String,
     anthropic_base_url: Option<String>,
@@ -520,5 +542,19 @@ mod tests {
         let out = p.apply_openai_request_quirks(chat);
         let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(v["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn default_urls_minimax_has_both() {
+        let (a, o) = default_urls(ProviderKind::Minimax);
+        assert_eq!(a, Some("https://api.minimaxi.com/anthropic"));
+        assert_eq!(o, Some("https://api.minimaxi.com/v1"));
+    }
+
+    #[test]
+    fn default_urls_deepseek_openai_only() {
+        let (a, o) = default_urls(ProviderKind::DeepSeek);
+        assert!(a.is_none());
+        assert!(o.is_some());
     }
 }
