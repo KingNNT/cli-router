@@ -11,6 +11,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (6, MIGRATION_V6),
     (7, MIGRATION_V7),
     (8, MIGRATION_V8),
+    (9, MIGRATION_V9),
 ];
 
 const MIGRATION_V1: &str = r#"
@@ -120,6 +121,21 @@ ALTER TABLE providers ADD COLUMN sanitize_empty_tools INTEGER NOT NULL DEFAULT 0
 
 const MIGRATION_V8: &str = r#"
 ALTER TABLE providers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+"#;
+
+const MIGRATION_V9: &str = r#"
+ALTER TABLE providers ADD COLUMN anthropic_base_url TEXT;
+
+UPDATE providers
+   SET anthropic_base_url = base_url
+ WHERE kind IN ('anthropic','minimax','zai','kimi')
+   AND base_url IS NOT NULL AND base_url <> '';
+
+UPDATE providers
+   SET openai_base_url = base_url
+ WHERE kind IN ('deepseek','openai','codex')
+   AND base_url IS NOT NULL AND base_url <> ''
+   AND (openai_base_url IS NULL OR openai_base_url = '');
 "#;
 
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
@@ -290,5 +306,62 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert!(cols.contains(&"sanitize_empty_tools".into()));
+    }
+
+    #[test]
+    fn migration_adds_anthropic_base_url_and_backfills_by_kind() {
+        let conn = open_in_memory();
+
+        // Bring the schema up to V8 only (pre-V9 state), so we can seed rows
+        // the way older code stored them: URL in `base_url`, nothing yet in
+        // `anthropic_base_url`.
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for (target, sql) in MIGRATIONS.iter().filter(|(v, _)| *v <= 8) {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", target).unwrap();
+        }
+
+        conn.execute_batch(
+            "INSERT INTO providers (name, kind, base_url, openai_base_url, auth_type) VALUES
+               ('mm','minimax','https://api.minimax.io/anthropic','https://api.minimax.io/v1','bearer'),
+               ('ds','deepseek','https://api.deepseek.com',NULL,'bearer'),
+               ('an','anthropic','https://api.anthropic.com',NULL,'anthropic_oauth');",
+        )
+        .unwrap();
+
+        // Now apply V9 alone against the pre-existing rows and assert the backfill.
+        conn.execute_batch(MIGRATION_V9).unwrap();
+
+        let anthropic_of = |name: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT anthropic_base_url FROM providers WHERE name=?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let openai_of = |name: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT openai_base_url FROM providers WHERE name=?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+
+        assert_eq!(
+            anthropic_of("mm").as_deref(),
+            Some("https://api.minimax.io/anthropic")
+        );
+        assert_eq!(
+            openai_of("mm").as_deref(),
+            Some("https://api.minimax.io/v1")
+        );
+        assert_eq!(
+            anthropic_of("an").as_deref(),
+            Some("https://api.anthropic.com")
+        );
+        assert_eq!(openai_of("ds").as_deref(), Some("https://api.deepseek.com"));
+        assert_eq!(anthropic_of("ds"), None);
     }
 }
