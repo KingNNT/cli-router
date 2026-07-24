@@ -93,8 +93,14 @@ impl Provider for MinimaxProvider {
         "minimax"
     }
 
+    // MiniMax's Anthropic endpoint (`/anthropic/v1/messages`) is a first-class
+    // API that returns clean, fully-terminated SSE with native `thinking`
+    // blocks, signatures and accurate usage. Declaring Anthropic as the native
+    // format makes Anthropic clients (Claude Code) a passthrough — no lossy
+    // OpenAI round-trip — while OpenAI clients (OpenCode) are translated against
+    // that clean upstream stream.
     fn native_format(&self) -> ApiFormat {
-        ApiFormat::OpenAI
+        ApiFormat::Anthropic
     }
 
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {
@@ -267,6 +273,13 @@ mod tests {
     #[test]
     fn default_auth_is_passthrough() {
         assert!(matches!(provider().auth, AuthHeader::Passthrough));
+    }
+
+    #[test]
+    fn native_format_is_anthropic() {
+        // Anthropic clients (Claude Code) must be a passthrough to MiniMax's
+        // native `/anthropic` endpoint, not translated through OpenAI.
+        assert_eq!(provider().native_format(), ApiFormat::Anthropic);
     }
 
     #[test]
