@@ -314,7 +314,8 @@ impl Provider for RoutingProvider {
             let rewritten =
                 rewrite_model_in_body(&body, bare_model).map_err(ProxyError::BadRequest)?;
             let rewritten_body = Bytes::from(rewritten);
-            let direction = Direction::from_pair(ApiFormat::Anthropic, provider.native_format());
+            let (direction, upstream_format) =
+                Self::select_direction(ApiFormat::Anthropic, provider.supported_formats());
             let native_path = Self::translate_path(path, direction);
             tracing::debug!(
                 target: "routing",
@@ -326,7 +327,7 @@ impl Provider for RoutingProvider {
                 "namespace route: translating request"
             );
             let send_body = Self::translate_request(&rewritten_body, direction)?;
-            let raw_resp = match provider.native_format() {
+            let raw_resp = match upstream_format {
                 ApiFormat::Anthropic => {
                     provider
                         .forward(native_path, headers, send_body, streaming)
@@ -387,7 +388,8 @@ impl Provider for RoutingProvider {
             let rewritten =
                 rewrite_model_in_body(&body, bare_model).map_err(ProxyError::BadRequest)?;
             let rewritten_body = Bytes::from(rewritten);
-            let direction = Direction::from_pair(ApiFormat::OpenAI, provider.native_format());
+            let (direction, upstream_format) =
+                Self::select_direction(ApiFormat::OpenAI, provider.supported_formats());
             let native_path = Self::translate_path(path, direction);
             tracing::debug!(
                 target: "routing",
@@ -399,7 +401,7 @@ impl Provider for RoutingProvider {
                 "namespace route: translating request (OpenAI client)"
             );
             let send_body = Self::translate_request(&rewritten_body, direction)?;
-            let raw_resp = match provider.native_format() {
+            let raw_resp = match upstream_format {
                 ApiFormat::OpenAI => {
                     provider
                         .forward_openai(native_path, headers, send_body, streaming)
@@ -568,7 +570,6 @@ impl RoutingProvider {
     /// Given the client's format and a provider's capability, pick the
     /// upstream format (passthrough when supported, otherwise the provider's
     /// sole supported format) and the translation direction to apply.
-    #[allow(dead_code)]
     fn select_direction(
         client_format: ApiFormat,
         sup: FormatSupport,
@@ -685,12 +686,13 @@ impl RoutingProvider {
                 }
             };
 
-            let direction = Direction::from_pair(client_format, entry.provider.native_format());
+            let (direction, upstream_format) =
+                Self::select_direction(client_format, entry.provider.supported_formats());
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
 
             // Call the leaf provider using its native format.
-            let raw_resp = match entry.provider.native_format() {
+            let raw_resp = match upstream_format {
                 ApiFormat::Anthropic => {
                     entry
                         .provider
@@ -816,11 +818,12 @@ impl RoutingProvider {
                 }
             };
 
-            let direction = Direction::from_pair(client_format, entry.provider.native_format());
+            let (direction, upstream_format) =
+                Self::select_direction(client_format, entry.provider.supported_formats());
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
 
-            let raw_resp = match entry.provider.native_format() {
+            let raw_resp = match upstream_format {
                 ApiFormat::Anthropic => {
                     entry
                         .provider
@@ -942,11 +945,12 @@ impl RoutingProvider {
                 }
             };
 
-            let direction = Direction::from_pair(ApiFormat::OpenAI, entry.provider.native_format());
+            let (direction, upstream_format) =
+                Self::select_direction(ApiFormat::OpenAI, entry.provider.supported_formats());
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
 
-            let raw_resp = match entry.provider.native_format() {
+            let raw_resp = match upstream_format {
                 ApiFormat::OpenAI => {
                     entry
                         .provider
@@ -1066,11 +1070,12 @@ impl RoutingProvider {
                 }
             };
 
-            let direction = Direction::from_pair(ApiFormat::OpenAI, entry.provider.native_format());
+            let (direction, upstream_format) =
+                Self::select_direction(ApiFormat::OpenAI, entry.provider.supported_formats());
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
 
-            let raw_resp = match entry.provider.native_format() {
+            let raw_resp = match upstream_format {
                 ApiFormat::OpenAI => {
                     entry
                         .provider
