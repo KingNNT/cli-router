@@ -9,7 +9,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use chrono::NaiveDate;
-use proxy::adapters::providers::{AnthropicProvider, RoutingProvider, ZaiProvider};
+use proxy::adapters::providers::RoutingProvider;
+use proxy::adapters::providers::upstream::{Quirks, UpstreamProvider};
 use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
 use proxy::application::ports::{Provider, RequestLogPort};
 use proxy::application::use_cases::HandleMessages;
@@ -121,7 +122,14 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
     }));
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
     let http = reqwest::Client::new();
-    let stub_provider: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(http.clone()));
+    let stub_provider: Arc<dyn Provider> = Arc::new(UpstreamProvider::new(
+        "anthropic".to_string(),
+        Some("https://api.anthropic.com".to_string()),
+        None,
+        proxy::adapters::providers::AuthHeader::Passthrough,
+        Quirks::none(),
+        http.clone(),
+    ));
 
     // In-memory DB for config storage in tests
     let config_conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -226,7 +234,7 @@ async fn start_translation_proxy_with_repo(
 // ── Test 1: Anthropic client → OpenAI upstream ─────────────────────────────────
 //
 // Client sends POST /v1/messages (Anthropic format).
-// Upstream is ZaiProvider (OpenAI-native) — receives /v1/chat/completions.
+// Upstream leaf is OpenAI-native — receives /v1/chat/completions.
 // Proxy translates request body A→O and response body O→A.
 
 #[tokio::test]
@@ -255,12 +263,14 @@ async fn anthropic_client_to_openai_upstream_translates_request() {
         .mount(&upstream)
         .await;
 
-    // ZaiProvider is OpenAI-native: forward_openai hits {openai_base_url}/v1/chat/completions.
-    let leaf: Arc<dyn Provider> = Arc::new(ZaiProvider::configure(
-        reqwest::Client::new(),
+    // The leaf is OpenAI-native: forward_openai hits {openai_base_url}/v1/chat/completions.
+    let leaf: Arc<dyn Provider> = Arc::new(UpstreamProvider::new(
+        "zai".to_string(),
         None,
         Some(upstream.uri()),
         proxy::adapters::providers::AuthHeader::Passthrough,
+        Quirks::none(),
+        reqwest::Client::new(),
     ));
 
     let proxy_addr = start_translation_proxy(leaf).await;
@@ -315,7 +325,7 @@ async fn anthropic_client_to_openai_upstream_translates_request() {
 // ── Test 2: OpenAI client → Anthropic upstream ─────────────────────────────────
 //
 // Client sends POST /v1/chat/completions (OpenAI format).
-// Upstream is AnthropicProvider (Anthropic-native) — receives /v1/messages.
+// Upstream leaf is Anthropic-native — receives /v1/messages.
 // Proxy translates request body O→A and response body A→O.
 
 #[tokio::test]
@@ -344,10 +354,14 @@ async fn openai_client_to_anthropic_upstream_translates_request() {
         .mount(&upstream)
         .await;
 
-    // AnthropicProvider is Anthropic-native: forward() hits {base_url}/v1/messages.
-    let leaf: Arc<dyn Provider> = Arc::new(AnthropicProvider::with_base_url(
+    // The leaf is Anthropic-native: forward() hits {anthropic_base_url}/v1/messages.
+    let leaf: Arc<dyn Provider> = Arc::new(UpstreamProvider::new(
+        "anthropic".to_string(),
+        Some(upstream.uri()),
+        None,
+        proxy::adapters::providers::AuthHeader::Passthrough,
+        Quirks::none(),
         reqwest::Client::new(),
-        upstream.uri(),
     ));
 
     let proxy_addr = start_translation_proxy(leaf).await;
@@ -430,10 +444,14 @@ async fn passthrough_when_formats_match_no_translation() {
         .mount(&upstream)
         .await;
 
-    // AnthropicProvider is Anthropic-native — same format as the client → passthrough.
-    let leaf: Arc<dyn Provider> = Arc::new(AnthropicProvider::with_base_url(
+    // The leaf is Anthropic-native — same format as the client → passthrough.
+    let leaf: Arc<dyn Provider> = Arc::new(UpstreamProvider::new(
+        "anthropic".to_string(),
+        Some(upstream.uri()),
+        None,
+        proxy::adapters::providers::AuthHeader::Passthrough,
+        Quirks::none(),
         reqwest::Client::new(),
-        upstream.uri(),
     ));
 
     let proxy_addr = start_translation_proxy(leaf).await;
@@ -481,7 +499,7 @@ async fn translation_direction_persists_in_request_log() {
     use proxy::application::ports::RequestLogReadPort;
 
     let upstream = MockServer::start().await;
-    // ZaiProvider is OpenAI-native, so the routing provider translates the Anthropic
+    // The leaf is OpenAI-native, so the routing provider translates the Anthropic
     // client path /v1/messages to /chat/completions.
     Mock::given(matchers::method("POST"))
         .and(matchers::path("/chat/completions"))
@@ -504,11 +522,13 @@ async fn translation_direction_persists_in_request_log() {
         .mount(&upstream)
         .await;
 
-    let leaf: Arc<dyn Provider> = Arc::new(ZaiProvider::configure(
-        reqwest::Client::new(),
+    let leaf: Arc<dyn Provider> = Arc::new(UpstreamProvider::new(
+        "zai".to_string(),
         None,
         Some(upstream.uri()),
         proxy::adapters::providers::AuthHeader::Passthrough,
+        Quirks::none(),
+        reqwest::Client::new(),
     ));
 
     let (proxy_addr, repo) = start_translation_proxy_with_repo(leaf).await;

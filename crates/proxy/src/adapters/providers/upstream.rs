@@ -194,9 +194,6 @@ impl UpstreamProvider {
 
 /// Inject `reasoning_split: true` into an OpenAI-format request body.
 /// Non-JSON or non-object bodies are returned verbatim.
-///
-/// Copied from `minimax.rs`; the original stays there until Phase 4 deletes
-/// `MinimaxProvider`.
 fn inject_reasoning_split(body: &Bytes) -> Bytes {
     let Ok(mut value) = serde_json::from_slice::<Value>(body) else {
         return body.clone();
@@ -213,9 +210,6 @@ fn inject_reasoning_split(body: &Bytes) -> Bytes {
 /// Inject `output_config.effort` into an Anthropic Messages API request body
 /// if the provider has a default effort configured AND the request doesn't
 /// already specify one.
-///
-/// Copied from `anthropic.rs`; the original stays there until Phase 4
-/// deletes `AnthropicProvider`.
 fn inject_effort(body: &mut Bytes, default_effort: Option<&str>) {
     let Some(effort) = default_effort else {
         return;
@@ -252,16 +246,10 @@ fn inject_effort(body: &mut Bytes, default_effort: Option<&str>) {
 
 /// Models that support `tool_choice`. Only `deepseek-chat` (V3) is known to
 /// support it; all other models (reasoner, V4-Pro, etc.) reject it with 400.
-///
-/// Copied from `deepseek.rs`; the original stays there until Phase 4
-/// deletes `DeepSeekProvider`.
 const TOOL_CHOICE_SUPPORTED_MODELS: &[&str] = &["deepseek-chat"];
 
 /// Strip `tool_choice` from the request body when the target model is a
 /// DeepSeek reasoner model that does not support it.
-///
-/// Copied from `deepseek.rs` (as a free function, not an associated method);
-/// the original stays there until Phase 4 deletes `DeepSeekProvider`.
 fn strip_tool_choice_if_unsupported(body: Bytes) -> Bytes {
     let Ok(mut v) = serde_json::from_slice::<Value>(&body) else {
         return body;

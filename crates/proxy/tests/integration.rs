@@ -4,7 +4,8 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use chrono::NaiveDate;
-use proxy::adapters::providers::AnthropicProvider;
+use proxy::adapters::providers::AuthHeader;
+use proxy::adapters::providers::upstream::{Quirks, UpstreamProvider};
 use proxy::adapters::storage::{SqliteRequestLogRepository, ensure_current};
 use proxy::application::ports::{Provider, RequestLogPort};
 use proxy::application::use_cases::HandleMessages;
@@ -56,8 +57,14 @@ async fn start_proxy(upstream_url: String) -> (SocketAddr, Arc<Mutex<Connection>
     let conn = Arc::new(Mutex::new(conn));
 
     let http = reqwest::Client::new();
-    let provider: Arc<dyn Provider> =
-        Arc::new(AnthropicProvider::with_base_url(http, upstream_url));
+    let provider: Arc<dyn Provider> = Arc::new(UpstreamProvider::new(
+        "anthropic".to_string(),
+        Some(upstream_url),
+        None,
+        AuthHeader::Passthrough,
+        Quirks::none(),
+        http,
+    ));
     let repo = Arc::new(SqliteRequestLogRepository::new(conn.clone()));
     let request_log: Arc<dyn RequestLogPort> = repo.clone();
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
@@ -83,7 +90,8 @@ async fn start_proxy(upstream_url: String) -> (SocketAddr, Arc<Mutex<Connection>
 
 fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks::AdminState {
     use proxy::adapters::oauth::OAuthSessionStore;
-    use proxy::adapters::providers::{AnthropicProvider, LiveProvider};
+    use proxy::adapters::providers::LiveProvider;
+    use proxy::adapters::providers::upstream::{Quirks, UpstreamProvider};
     use proxy::adapters::storage::db_config::DbConfigRepository;
     use proxy::application::ports::{ConfigRepository, Provider, RequestLogReadPort};
     use proxy::application::use_cases::{
@@ -107,7 +115,14 @@ fn dummy_admin_state(repo: Arc<SqliteRequestLogRepository>) -> proxy::frameworks
     }));
     let oauth_sessions = Arc::new(OAuthSessionStore::new());
     let http = reqwest::Client::new();
-    let stub_provider: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(http.clone()));
+    let stub_provider: Arc<dyn Provider> = Arc::new(UpstreamProvider::new(
+        "anthropic".to_string(),
+        Some("https://api.anthropic.com".to_string()),
+        None,
+        AuthHeader::Passthrough,
+        Quirks::none(),
+        http.clone(),
+    ));
     let live = Arc::new(LiveProvider::new(
         stub_provider,
         Arc::new(proxy::adapters::quota::NoopQuota),
@@ -287,9 +302,13 @@ async fn admin_config_put_saves_to_db_and_replaces_in_memory() {
     let repo = Arc::new(SqliteRequestLogRepository::new(conn));
     let upstream = MockServer::start().await;
 
-    let provider: Arc<dyn Provider> = Arc::new(AnthropicProvider::with_base_url(
+    let provider: Arc<dyn Provider> = Arc::new(UpstreamProvider::new(
+        "anthropic".to_string(),
+        Some(upstream.uri()),
+        None,
+        AuthHeader::Passthrough,
+        Quirks::none(),
         reqwest::Client::new(),
-        upstream.uri(),
     ));
     let request_log: Arc<dyn RequestLogPort> = repo.clone();
     let clock: Arc<dyn Clock> = Arc::new(SystemClock);
@@ -692,7 +711,7 @@ async fn upstream_error_is_forwarded_and_row_is_marked_errored() {
 }
 
 async fn start_routing_proxy(rules: Vec<(&'static str, String, Vec<String>)>) -> SocketAddr {
-    use proxy::adapters::providers::{AuthHeader, RoutingProvider};
+    use proxy::adapters::providers::RoutingProvider;
 
     let conn = Connection::open_in_memory().unwrap();
     ensure_current(&conn).unwrap();
@@ -710,20 +729,26 @@ async fn start_routing_proxy(rules: Vec<(&'static str, String, Vec<String>)>) ->
         if !leaves.contains_key(primary_url) {
             // Naming the leaf provider by its base URL keeps the helper terse.
             // All mock servers in these routing tests respond to /v1/messages (Anthropic format).
-            let leaf: Arc<dyn Provider> = Arc::new(AnthropicProvider::configure(
-                http.clone(),
+            let leaf: Arc<dyn Provider> = Arc::new(UpstreamProvider::new(
+                "anthropic".to_string(),
                 Some(primary_url.clone()),
+                None,
                 AuthHeader::Passthrough,
+                Quirks::none(),
+                http.clone(),
             ));
             leaves.insert(primary_url.clone(), leaf);
         }
         for u in fallback_urls {
             if !leaves.contains_key(u) {
                 // Fallbacks also point at Anthropic-format mocks in these tests.
-                let leaf: Arc<dyn Provider> = Arc::new(AnthropicProvider::configure(
-                    http.clone(),
+                let leaf: Arc<dyn Provider> = Arc::new(UpstreamProvider::new(
+                    "anthropic".to_string(),
                     Some(u.clone()),
+                    None,
                     AuthHeader::Passthrough,
+                    Quirks::none(),
+                    http.clone(),
                 ));
                 leaves.insert(u.clone(), leaf);
             }

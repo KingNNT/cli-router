@@ -142,7 +142,7 @@ pub struct RoutingProvider {
     rules: Vec<Route>,
     /// Counter for round-robin rotation. Incremented per request.
     rr_counter: AtomicUsize,
-    /// Name → provider map for namespace routing (e.g. "zai" → ZaiProvider).
+    /// Name → provider map for namespace routing (e.g. "zai" → its `UpstreamProvider`).
     leaves: std::collections::HashMap<String, Arc<dyn Provider>>,
     /// Conversation-affinity config. Controls sticky rendezvous hashing.
     affinity: crate::config::AffinityConfig,
@@ -1168,10 +1168,22 @@ fn extract_retry_after_ms(headers: &HeaderMap) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::providers::AnthropicProvider;
+    use crate::adapters::providers::AuthHeader;
+    use crate::adapters::providers::upstream::{Quirks, UpstreamProvider};
+
+    fn named_provider(name: &str) -> Arc<dyn Provider> {
+        Arc::new(UpstreamProvider::new(
+            name.to_string(),
+            Some("https://example.invalid".to_string()),
+            None,
+            AuthHeader::Passthrough,
+            Quirks::none(),
+            reqwest::Client::new(),
+        ))
+    }
 
     fn dummy() -> Arc<dyn Provider> {
-        Arc::new(AnthropicProvider::new(reqwest::Client::new()))
+        named_provider("anthropic")
     }
 
     #[test]
@@ -1264,7 +1276,7 @@ mod tests {
     #[test]
     fn builder_applies_per_provider_concurrency() {
         let mut map = std::collections::HashMap::new();
-        // dummy() is an AnthropicProvider whose name() is "anthropic".
+        // dummy() is an UpstreamProvider whose name() is "anthropic".
         map.insert("anthropic".to_string(), 3usize);
         let p = RoutingProvider::builder()
             .concurrency(map)
@@ -1335,10 +1347,8 @@ mod tests {
 
     #[test]
     fn resolve_provider_finds_named_provider() {
-        use crate::adapters::providers::ZaiProvider;
-
-        let zai: Arc<dyn Provider> = Arc::new(ZaiProvider::new(reqwest::Client::new()));
-        let anthropic: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(reqwest::Client::new()));
+        let zai = named_provider("zai");
+        let anthropic = named_provider("anthropic");
 
         let mut leaves = std::collections::HashMap::new();
         leaves.insert("zai".to_string(), zai);
