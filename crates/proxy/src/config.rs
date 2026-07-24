@@ -41,6 +41,13 @@ pub struct ProviderConfig {
     /// Which of the configured endpoints the proxy may use. See [`FormatMode`].
     #[serde(default)]
     pub format_mode: FormatMode,
+    /// How hard this provider's upstream should think. See [`ThinkingLevel`].
+    #[serde(default)]
+    pub thinking_level: ThinkingLevel,
+    /// When true the level overrides whatever the client sent; when false it
+    /// only fills in what the client omitted.
+    #[serde(default)]
+    pub thinking_force: bool,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
     #[serde(default)]
@@ -595,6 +602,8 @@ mod tests {
             proxy_db: PathBuf::new(),
             pricing_db: PathBuf::new(),
             providers: vec![ProviderConfig {
+                thinking_level: ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "disabled".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::Passthrough,
@@ -633,6 +642,8 @@ mod tests {
             pricing_db: PathBuf::new(),
             providers: vec![
                 ProviderConfig {
+                    thinking_level: ThinkingLevel::Unset,
+                    thinking_force: false,
                     name: "main".into(),
                     kind: ProviderKind::Anthropic,
                     auth: AuthConfig::Passthrough,
@@ -646,6 +657,8 @@ mod tests {
                     enabled: true,
                 },
                 ProviderConfig {
+                    thinking_level: ThinkingLevel::Unset,
+                    thinking_force: false,
                     name: "fallback".into(),
                     kind: ProviderKind::Zai,
                     auth: AuthConfig::Passthrough,
@@ -699,6 +712,8 @@ mod tests {
             proxy_db: PathBuf::new(),
             pricing_db: PathBuf::new(),
             providers: vec![ProviderConfig {
+                thinking_level: ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "anthropic".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::Passthrough,
@@ -735,6 +750,8 @@ mod tests {
             pricing_db: PathBuf::new(),
             providers: vec![
                 ProviderConfig {
+                    thinking_level: ThinkingLevel::Unset,
+                    thinking_force: false,
                     name: "x".into(),
                     kind: ProviderKind::Anthropic,
                     auth: AuthConfig::Passthrough,
@@ -748,6 +765,8 @@ mod tests {
                     enabled: true,
                 },
                 ProviderConfig {
+                    thinking_level: ThinkingLevel::Unset,
+                    thinking_force: false,
                     name: "x".into(),
                     kind: ProviderKind::Zai,
                     auth: AuthConfig::Passthrough,
@@ -783,6 +802,8 @@ mod tests {
             proxy_db: PathBuf::new(),
             pricing_db: PathBuf::new(),
             providers: vec![ProviderConfig {
+                thinking_level: ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "anthropic".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::Passthrough,

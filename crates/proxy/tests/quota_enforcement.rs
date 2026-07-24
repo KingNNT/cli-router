@@ -138,6 +138,8 @@ fn hot_reload_preserves_quota_enforcement() {
         proxy_db: std::path::PathBuf::new(),
         pricing_db: std::path::PathBuf::new(),
         providers: vec![ProviderConfig {
+            thinking_level: proxy::config::ThinkingLevel::Unset,
+            thinking_force: false,
             name: "anthropic".into(),
             kind: ProviderKind::Anthropic,
             auth: AuthConfig::Passthrough,

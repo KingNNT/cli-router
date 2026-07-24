@@ -644,6 +644,8 @@ mod tests {
             proxy_db: "".into(),
             pricing_db: "".into(),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "anthropic".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::ApiKey { value: "k".into() },
@@ -672,6 +674,8 @@ mod tests {
             proxy_db: "".into(),
             pricing_db: "".into(),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "Anthropic".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::AnthropicOAuth {
@@ -709,6 +713,8 @@ mod tests {
             proxy_db: "".into(),
             pricing_db: "".into(),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "anthropic".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::ApiKey { value: "k".into() },

@@ -14,6 +14,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (9, MIGRATION_V9),
     (10, MIGRATION_V10),
     (11, MIGRATION_V11),
+    (12, MIGRATION_V12),
 ];
 
 const MIGRATION_V1: &str = r#"
@@ -202,6 +203,28 @@ UPDATE providers
 // onto one endpoint. See `config::FormatMode`.
 const MIGRATION_V11: &str = r#"
 ALTER TABLE providers ADD COLUMN format_mode TEXT NOT NULL DEFAULT 'both';
+"#;
+
+// Per-provider thinking level. `unset` means the proxy injects nothing and the
+// upstream default applies, which is what every pre-V12 row did. The backfill
+// moves the retired `reasoning_effort` values across; that column is left in
+// place and no longer read, the same way V9 retired `base_url`.
+const MIGRATION_V12: &str = r#"
+ALTER TABLE providers ADD COLUMN thinking_level TEXT NOT NULL DEFAULT 'unset';
+ALTER TABLE providers ADD COLUMN thinking_force INTEGER NOT NULL DEFAULT 0;
+
+UPDATE providers
+   SET thinking_level = reasoning_effort
+ WHERE kind = 'anthropic'
+   AND COALESCE(reasoning_effort, '') <> '';
+
+UPDATE providers
+   SET thinking_level = CASE reasoning_effort
+        WHEN 'none' THEN 'off'
+        ELSE reasoning_effort
+       END
+ WHERE kind = 'codex'
+   AND COALESCE(reasoning_effort, '') <> '';
 "#;
 
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
@@ -510,6 +533,72 @@ mod tests {
         assert_eq!(
             openai_of("ds").as_deref(),
             Some("https://custom.deepseek.example/v1")
+        );
+    }
+
+    #[test]
+    fn v12_adds_thinking_columns_and_backfills_reasoning_effort() {
+        let conn = open_in_memory();
+
+        // Bring the schema up to V11 only, then seed rows the way a
+        // pre-existing database would have them: `reasoning_effort` set,
+        // nothing yet in `thinking_level`.
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for (target, sql) in MIGRATIONS.iter().filter(|(v, _)| *v <= 11) {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", target).unwrap();
+        }
+
+        conn.execute(
+            "INSERT INTO providers (name, kind, base_url, auth_type, reasoning_effort)
+             VALUES ('anth','anthropic','','bearer','xhigh')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO providers (name, kind, base_url, auth_type, reasoning_effort)
+             VALUES ('cdx','codex','','bearer','none')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO providers (name, kind, base_url, auth_type) VALUES ('zai','zai','','bearer')",
+            [],
+        )
+        .unwrap();
+
+        // Now apply V12 alone against the pre-existing rows.
+        for (target, sql) in MIGRATIONS.iter().filter(|(v, _)| *v > 11) {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", target).unwrap();
+        }
+
+        let level = |name: &str| -> String {
+            conn.query_row(
+                "SELECT thinking_level FROM providers WHERE name = ?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            level("anth"),
+            "xhigh",
+            "anthropic effort carries over verbatim"
+        );
+        assert_eq!(level("cdx"), "off", "codex 'none' becomes 'off'");
+        assert_eq!(level("zai"), "unset", "a row without an effort stays unset");
+
+        let force: i64 = conn
+            .query_row(
+                "SELECT thinking_force FROM providers WHERE name='anth'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            force, 0,
+            "force defaults off so existing behaviour is preserved"
         );
     }
 }

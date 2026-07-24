@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use crate::application::ports::ConfigRepository;
 use crate::config::{
     AffinityConfig, AuthConfig, Config, ConfigError, FormatMode, MatchSpec, ProviderConfig,
-    ProviderKind, QuotaRule, RoutingRule, RoutingStrategy, ThinkingMode,
+    ProviderKind, QuotaRule, RoutingRule, RoutingStrategy, ThinkingLevel, ThinkingMode,
 };
 
 /// Convert rusqlite errors into ConfigError::Validation.
@@ -107,8 +107,8 @@ impl ConfigRepository for DbConfigRepository {
             let mut stmt = tx
                 .prepare(
                     "INSERT INTO providers (name, kind, anthropic_base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
-                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent, sanitize_empty_tools, enabled, format_mode)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent, sanitize_empty_tools, enabled, format_mode, thinking_level, thinking_force)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
                 )
                 .map_err(db_err)?;
             for p in &config.providers {
@@ -138,6 +138,8 @@ impl ConfigRepository for DbConfigRepository {
                         FormatMode::Anthropic => "anthropic",
                         FormatMode::OpenAi => "openai",
                     },
+                    p.thinking_level.as_str(),
+                    p.thinking_force as i64,
                 ])
                 .map_err(db_err)?;
             }
@@ -213,7 +215,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
         .prepare(
             "SELECT name, kind, anthropic_base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms,
-                    max_concurrent, sanitize_empty_tools, enabled, format_mode
+                    max_concurrent, sanitize_empty_tools, enabled, format_mode, thinking_level, thinking_force
              FROM providers ORDER BY id",
         )
         .map_err(db_err)?;
@@ -250,6 +252,9 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
                     "openai" => FormatMode::OpenAi,
                     _ => FormatMode::Both,
                 },
+                thinking_level: ThinkingLevel::parse(&row.get::<_, String>(16)?)
+                    .unwrap_or_default(),
+                thinking_force: row.get::<_, i64>(17)? != 0,
             })
         })
         .map_err(db_err)?;
@@ -473,6 +478,8 @@ mod tests {
         let mut cfg = repo.load().unwrap();
         cfg.port = 9999;
         cfg.providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
             name: "test".into(),
             kind: ProviderKind::Zai,
             auth: AuthConfig::Bearer {
@@ -532,6 +539,8 @@ mod tests {
         let repo = test_repo();
         let mut cfg = repo.load().unwrap();
         cfg.providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
             name: "mm".into(),
             kind: ProviderKind::Minimax,
             enabled: true,
@@ -556,6 +565,8 @@ mod tests {
         let repo = test_repo();
         let mut cfg = repo.load().unwrap();
         cfg.providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
             name: "empty-urls".into(),
             kind: ProviderKind::Anthropic,
             enabled: true,
@@ -620,6 +631,8 @@ mod tests {
         for (i, auth) in auth_types.iter().enumerate() {
             let mut cfg = repo.load().unwrap();
             cfg.providers.push(ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: format!("p{i}"),
                 kind: ProviderKind::Anthropic,
                 auth: auth.clone(),
@@ -682,6 +695,8 @@ mod tests {
         let repo = test_repo();
         let mut cfg = repo.load().unwrap();
         cfg.providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
             name: "moonshot".into(),
             kind: ProviderKind::Kimi,
             auth: AuthConfig::Passthrough,
@@ -709,6 +724,8 @@ mod tests {
         let repo = test_repo();
         let mut cfg = repo.load().unwrap();
         cfg.providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
             name: "off".into(),
             kind: ProviderKind::Anthropic,
             auth: AuthConfig::Passthrough,

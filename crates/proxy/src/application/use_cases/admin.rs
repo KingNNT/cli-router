@@ -753,7 +753,7 @@ fn payload_to_config(
     p: ConfigPayload,
     proxy_db: PathBuf,
     pricing_db: PathBuf,
-    _existing: &Config,
+    existing: &Config,
 ) -> Result<Config, ProxyError> {
     let providers = p
         .providers
@@ -802,6 +802,20 @@ fn payload_to_config(
                     )));
                 }
             };
+            // The admin API DTO does not expose thinking_level/thinking_force yet
+            // (no admin-API/TUI support has been built for them). `save()`
+            // replaces the whole `providers` table from this Config, so without
+            // this lookup any value backfilled by migration V12 — or set by a
+            // future writer — would be silently wiped by the next unrelated
+            // admin-API PUT. Preserve whatever the existing row already had,
+            // matched by provider name; a genuinely new provider has no existing
+            // row and falls back to `Unset`/`false`.
+            let existing_thinking = existing
+                .providers
+                .iter()
+                .find(|ep| ep.name == pp.name)
+                .map(|ep| (ep.thinking_level, ep.thinking_force))
+                .unwrap_or((crate::config::ThinkingLevel::Unset, false));
             Ok(ProviderConfig {
                 name: pp.name,
                 kind,
@@ -811,6 +825,8 @@ fn payload_to_config(
                 reasoning_effort,
                 thinking_mode,
                 format_mode,
+                thinking_level: existing_thinking.0,
+                thinking_force: existing_thinking.1,
                 max_concurrent: pp.max_concurrent,
                 sanitize_empty_tools: pp.sanitize_empty_tools.unwrap_or(false),
                 enabled: pp.enabled,
@@ -1259,6 +1275,8 @@ mod tests {
             proxy_db: PathBuf::from("/tmp/proxy.db"),
             pricing_db: PathBuf::from("/tmp/pricing.db"),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "anthropic".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::ApiKey {
@@ -1302,6 +1320,8 @@ mod tests {
             proxy_db: PathBuf::from("/tmp/proxy.db"),
             pricing_db: PathBuf::from("/tmp/pricing.db"),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "codex-main".into(),
                 kind: ProviderKind::Codex,
                 auth: AuthConfig::CodexAuto,
@@ -1382,6 +1402,8 @@ mod tests {
             proxy_db: PathBuf::from("/tmp/proxy.db"),
             pricing_db: PathBuf::from("/tmp/pricing.db"),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "minimax".into(),
                 kind: ProviderKind::Minimax,
                 auth: AuthConfig::Passthrough,
@@ -1425,6 +1447,8 @@ mod tests {
             proxy_db: PathBuf::from("/tmp/proxy.db"),
             pricing_db: PathBuf::from("/tmp/pricing.db"),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "moonshot".into(),
                 kind: ProviderKind::Kimi,
                 auth: AuthConfig::Passthrough,
@@ -1587,12 +1611,92 @@ mod tests {
     }
 
     #[test]
+    fn payload_to_config_preserves_thinking_level_not_carried_by_the_dto() {
+        // ProviderPayload has no thinking_level/thinking_force field, so a
+        // round-trip through the admin API PUT must not silently reset a
+        // provider's stored thinking level back to Unset.
+        let original = Config {
+            port: 8787,
+            proxy_db: PathBuf::from("/tmp/proxy.db"),
+            pricing_db: PathBuf::from("/tmp/pricing.db"),
+            providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::XHigh,
+                thinking_force: true,
+                name: "anthropic".into(),
+                kind: ProviderKind::Anthropic,
+                auth: AuthConfig::Passthrough,
+                anthropic_base_url: None,
+                openai_base_url: None,
+                reasoning_effort: None,
+                thinking_mode: crate::config::ThinkingMode::SplitOnly,
+                format_mode: crate::config::FormatMode::Both,
+                max_concurrent: None,
+                sanitize_empty_tools: false,
+                enabled: true,
+            }],
+            routing: vec![],
+            affinity: Default::default(),
+            quota: vec![],
+        };
+        let payload = config_to_payload(&original);
+        let roundtripped = payload_to_config(
+            payload,
+            original.proxy_db.clone(),
+            original.pricing_db.clone(),
+            &original,
+        )
+        .unwrap();
+        let p = &roundtripped.providers[0];
+        assert_eq!(p.thinking_level, crate::config::ThinkingLevel::XHigh);
+        assert!(p.thinking_force);
+    }
+
+    #[test]
+    fn payload_to_config_defaults_thinking_level_for_a_brand_new_provider() {
+        let existing = Config {
+            port: 8787,
+            proxy_db: PathBuf::from("/tmp/proxy.db"),
+            pricing_db: PathBuf::from("/tmp/pricing.db"),
+            providers: vec![],
+            routing: vec![],
+            affinity: Default::default(),
+            quota: vec![],
+        };
+        let mut payload = config_to_payload(&existing);
+        payload.providers.push(ProviderPayload {
+            name: "new-provider".into(),
+            kind: "zai".into(),
+            enabled: true,
+            auth: AuthPayload::Passthrough,
+            anthropic_base_url: None,
+            openai_base_url: None,
+            reasoning_effort: None,
+            thinking_mode: None,
+            format_mode: None,
+            max_concurrent: None,
+            sanitize_empty_tools: None,
+        });
+        let result = payload_to_config(
+            payload,
+            existing.proxy_db.clone(),
+            existing.pricing_db.clone(),
+            &existing,
+        )
+        .unwrap();
+        let p = &result.providers[0];
+        assert_eq!(p.thinking_level, crate::config::ThinkingLevel::Unset);
+        assert!(!p.thinking_force);
+    }
+
+    #[test]
     fn payload_to_config_parses_enabled() {
         let original = Config {
             port: 8787,
             proxy_db: PathBuf::from("/tmp/proxy.db"),
             pricing_db: PathBuf::from("/tmp/pricing.db"),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "off".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::Passthrough,
@@ -1631,6 +1735,8 @@ mod tests {
             proxy_db: PathBuf::from("/tmp/proxy.db"),
             pricing_db: PathBuf::from("/tmp/pricing.db"),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "off".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::Passthrough,
