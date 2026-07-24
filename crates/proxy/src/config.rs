@@ -98,6 +98,64 @@ pub enum FormatMode {
     OpenAi,
 }
 
+/// How hard the upstream model should think, chosen per provider from the
+/// closed list its API actually supports (see
+/// `adapters::providers::thinking::thinking_levels`).
+///
+/// `Unset` means the proxy sends nothing and the upstream default applies.
+/// The variants are a union across providers — no single provider offers all
+/// of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingLevel {
+    #[default]
+    Unset,
+    Off,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    #[serde(rename = "xhigh")]
+    XHigh,
+    Max,
+    Adaptive,
+}
+
+impl ThinkingLevel {
+    /// Wire and storage spelling. Also the value shown in the TUI and accepted
+    /// by the admin API.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThinkingLevel::Unset => "unset",
+            ThinkingLevel::Off => "off",
+            ThinkingLevel::Minimal => "minimal",
+            ThinkingLevel::Low => "low",
+            ThinkingLevel::Medium => "medium",
+            ThinkingLevel::High => "high",
+            ThinkingLevel::XHigh => "xhigh",
+            ThinkingLevel::Max => "max",
+            ThinkingLevel::Adaptive => "adaptive",
+        }
+    }
+
+    /// Parse a stored or wire value. Unknown input yields `None` so callers can
+    /// reject it rather than silently defaulting.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "unset" | "" => Some(ThinkingLevel::Unset),
+            "off" => Some(ThinkingLevel::Off),
+            "minimal" => Some(ThinkingLevel::Minimal),
+            "low" => Some(ThinkingLevel::Low),
+            "medium" => Some(ThinkingLevel::Medium),
+            "high" => Some(ThinkingLevel::High),
+            "xhigh" => Some(ThinkingLevel::XHigh),
+            "max" => Some(ThinkingLevel::Max),
+            "adaptive" => Some(ThinkingLevel::Adaptive),
+            _ => None,
+        }
+    }
+}
+
 /// Controls how MiniMax thinking/reasoning content is stripped from responses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]

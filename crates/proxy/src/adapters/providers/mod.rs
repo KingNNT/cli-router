@@ -8,6 +8,7 @@ pub mod live;
 mod messages_protocol;
 pub mod minimax_stream;
 pub mod routing;
+pub mod thinking;
 pub mod token_refresh;
 mod tool_sanitizer;
 pub mod upstream;
