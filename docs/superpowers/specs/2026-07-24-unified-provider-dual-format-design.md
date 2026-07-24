@@ -2,9 +2,12 @@
 
 - **Date:** 2026-07-24
 - **Status:** Approved (brainstorm), pending implementation plan
-- **Approach:** C — collapse the per-kind provider structs into one generic
-  `UpstreamProvider`; move per-kind differences into data (`Quirks` + a
-  `preset(kind)` table).
+- **Approach:** C — collapse the six HTTP-uniform provider structs into one
+  generic `UpstreamProvider`; move per-kind differences into data (`Quirks` +
+  a `preset(kind)` table). **Codex stays a bespoke provider** — it translates
+  Chat Completions → the OpenAI Responses API on a distinct `/responses` path
+  with custom request building and stream translation, and has no Anthropic
+  endpoint, so the dual-URL model does not apply to it.
 
 ## Problem
 
@@ -44,6 +47,10 @@ that returns a single `ApiFormat` per provider struct. Consequences:
 - Per-endpoint auth. A provider has one `AuthConfig`, applied to whichever
   endpoint is used. (OAuth kinds are Anthropic-only in practice; configuring an
   OpenAI URL for an OAuth-only kind is unsupported.)
+- Folding **Codex** into the generic provider. Codex remains its own
+  `CodexProvider` struct; `preset(ProviderKind::Codex)` builds it directly. It
+  serves only the OpenAI client format and always translates to the Responses
+  API upstream — `supported_formats()` returns OpenAI-only.
 
 ## Core concepts
 
@@ -139,7 +146,11 @@ table maps each kind to its defaults:
 | zai | openai | Bearer | — | ZaiAccountUsage |
 | deepseek | openai | Bearer | reorder_tool_responses | DeepSeekAccountUsage |
 | openai | openai | ApiKey/OAuth | — | NoopAccountUsage |
-| codex | openai | CodexAuto | reasoning_effort | CodexAccountUsage |
+| codex | *(bespoke)* | CodexAuto | *(bespoke)* | CodexAccountUsage |
+
+`preset(ProviderKind::Codex)` returns a marker that makes `build_leaf`
+construct the existing `CodexProvider` directly instead of an
+`UpstreamProvider`. All other kinds construct an `UpstreamProvider`.
 
 Config values override the preset: explicit `anthropic_base_url` /
 `openai_base_url`, `thinking_mode`, `reasoning_effort`, `sanitize_empty_tools`.
@@ -272,8 +283,9 @@ Each phase keeps `cargo test --workspace` green and is committed separately.
 
 1. Introduce `FormatSupport`, `Quirks`, `UpstreamProvider`, `preset(kind)`.
    No deletions; not yet wired.
-2. Switch `build_leaf` to `UpstreamProvider`; delete the old provider structs
-   one kind at a time, keeping tests green each step.
+2. Switch `build_leaf` to `UpstreamProvider`; delete the six genericized
+   provider structs one kind at a time, keeping tests green each step. Codex is
+   left untouched.
 3. Schema migration + `db_config.rs` two-column read/write + `ProviderConfig`
    rename.
 4. Ports: remove `native_format`, add `supported_formats`; rewrite routing
