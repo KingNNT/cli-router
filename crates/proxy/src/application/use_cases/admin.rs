@@ -815,8 +815,14 @@ fn payload_to_config(
                 openai_base_url: pp.openai_base_url,
                 thinking_mode,
                 format_mode,
+                // A stale `thinking_force: true` persisted alongside an
+                // `Unset` level would stay invisible (the TUI hides the Force
+                // row when there's no level) until the level was later set,
+                // at which point it would silently reactivate. Force it to
+                // `false` here so `Unset` always means "no override, ever".
+                thinking_force: thinking_level != crate::config::ThinkingLevel::Unset
+                    && pp.thinking_force.unwrap_or(false),
                 thinking_level,
-                thinking_force: pp.thinking_force.unwrap_or(false),
                 max_concurrent: pp.max_concurrent,
                 sanitize_empty_tools: pp.sanitize_empty_tools.unwrap_or(false),
                 enabled: pp.enabled,
@@ -1351,6 +1357,34 @@ mod tests {
             crate::config::ThinkingLevel::High
         );
         assert!(restored.providers[0].thinking_force);
+    }
+
+    #[test]
+    fn payload_to_config_forces_thinking_force_false_when_level_is_unset() {
+        // A stale `thinking_force: true` saved alongside `Unset` (e.g. from
+        // before the level was cleared) must not survive a round trip: the
+        // TUI hides the Force row for `Unset`, so a leftover `true` would be
+        // invisible and would silently reactivate once a level was set.
+        let cfg = config_with_thinking(
+            ProviderKind::Kimi,
+            crate::config::ThinkingLevel::Unset,
+            true,
+        );
+        let payload = config_to_payload(&cfg);
+        assert_eq!(payload.providers[0].thinking_force, Some(true));
+
+        let restored = payload_to_config(
+            payload,
+            PathBuf::from("/tmp/p.db"),
+            PathBuf::from("/tmp/pr.db"),
+            &cfg,
+        )
+        .unwrap();
+        assert_eq!(
+            restored.providers[0].thinking_level,
+            crate::config::ThinkingLevel::Unset
+        );
+        assert!(!restored.providers[0].thinking_force);
     }
 
     #[test]

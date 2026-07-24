@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 /// The provider-specific request patch for one thinking level, in each wire
 /// format that kind can serve. `None` means the kind has no endpoint of that
 /// format in `default_urls`, so the branch is never consulted.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ThinkingPatch {
     pub anthropic: Option<Value>,
     pub openai: Option<Value>,
@@ -63,9 +63,13 @@ pub fn thinking_patch(kind: ProviderKind, level: ThinkingLevel) -> Option<Thinki
     let effort = level.as_str();
     Some(match (kind, level) {
         // Anthropic disables thinking without naming an effort: the two keys
-        // together are rejected above effort `high`.
+        // together are rejected above effort `high`. `budget_tokens: null`
+        // deletes any budget the client sent under `force`: Anthropic rejects
+        // `budget_tokens` alongside `type: "disabled"` with a 400, so a plain
+        // RFC 7396 merge without the null would leave a rejected body behind.
+        // Don't "clean up" this null — it is load-bearing.
         (ProviderKind::Anthropic, ThinkingLevel::Off) => {
-            anthropic_only(json!({"thinking": {"type": "disabled"}}))
+            anthropic_only(json!({"thinking": {"type": "disabled", "budget_tokens": null}}))
         }
         (ProviderKind::Anthropic, _) => {
             anthropic_only(json!({"output_config": {"effort": effort}}))
@@ -77,10 +81,19 @@ pub fn thinking_patch(kind: ProviderKind, level: ThinkingLevel) -> Option<Thinki
         (ProviderKind::Codex | ProviderKind::OpenAi | ProviderKind::DeepSeek, _) => {
             openai_only(json!({"reasoning_effort": effort}))
         }
-        (ProviderKind::Zai, ThinkingLevel::Off) => both(json!({"thinking": {"type": "disabled"}})),
-        (ProviderKind::Zai | ProviderKind::Kimi, _) => both(json!({"reasoning_effort": effort})),
+        // See the Anthropic `Off` arm above for why `budget_tokens` is nulled.
+        (ProviderKind::Zai, ThinkingLevel::Off) => {
+            both(json!({"thinking": {"type": "disabled", "budget_tokens": null}}))
+        }
+        // Kimi rejects a request carrying both `thinking` and
+        // `reasoning_effort` together, and Claude Code clients routinely send
+        // `thinking` — null it out so the merge removes it. Z.ai (GLM)
+        // tolerates both keys, so it keeps the plain patch.
+        (ProviderKind::Kimi, _) => both(json!({"reasoning_effort": effort, "thinking": null})),
+        (ProviderKind::Zai, _) => both(json!({"reasoning_effort": effort})),
+        // See the Anthropic `Off` arm above for why `budget_tokens` is nulled.
         (ProviderKind::Minimax, ThinkingLevel::Off) => {
-            both(json!({"thinking": {"type": "disabled"}}))
+            both(json!({"thinking": {"type": "disabled", "budget_tokens": null}}))
         }
         (ProviderKind::Minimax, _) => both(json!({"thinking": {"type": "adaptive"}})),
     })
@@ -195,7 +208,10 @@ mod tests {
     #[test]
     fn anthropic_off_disables_thinking_without_touching_effort() {
         let p = thinking_patch(ProviderKind::Anthropic, ThinkingLevel::Off).unwrap();
-        assert_eq!(p.anthropic, Some(json!({"thinking": {"type": "disabled"}})));
+        assert_eq!(
+            p.anthropic,
+            Some(json!({"thinking": {"type": "disabled", "budget_tokens": null}}))
+        );
     }
 
     #[test]
@@ -217,7 +233,10 @@ mod tests {
         assert_eq!(max.openai, Some(json!({"reasoning_effort": "max"})));
 
         let off = thinking_patch(ProviderKind::Zai, ThinkingLevel::Off).unwrap();
-        assert_eq!(off.openai, Some(json!({"thinking": {"type": "disabled"}})));
+        assert_eq!(
+            off.openai,
+            Some(json!({"thinking": {"type": "disabled", "budget_tokens": null}}))
+        );
     }
 
     #[test]
@@ -231,14 +250,17 @@ mod tests {
         let off = thinking_patch(ProviderKind::Minimax, ThinkingLevel::Off).unwrap();
         assert_eq!(
             off.anthropic,
-            Some(json!({"thinking": {"type": "disabled"}}))
+            Some(json!({"thinking": {"type": "disabled", "budget_tokens": null}}))
         );
     }
 
     #[test]
     fn kimi_and_deepseek_use_reasoning_effort() {
         let kimi = thinking_patch(ProviderKind::Kimi, ThinkingLevel::Low).unwrap();
-        assert_eq!(kimi.openai, Some(json!({"reasoning_effort": "low"})));
+        assert_eq!(
+            kimi.openai,
+            Some(json!({"reasoning_effort": "low", "thinking": null}))
+        );
 
         let deepseek = thinking_patch(ProviderKind::DeepSeek, ThinkingLevel::Max).unwrap();
         assert_eq!(deepseek.openai, Some(json!({"reasoning_effort": "max"})));
@@ -358,5 +380,24 @@ mod tests {
         let inj = ThinkingInjection::new(json!({"reasoning_effort": "max"}), true);
         let body = Bytes::from_static(b"not json at all");
         assert_eq!(inj.apply(body.clone()), body);
+    }
+
+    /// Every other force test above merges a flat scalar patch into a flat
+    /// body, so none of them exercise a nested patch meeting a sibling key
+    /// under the same object. The real Anthropic `off` patch is nested
+    /// (`thinking.budget_tokens: null` alongside a client-sent
+    /// `thinking.type`), and that's exactly the shape that hid finding 1.
+    #[test]
+    fn injection_with_force_deletes_a_nested_sibling_key() {
+        let patch = thinking_patch(ProviderKind::Anthropic, ThinkingLevel::Off)
+            .unwrap()
+            .anthropic
+            .unwrap();
+        let inj = ThinkingInjection::new(patch, true);
+        let out = inj.apply(Bytes::from(
+            r#"{"model":"claude-opus-5","thinking":{"type":"enabled","budget_tokens":8000}}"#,
+        ));
+        let v: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["thinking"], json!({"type": "disabled"}));
     }
 }

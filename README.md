@@ -21,7 +21,7 @@ Built with [axum](https://github.com/tokio-rs/axum) (proxy), [Ratatui](https://r
 - **Token counting** — `/v1/messages/count_tokens` endpoint with upstream forwarding and local estimation fallback.
 - **Streaming support** — forwards SSE streaming and buffered JSON responses unchanged
 - **Token usage logging** — parses upstream events to extract input/output/cache token counts, looks up cost, writes to `~/.local/share/cli-router/proxy.db`
-- **SQLite-backed config** — config stored in the same SQLite database (single source of truth). Admin API reads/writes DB directly. TOML import via `--import-config` for migration only. Per-provider config includes `reasoning_effort` (Codex/Anthropic) and `thinking_mode` (MiniMax).
+- **SQLite-backed config** — config stored in the same SQLite database (single source of truth). Admin API reads/writes DB directly. TOML import via `--import-config` for migration only. Per-provider config includes `thinking_level`/`thinking_force` (upstream reasoning effort, per kind) and `thinking_mode` (MiniMax).
 - **Admin API** — `GET/PUT /admin/config`, `GET /admin/status`, `GET /admin/requests/recent`, `GET /admin/usage/summary`, `GET /admin/account/usage`, `GET /admin/quota/status`, `POST /admin/providers/:name/test`, `POST /admin/oauth/anthropic/{start,complete}`, `POST /admin/oauth/openai/{start,complete}`
 - **OAuth** — PKCE-based browser flow for Anthropic, OAuth flow for OpenAI, both with automatic token refresh (background task refreshes tokens every 60s, persists to DB). Codex `CodexAuto` auth reads from `~/.codex/auth.json`.
 - **401 retry** — on auth failure, automatically refreshes OAuth token and retries once

@@ -152,7 +152,7 @@ crates/
     │                   openai, codex, minimax, kimi; AuthConfig: Passthrough, ApiKey,
     │                   Bearer, AnthropicOAuth, OpenAiOAuth, CodexAuto; routing rules;
     │                   docs_port, docs_enabled; per-provider
-    │                   reasoning_effort and thinking_mode fields.
+    │                   thinking_level/thinking_force and thinking_mode fields.
     │                   Auth values are stored/sent verbatim — no ${ENV}
     │                   interpolation).
     │                   SQLite is the single source of truth; config is
