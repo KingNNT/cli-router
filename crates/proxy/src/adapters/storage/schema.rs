@@ -13,6 +13,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (8, MIGRATION_V8),
     (9, MIGRATION_V9),
     (10, MIGRATION_V10),
+    (11, MIGRATION_V11),
 ];
 
 const MIGRATION_V1: &str = r#"
@@ -195,6 +196,14 @@ UPDATE providers
    AND COALESCE(openai_base_url, '') = '';
 "#;
 
+// Per-provider wire-format policy. 'both' preserves today's behavior: the
+// client's format decides, and a request only gets translated when the
+// provider can't serve it natively. 'anthropic' / 'openai' pin every client
+// onto one endpoint. See `config::FormatMode`.
+const MIGRATION_V11: &str = r#"
+ALTER TABLE providers ADD COLUMN format_mode TEXT NOT NULL DEFAULT 'both';
+"#;
+
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
@@ -349,6 +358,25 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
         assert!(cols.contains(&"thinking_mode".into()));
+    }
+
+    #[test]
+    fn v11_adds_provider_format_mode_column_defaulting_to_both() {
+        let conn = open_in_memory();
+        ensure_current(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO providers (name, kind, base_url, auth_type) VALUES ('mm','minimax','',  'bearer')",
+            [],
+        )
+        .unwrap();
+        let mode: String = conn
+            .query_row(
+                "SELECT format_mode FROM providers WHERE name='mm'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(mode, "both");
     }
 
     #[test]

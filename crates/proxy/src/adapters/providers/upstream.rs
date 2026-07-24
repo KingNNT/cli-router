@@ -2,7 +2,7 @@ use super::messages_protocol::{self, AuthHeader};
 use super::minimax_stream::ThinkingMode;
 use crate::application::errors::ProxyError;
 use crate::application::ports::{FormatSupport, Provider, UpstreamResponse, UsageParser};
-use crate::config::ProviderKind;
+use crate::config::{FormatMode, ProviderKind};
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
 use axum::http::HeaderMap;
@@ -91,6 +91,7 @@ pub struct UpstreamProvider {
     openai_base_url: Option<String>,
     auth: AuthHeader,
     quirks: Quirks,
+    format_mode: FormatMode,
     http: reqwest::Client,
 }
 
@@ -109,8 +110,16 @@ impl UpstreamProvider {
             openai_base_url,
             auth,
             quirks,
+            format_mode: FormatMode::Both,
             http,
         }
+    }
+
+    /// Restrict which configured endpoints this provider may serve. See
+    /// [`FormatMode`].
+    pub fn with_format_mode(mut self, mode: FormatMode) -> Self {
+        self.format_mode = mode;
+        self
     }
 
     /// Apply Anthropic-format request quirks. Currently: inject a default
@@ -312,15 +321,35 @@ impl Provider for UpstreamProvider {
     }
 
     fn supported_formats(&self) -> FormatSupport {
-        FormatSupport {
-            anthropic: self
-                .anthropic_base_url
-                .as_deref()
-                .is_some_and(|s| !s.is_empty()),
-            openai: self
-                .openai_base_url
-                .as_deref()
-                .is_some_and(|s| !s.is_empty()),
+        let has_anthropic = self
+            .anthropic_base_url
+            .as_deref()
+            .is_some_and(|s| !s.is_empty());
+        let has_openai = self
+            .openai_base_url
+            .as_deref()
+            .is_some_and(|s| !s.is_empty());
+        // The configured mode narrows what the URLs offer; it never invents an
+        // endpoint that isn't configured. A mode pinned to a format with no URL
+        // leaves the other one advertised, so requests still reach the upstream
+        // instead of failing with "no endpoint".
+        match self.format_mode {
+            FormatMode::Both => FormatSupport {
+                anthropic: has_anthropic,
+                openai: has_openai,
+            },
+            FormatMode::Anthropic if has_anthropic => FormatSupport {
+                anthropic: true,
+                openai: false,
+            },
+            FormatMode::OpenAi if has_openai => FormatSupport {
+                anthropic: false,
+                openai: true,
+            },
+            _ => FormatSupport {
+                anthropic: has_anthropic,
+                openai: has_openai,
+            },
         }
     }
 
@@ -412,6 +441,58 @@ mod tests {
         assert!(!q.strip_tool_choice);
         assert!(!q.sanitize_empty_tools);
         assert!(q.reasoning_effort.is_none());
+    }
+
+    fn dual_provider(mode: FormatMode) -> UpstreamProvider {
+        UpstreamProvider::new(
+            "minimax".to_string(),
+            Some("https://api.minimax.io/anthropic".to_string()),
+            Some("https://api.minimax.io/v1".to_string()),
+            AuthHeader::Bearer("k".to_string()),
+            Quirks::none(),
+            reqwest::Client::new(),
+        )
+        .with_format_mode(mode)
+    }
+
+    #[test]
+    fn format_mode_both_advertises_every_configured_endpoint() {
+        let s = dual_provider(FormatMode::Both).supported_formats();
+        assert!(s.anthropic);
+        assert!(s.openai);
+    }
+
+    /// Pinning to Anthropic is what pulls OpenAI clients off MiniMax's OpenAI
+    /// endpoint (it loses the head of the answer into `reasoning_content`).
+    #[test]
+    fn format_mode_anthropic_hides_the_openai_endpoint() {
+        let s = dual_provider(FormatMode::Anthropic).supported_formats();
+        assert!(s.anthropic);
+        assert!(!s.openai);
+    }
+
+    #[test]
+    fn format_mode_openai_hides_the_anthropic_endpoint() {
+        let s = dual_provider(FormatMode::OpenAi).supported_formats();
+        assert!(!s.anthropic);
+        assert!(s.openai);
+    }
+
+    /// A mode pinned to a format with no URL must not black-hole the provider.
+    #[test]
+    fn format_mode_without_matching_url_falls_back_to_configured_endpoints() {
+        let p = UpstreamProvider::new(
+            "deepseek".to_string(),
+            None,
+            Some("https://api.deepseek.com/v1".to_string()),
+            AuthHeader::Bearer("k".to_string()),
+            Quirks::none(),
+            reqwest::Client::new(),
+        )
+        .with_format_mode(FormatMode::Anthropic);
+        let s = p.supported_formats();
+        assert!(!s.anthropic);
+        assert!(s.openai);
     }
 
     #[test]

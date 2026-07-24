@@ -56,6 +56,7 @@ Ràng buộc validate (`Config::validate`):
 | `auth` | `AuthPayload` | ❌ | `{"type":"passthrough"}` | mọi kind | Cách proxy xác thực **tới** upstream. Xem §4. |
 | `base_url` | `string?` | ❌ | theo kind | mọi kind | Ghi đè endpoint chính. Với provider dual-format đây là endpoint **Anthropic-compatible**; với provider OpenAI-only đây là endpoint OpenAI-compatible. |
 | `openai_base_url` | `string?` | ❌ | theo kind | `zai`, `minimax`, `kimi` | Ghi đè endpoint **OpenAI-compatible** cho provider dual-format. Bị bỏ qua với các kind khác. |
+| `format_mode` | `string?` | ❌ | `"both"` | mọi kind trừ `codex` | Giới hạn endpoint mà proxy được phép dùng: `both` (client nói format nào thì đi thẳng format đó), `anthropic` (luôn đi endpoint Anthropic, dịch client OpenAI), `openai` (luôn đi endpoint OpenAI, dịch client Anthropic). Xem §5b. |
 | `reasoning_effort` | `string?` | ❌ | `null` | `anthropic`, `codex` | Mức reasoning mặc định khi request không tự chỉ định (vd `"high"`, `"medium"`, `"low"`, `"minimal"`). |
 | `thinking_mode` | `string?` | ❌ | `"split_only"` | `minimax` | Cách xử lý nội dung thinking/reasoning trong response. Xem §5. |
 | `max_concurrent` | `number?` | ❌ | `null` (dùng default của pool) | mọi kind | Số request đồng thời tối đa tới provider này. Tăng để một provider nhanh phục vụ nhiều request; giảm để tránh vượt rate limit. |
@@ -126,6 +127,30 @@ request để MiniMax tách phần thinking, rồi xử lý theo `thinking_mode`
 |-------|---------|
 | `split_only` (default) | Bỏ các tag thinking nội bộ trong `content`, **giữ** `reasoning_content` và `reasoning_details` để client hiển thị. |
 | `strip_all` | Bỏ **toàn bộ** thinking: tag, `reasoning_content`, `reasoning_details`. |
+
+---
+
+## 5b. `format_mode` — ghim wire format lên upstream
+
+Mặc định `both`: request đi thẳng qua endpoint khớp format của client, không dịch.
+Đặt `anthropic` hoặc `openai` khi một trong hai endpoint của upstream bị lỗi và
+bạn muốn mọi client đi qua endpoint còn lại (proxy tự dịch chiều còn thiếu).
+
+| Value | Hành vi |
+|---|---|
+| `both` (default) | Client Anthropic → endpoint Anthropic; client OpenAI → endpoint OpenAI. Chỉ dịch khi provider không phục vụ format của client. |
+| `anthropic` | Mọi request đi endpoint Anthropic; client OpenAI được dịch `openai→anthropic`. |
+| `openai` | Mọi request đi endpoint OpenAI; client Anthropic được dịch `anthropic→openai`. |
+
+Nếu format được ghim không có URL tương ứng, giá trị bị bỏ qua và provider vẫn
+quảng bá các endpoint đã cấu hình — cấu hình sai không làm chết provider.
+
+**Ca dùng thực tế — MiniMax:** endpoint OpenAI của MiniMax tách thinking khỏi câu
+trả lời theo thẻ `</think>`, nhưng model thường xuyên phát các ký tự đầu của câu
+trả lời *trước* thẻ đó. Phần đó rơi vào `reasoning_content` và client không bao
+giờ thấy — biểu hiện là câu trả lời bị mất phần đầu. Endpoint Anthropic tách
+đúng, nên đặt `format_mode: "anthropic"` cho `minimax` nếu bạn dùng client nói
+OpenAI (opencode).
 
 ---
 

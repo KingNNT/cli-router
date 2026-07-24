@@ -447,6 +447,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: proxy::config::ThinkingMode::SplitOnly,
+            format_mode: proxy::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
