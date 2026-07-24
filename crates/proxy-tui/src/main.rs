@@ -1287,6 +1287,7 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
     m.error = None;
     match m.focused {
         FormField::Kind => {
+            let prev = m.kind;
             m.kind = if forward {
                 m.kind.cycle_next()
             } else {
@@ -1296,20 +1297,28 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
             if m.kind != ProviderKind::Minimax {
                 m.thinking_mode = crate::app::ThinkingModeInput::Unset;
             }
-            // Prefill endpoint URLs from the new kind's defaults, but only
-            // in the add flow and only into fields the user hasn't typed
-            // into yet — never clobber existing text (add or edit).
+            // Re-derive endpoint URLs from the new kind's defaults, but only
+            // in the add flow and only into fields that still hold an
+            // auto-fill value — empty, or exactly the PREVIOUS kind's
+            // default. That way cycling through several kinds keeps each
+            // buffer in sync with whichever kind is currently selected,
+            // instead of leaving a stale default from an earlier kind
+            // behind. Genuine user-typed text (anything else) is never
+            // touched.
             if matches!(m.mode, FormMode::Add) {
-                let (anthropic_default, openai_default) = m.kind.default_urls();
-                if m.anthropic_base_url.is_empty()
-                    && let Some(url) = anthropic_default
-                {
-                    m.anthropic_base_url = url.to_string();
+                let (prev_anthropic_default, prev_openai_default) = prev.default_urls();
+                let (new_anthropic_default, new_openai_default) = m.kind.default_urls();
+
+                let anthropic_is_autofill = m.anthropic_base_url.is_empty()
+                    || Some(m.anthropic_base_url.as_str()) == prev_anthropic_default;
+                if anthropic_is_autofill {
+                    m.anthropic_base_url = new_anthropic_default.unwrap_or_default().to_string();
                 }
-                if m.openai_base_url.is_empty()
-                    && let Some(url) = openai_default
-                {
-                    m.openai_base_url = url.to_string();
+
+                let openai_is_autofill = m.openai_base_url.is_empty()
+                    || Some(m.openai_base_url.as_str()) == prev_openai_default;
+                if openai_is_autofill {
+                    m.openai_base_url = new_openai_default.unwrap_or_default().to_string();
                 }
             }
         }
@@ -2178,6 +2187,56 @@ mod modal_key_tests {
         // Edit flow never prefills, even though both buffers were empty.
         assert!(m.anthropic_base_url.is_empty());
         assert!(m.openai_base_url.is_empty());
+    }
+
+    #[test]
+    fn provider_form_kind_change_re_derives_stale_defaults_across_multiple_cycles() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut m = ProviderFormModal::new_for_add();
+        m.focused = FormField::Kind;
+        // A genuine user-typed value that doesn't match any kind's default.
+        m.anthropic_base_url = "https://custom.example.com".into();
+
+        // Anthropic -> Zai: openai_base_url (empty) is auto-filled with
+        // Zai's defaults. The custom anthropic_base_url is untouched
+        // because it isn't empty and doesn't match Anthropic's default.
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(mut m) = modal else {
+            panic!("expected provider form modal");
+        };
+        assert_eq!(m.kind, ProviderKind::Zai);
+        assert_eq!(m.anthropic_base_url, "https://custom.example.com");
+        assert_eq!(m.openai_base_url, "https://api.z.ai/api/paas/v4");
+
+        // Now overwrite anthropic_base_url with Zai's own default so we can
+        // prove the stale-bleed fix: cycling forward to DeepSeek (whose
+        // anthropic default is None) must CLEAR it instead of leaving
+        // Zai's host behind bound to a DeepSeek key.
+        m.anthropic_base_url = "https://api.z.ai/api/anthropic".into();
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+        assert_eq!(m.kind, ProviderKind::DeepSeek);
+        assert!(
+            m.anthropic_base_url.is_empty(),
+            "stale Zai anthropic default must be cleared for a kind with no anthropic URL"
+        );
+        // openai_base_url held Zai's default (an auto-fill value), so it is
+        // replaced with DeepSeek's default rather than left stale.
+        assert_eq!(m.openai_base_url, "https://api.deepseek.com/v1");
+
+        // Verify a genuine user-typed value survives a further kind
+        // change: type a custom openai_base_url now, then cycle again.
+        let mut m = m;
+        m.openai_base_url = "https://custom-openai.example.com".into();
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+        assert_eq!(m.kind, ProviderKind::OpenAi);
+        assert_eq!(m.openai_base_url, "https://custom-openai.example.com");
     }
 
     #[test]
