@@ -11,6 +11,8 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (6, MIGRATION_V6),
     (7, MIGRATION_V7),
     (8, MIGRATION_V8),
+    (9, MIGRATION_V9),
+    (10, MIGRATION_V10),
 ];
 
 const MIGRATION_V1: &str = r#"
@@ -120,6 +122,77 @@ ALTER TABLE providers ADD COLUMN sanitize_empty_tools INTEGER NOT NULL DEFAULT 0
 
 const MIGRATION_V8: &str = r#"
 ALTER TABLE providers ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+"#;
+
+const MIGRATION_V9: &str = r#"
+ALTER TABLE providers ADD COLUMN anthropic_base_url TEXT;
+
+UPDATE providers
+   SET anthropic_base_url = base_url
+ WHERE kind IN ('anthropic','minimax','zai','kimi')
+   AND base_url IS NOT NULL AND base_url <> '';
+
+UPDATE providers
+   SET openai_base_url = base_url
+ WHERE kind IN ('deepseek','openai','codex')
+   AND base_url IS NOT NULL AND base_url <> ''
+   AND (openai_base_url IS NULL OR openai_base_url = '');
+"#;
+
+// V9's backfill only covers rows that had a non-empty legacy `base_url`.
+// Some historical rows (e.g. a prod `anthropic` row) had BOTH `base_url`
+// and `openai_base_url` empty — they relied on the now-deleted
+// per-provider `DEFAULT_BASE_URL` runtime fallback. After V9 those rows
+// are left with zero URLs, and `build_leaf` rejects a provider with no
+// endpoint configured. V10 backfills the per-kind default endpoint(s) for
+// any row still stranded with zero URLs, one UPDATE per kind, gated so it
+// never overwrites a row that already has at least one URL. Defaults must
+// stay in lockstep with `adapters::providers::upstream::default_urls`.
+const MIGRATION_V10: &str = r#"
+UPDATE providers
+   SET anthropic_base_url = 'https://api.anthropic.com'
+ WHERE kind = 'anthropic'
+   AND COALESCE(anthropic_base_url, '') = ''
+   AND COALESCE(openai_base_url, '') = '';
+
+UPDATE providers
+   SET anthropic_base_url = 'https://api.minimaxi.com/anthropic',
+       openai_base_url = 'https://api.minimaxi.com/v1'
+ WHERE kind = 'minimax'
+   AND COALESCE(anthropic_base_url, '') = ''
+   AND COALESCE(openai_base_url, '') = '';
+
+UPDATE providers
+   SET anthropic_base_url = 'https://api.z.ai/api/anthropic',
+       openai_base_url = 'https://api.z.ai/api/paas/v4'
+ WHERE kind = 'zai'
+   AND COALESCE(anthropic_base_url, '') = ''
+   AND COALESCE(openai_base_url, '') = '';
+
+UPDATE providers
+   SET openai_base_url = 'https://api.deepseek.com/v1'
+ WHERE kind = 'deepseek'
+   AND COALESCE(anthropic_base_url, '') = ''
+   AND COALESCE(openai_base_url, '') = '';
+
+UPDATE providers
+   SET openai_base_url = 'https://api.openai.com/v1'
+ WHERE kind = 'openai'
+   AND COALESCE(anthropic_base_url, '') = ''
+   AND COALESCE(openai_base_url, '') = '';
+
+UPDATE providers
+   SET anthropic_base_url = 'https://api.moonshot.ai/anthropic',
+       openai_base_url = 'https://api.moonshot.ai/v1'
+ WHERE kind = 'kimi'
+   AND COALESCE(anthropic_base_url, '') = ''
+   AND COALESCE(openai_base_url, '') = '';
+
+UPDATE providers
+   SET openai_base_url = 'https://chatgpt.com/backend-api/codex'
+ WHERE kind = 'codex'
+   AND COALESCE(anthropic_base_url, '') = ''
+   AND COALESCE(openai_base_url, '') = '';
 "#;
 
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
@@ -290,5 +363,125 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert!(cols.contains(&"sanitize_empty_tools".into()));
+    }
+
+    #[test]
+    fn migration_adds_anthropic_base_url_and_backfills_by_kind() {
+        let conn = open_in_memory();
+
+        // Bring the schema up to V8 only (pre-V9 state), so we can seed rows
+        // the way older code stored them: URL in `base_url`, nothing yet in
+        // `anthropic_base_url`.
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for (target, sql) in MIGRATIONS.iter().filter(|(v, _)| *v <= 8) {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", target).unwrap();
+        }
+
+        conn.execute_batch(
+            "INSERT INTO providers (name, kind, base_url, openai_base_url, auth_type) VALUES
+               ('mm','minimax','https://api.minimax.io/anthropic','https://api.minimax.io/v1','bearer'),
+               ('ds','deepseek','https://api.deepseek.com',NULL,'bearer'),
+               ('an','anthropic','https://api.anthropic.com',NULL,'anthropic_oauth');",
+        )
+        .unwrap();
+
+        // Now apply V9 alone against the pre-existing rows and assert the backfill.
+        conn.execute_batch(MIGRATION_V9).unwrap();
+
+        let anthropic_of = |name: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT anthropic_base_url FROM providers WHERE name=?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let openai_of = |name: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT openai_base_url FROM providers WHERE name=?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+
+        assert_eq!(
+            anthropic_of("mm").as_deref(),
+            Some("https://api.minimax.io/anthropic")
+        );
+        assert_eq!(
+            openai_of("mm").as_deref(),
+            Some("https://api.minimax.io/v1")
+        );
+        assert_eq!(
+            anthropic_of("an").as_deref(),
+            Some("https://api.anthropic.com")
+        );
+        assert_eq!(openai_of("ds").as_deref(), Some("https://api.deepseek.com"));
+        assert_eq!(anthropic_of("ds"), None);
+    }
+
+    #[test]
+    fn v10_backfills_default_urls_for_stranded_rows_only() {
+        let conn = open_in_memory();
+
+        // Bring the schema up to V8 only, then seed the exact stranded shape
+        // production has: an `anthropic` row with BOTH `base_url` and
+        // `openai_base_url` empty, because it used to rely on the (now
+        // deleted) per-provider DEFAULT_BASE_URL runtime fallback. Also seed
+        // a `deepseek` row that already has a custom openai_base_url, to
+        // prove V10 leaves rows with an existing URL untouched.
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for (target, sql) in MIGRATIONS.iter().filter(|(v, _)| *v <= 8) {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", target).unwrap();
+        }
+
+        conn.execute_batch(
+            "INSERT INTO providers (name, kind, base_url, openai_base_url, auth_type) VALUES
+               ('an','anthropic','','','anthropic_oauth'),
+               ('ds','deepseek','','https://custom.deepseek.example/v1','bearer');",
+        )
+        .unwrap();
+
+        // Run every remaining migration (V9 + V10) to reach current.
+        for (target, sql) in MIGRATIONS.iter().filter(|(v, _)| *v > 8) {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", target).unwrap();
+        }
+
+        let anthropic_of = |name: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT anthropic_base_url FROM providers WHERE name=?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let openai_of = |name: &str| -> Option<String> {
+            conn.query_row(
+                "SELECT openai_base_url FROM providers WHERE name=?1",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+
+        // Stranded anthropic row gets the per-kind default backfilled, so
+        // `build_leaf`'s "at least one URL" validity check holds.
+        assert_eq!(
+            anthropic_of("an").as_deref(),
+            Some("https://api.anthropic.com")
+        );
+        let an_has_url = anthropic_of("an").as_deref().is_some_and(|s| !s.is_empty())
+            || openai_of("an").as_deref().is_some_and(|s| !s.is_empty());
+        assert!(an_has_url, "anthropic row must have at least one URL");
+
+        // deepseek row already had an openai_base_url — V10 must not touch it.
+        assert_eq!(
+            openai_of("ds").as_deref(),
+            Some("https://custom.deepseek.example/v1")
+        );
     }
 }

@@ -18,7 +18,7 @@ use crate::adapters::translation::stream_wrap;
 use crate::adapters::translation::{anthropic_to_openai, openai_to_anthropic};
 use crate::application::errors::ProxyError;
 use crate::application::ports::{
-    ApiFormat, Direction, Provider, QuotaPort, UpstreamResponse, UsageParser,
+    ApiFormat, Direction, FormatSupport, Provider, QuotaPort, UpstreamResponse, UsageParser,
 };
 use crate::config::RoutingStrategy;
 use crate::domain::UsageRecord;
@@ -141,7 +141,7 @@ pub struct RoutingProvider {
     rules: Vec<Route>,
     /// Counter for round-robin rotation. Incremented per request.
     rr_counter: AtomicUsize,
-    /// Name → provider map for namespace routing (e.g. "zai" → ZaiProvider).
+    /// Name → provider map for namespace routing (e.g. "zai" → its `UpstreamProvider`).
     leaves: std::collections::HashMap<String, Arc<dyn Provider>>,
     /// Conversation-affinity config. Controls sticky rendezvous hashing.
     affinity: crate::config::AffinityConfig,
@@ -264,13 +264,17 @@ impl RoutingProviderBuilder {
     }
 }
 
-// `native_format` intentionally not overridden — routing is dynamic and the leaf
-// provider's native_format is what matters; translation triggers per-entry inside
-// messages_protocol after routing has selected an entry.
+// Routing accepts both client formats at the top; the leaf provider's
+// `supported_formats()` is what matters for translation, selected per-entry
+// inside messages_protocol after routing has picked a leaf.
 #[async_trait]
 impl Provider for RoutingProvider {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "router"
+    }
+
+    fn supported_formats(&self) -> FormatSupport {
+        FormatSupport::both()
     }
 
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {
@@ -313,7 +317,8 @@ impl Provider for RoutingProvider {
             let rewritten =
                 rewrite_model_in_body(&body, bare_model).map_err(ProxyError::BadRequest)?;
             let rewritten_body = Bytes::from(rewritten);
-            let direction = Direction::from_pair(ApiFormat::Anthropic, provider.native_format());
+            let (direction, upstream_format) =
+                Self::select_direction(ApiFormat::Anthropic, provider.supported_formats());
             let native_path = Self::translate_path(path, direction);
             tracing::debug!(
                 target: "routing",
@@ -325,7 +330,7 @@ impl Provider for RoutingProvider {
                 "namespace route: translating request"
             );
             let send_body = Self::translate_request(&rewritten_body, direction)?;
-            let raw_resp = match provider.native_format() {
+            let raw_resp = match upstream_format {
                 ApiFormat::Anthropic => {
                     provider
                         .forward(native_path, headers, send_body, streaming)
@@ -386,7 +391,8 @@ impl Provider for RoutingProvider {
             let rewritten =
                 rewrite_model_in_body(&body, bare_model).map_err(ProxyError::BadRequest)?;
             let rewritten_body = Bytes::from(rewritten);
-            let direction = Direction::from_pair(ApiFormat::OpenAI, provider.native_format());
+            let (direction, upstream_format) =
+                Self::select_direction(ApiFormat::OpenAI, provider.supported_formats());
             let native_path = Self::translate_path(path, direction);
             tracing::debug!(
                 target: "routing",
@@ -398,7 +404,7 @@ impl Provider for RoutingProvider {
                 "namespace route: translating request (OpenAI client)"
             );
             let send_body = Self::translate_request(&rewritten_body, direction)?;
-            let raw_resp = match provider.native_format() {
+            let raw_resp = match upstream_format {
                 ApiFormat::OpenAI => {
                     provider
                         .forward_openai(native_path, headers, send_body, streaming)
@@ -564,6 +570,21 @@ impl RoutingProvider {
         }
     }
 
+    /// Given the client's format and a provider's capability, pick the
+    /// upstream format (passthrough when supported, otherwise the provider's
+    /// sole supported format) and the translation direction to apply.
+    fn select_direction(client_format: ApiFormat, sup: FormatSupport) -> (Direction, ApiFormat) {
+        let upstream_format = if sup.has(client_format) {
+            client_format
+        } else {
+            sup.sole()
+        };
+        (
+            Direction::from_pair(client_format, upstream_format),
+            upstream_format,
+        )
+    }
+
     /// Pre-flight quota check for a leaf provider. Returns `Err(QuotaExceeded)`
     /// when the quota is exhausted, logs a warning on `Warn`, and is a no-op on `Ok`.
     fn check_quota(&self, provider_id: &str) -> Result<(), ProxyError> {
@@ -668,12 +689,13 @@ impl RoutingProvider {
                 }
             };
 
-            let direction = Direction::from_pair(client_format, entry.provider.native_format());
+            let (direction, upstream_format) =
+                Self::select_direction(client_format, entry.provider.supported_formats());
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
 
             // Call the leaf provider using its native format.
-            let raw_resp = match entry.provider.native_format() {
+            let raw_resp = match upstream_format {
                 ApiFormat::Anthropic => {
                     entry
                         .provider
@@ -799,11 +821,12 @@ impl RoutingProvider {
                 }
             };
 
-            let direction = Direction::from_pair(client_format, entry.provider.native_format());
+            let (direction, upstream_format) =
+                Self::select_direction(client_format, entry.provider.supported_formats());
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
 
-            let raw_resp = match entry.provider.native_format() {
+            let raw_resp = match upstream_format {
                 ApiFormat::Anthropic => {
                     entry
                         .provider
@@ -925,11 +948,12 @@ impl RoutingProvider {
                 }
             };
 
-            let direction = Direction::from_pair(ApiFormat::OpenAI, entry.provider.native_format());
+            let (direction, upstream_format) =
+                Self::select_direction(ApiFormat::OpenAI, entry.provider.supported_formats());
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
 
-            let raw_resp = match entry.provider.native_format() {
+            let raw_resp = match upstream_format {
                 ApiFormat::OpenAI => {
                     entry
                         .provider
@@ -1049,11 +1073,12 @@ impl RoutingProvider {
                 }
             };
 
-            let direction = Direction::from_pair(ApiFormat::OpenAI, entry.provider.native_format());
+            let (direction, upstream_format) =
+                Self::select_direction(ApiFormat::OpenAI, entry.provider.supported_formats());
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
 
-            let raw_resp = match entry.provider.native_format() {
+            let raw_resp = match upstream_format {
                 ApiFormat::OpenAI => {
                     entry
                         .provider
@@ -1146,10 +1171,22 @@ fn extract_retry_after_ms(headers: &HeaderMap) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::providers::AnthropicProvider;
+    use crate::adapters::providers::AuthHeader;
+    use crate::adapters::providers::upstream::{Quirks, UpstreamProvider};
+
+    fn named_provider(name: &str) -> Arc<dyn Provider> {
+        Arc::new(UpstreamProvider::new(
+            name.to_string(),
+            Some("https://example.invalid".to_string()),
+            None,
+            AuthHeader::Passthrough,
+            Quirks::none(),
+            reqwest::Client::new(),
+        ))
+    }
 
     fn dummy() -> Arc<dyn Provider> {
-        Arc::new(AnthropicProvider::new(reqwest::Client::new()))
+        named_provider("anthropic")
     }
 
     #[test]
@@ -1242,7 +1279,7 @@ mod tests {
     #[test]
     fn builder_applies_per_provider_concurrency() {
         let mut map = std::collections::HashMap::new();
-        // dummy() is an AnthropicProvider whose name() is "anthropic".
+        // dummy() is an UpstreamProvider whose name() is "anthropic".
         map.insert("anthropic".to_string(), 3usize);
         let p = RoutingProvider::builder()
             .concurrency(map)
@@ -1313,10 +1350,8 @@ mod tests {
 
     #[test]
     fn resolve_provider_finds_named_provider() {
-        use crate::adapters::providers::ZaiProvider;
-
-        let zai: Arc<dyn Provider> = Arc::new(ZaiProvider::new(reqwest::Client::new()));
-        let anthropic: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(reqwest::Client::new()));
+        let zai = named_provider("zai");
+        let anthropic = named_provider("anthropic");
 
         let mut leaves = std::collections::HashMap::new();
         leaves.insert("zai".to_string(), zai);
@@ -1371,5 +1406,37 @@ mod tests {
             }
             _other => panic!("expected BadRequest, got success response"),
         }
+    }
+
+    #[test]
+    fn select_direction_passthrough_when_client_format_supported() {
+        // dual provider — every client format is a passthrough
+        let (dir, up) =
+            RoutingProvider::select_direction(ApiFormat::Anthropic, FormatSupport::both());
+        assert_eq!(dir, Direction::Passthrough);
+        assert_eq!(up, ApiFormat::Anthropic);
+
+        let (dir, up) = RoutingProvider::select_direction(ApiFormat::OpenAI, FormatSupport::both());
+        assert_eq!(dir, Direction::Passthrough);
+        assert_eq!(up, ApiFormat::OpenAI);
+    }
+
+    #[test]
+    fn select_direction_translates_when_client_format_unsupported() {
+        // provider only speaks OpenAI; an Anthropic client must be translated
+        let (dir, up) = RoutingProvider::select_direction(
+            ApiFormat::Anthropic,
+            FormatSupport::single(ApiFormat::OpenAI),
+        );
+        assert_eq!(dir, Direction::AnthropicToOpenAI);
+        assert_eq!(up, ApiFormat::OpenAI);
+
+        // provider only speaks Anthropic; an OpenAI client must be translated
+        let (dir, up) = RoutingProvider::select_direction(
+            ApiFormat::OpenAI,
+            FormatSupport::single(ApiFormat::Anthropic),
+        );
+        assert_eq!(dir, Direction::OpenAIToAnthropic);
+        assert_eq!(up, ApiFormat::Anthropic);
     }
 }

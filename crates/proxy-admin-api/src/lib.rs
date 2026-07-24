@@ -119,7 +119,7 @@ pub struct ProviderPayload {
     #[serde(default)]
     pub auth: AuthPayload,
     #[serde(default)]
-    pub base_url: Option<String>,
+    pub anthropic_base_url: Option<String>,
     #[serde(default)]
     pub openai_base_url: Option<String>,
     #[serde(default)]
@@ -583,7 +583,7 @@ mod config_payload_tests {
                 kind: "anthropic".into(),
                 enabled: true,
                 auth: AuthPayload::Passthrough,
-                base_url: None,
+                anthropic_base_url: None,
                 openai_base_url: None,
                 reasoning_effort: Some("high".into()),
                 thinking_mode: None,

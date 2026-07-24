@@ -1232,7 +1232,7 @@ fn submit_non_oauth_save(
     let input = FormInputs {
         name: &m.name,
         kind: m.kind.label(),
-        base_url: Some(&m.base_url),
+        anthropic_base_url: Some(&m.anthropic_base_url),
         openai_base_url: Some(&m.openai_base_url),
         reasoning_effort: m.reasoning_effort.as_option(),
         thinking_mode: m.thinking_mode.as_option(),
@@ -1287,6 +1287,7 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
     m.error = None;
     match m.focused {
         FormField::Kind => {
+            let prev = m.kind;
             m.kind = if forward {
                 m.kind.cycle_next()
             } else {
@@ -1295,6 +1296,30 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
             m.reasoning_effort = m.reasoning_effort.clamp_for(m.kind);
             if m.kind != ProviderKind::Minimax {
                 m.thinking_mode = crate::app::ThinkingModeInput::Unset;
+            }
+            // Re-derive endpoint URLs from the new kind's defaults, but only
+            // in the add flow and only into fields that still hold an
+            // auto-fill value — empty, or exactly the PREVIOUS kind's
+            // default. That way cycling through several kinds keeps each
+            // buffer in sync with whichever kind is currently selected,
+            // instead of leaving a stale default from an earlier kind
+            // behind. Genuine user-typed text (anything else) is never
+            // touched.
+            if matches!(m.mode, FormMode::Add) {
+                let (prev_anthropic_default, prev_openai_default) = prev.default_urls();
+                let (new_anthropic_default, new_openai_default) = m.kind.default_urls();
+
+                let anthropic_is_autofill = m.anthropic_base_url.is_empty()
+                    || Some(m.anthropic_base_url.as_str()) == prev_anthropic_default;
+                if anthropic_is_autofill {
+                    m.anthropic_base_url = new_anthropic_default.unwrap_or_default().to_string();
+                }
+
+                let openai_is_autofill = m.openai_base_url.is_empty()
+                    || Some(m.openai_base_url.as_str()) == prev_openai_default;
+                if openai_is_autofill {
+                    m.openai_base_url = new_openai_default.unwrap_or_default().to_string();
+                }
             }
         }
         FormField::ReasoningEffort => {
@@ -1344,7 +1369,7 @@ fn edit_focused_text(m: &mut ProviderFormModal, f: impl FnOnce(&mut String)) {
     m.error = None;
     let target: Option<&mut String> = match m.focused {
         FormField::Name => Some(&mut m.name),
-        FormField::BaseUrl => Some(&mut m.base_url),
+        FormField::AnthropicBaseUrl => Some(&mut m.anthropic_base_url),
         FormField::OpenaiBaseUrl => Some(&mut m.openai_base_url),
         FormField::AuthValue => Some(&mut m.auth_value),
         _ => None,
@@ -1378,7 +1403,7 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
         let input = FormInputs {
             name: &m.name,
             kind: m.kind.label(),
-            base_url: Some(&m.base_url),
+            anthropic_base_url: Some(&m.anthropic_base_url),
             openai_base_url: Some(&m.openai_base_url),
             reasoning_effort: m.reasoning_effort.as_option(),
             thinking_mode: m.thinking_mode.as_option(),
@@ -1874,7 +1899,7 @@ fn submit_oauth_edit(
     let input = FormInputs {
         name: &m.name,
         kind: m.kind.label(),
-        base_url: Some(&m.base_url),
+        anthropic_base_url: Some(&m.anthropic_base_url),
         openai_base_url: Some(&m.openai_base_url),
         reasoning_effort: m.reasoning_effort.as_option(),
         thinking_mode: m.thinking_mode.as_option(),
@@ -1899,7 +1924,7 @@ fn submit_oauth_edit(
         let prev = &cfg.providers[original_index];
         prev.name != provider.name
             || prev.kind != provider.kind
-            || prev.base_url != provider.base_url
+            || prev.anthropic_base_url != provider.anthropic_base_url
             || prev.openai_base_url != provider.openai_base_url
             || prev.reasoning_effort != provider.reasoning_effort
             || prev.thinking_mode != provider.thinking_mode
@@ -2088,6 +2113,130 @@ mod modal_key_tests {
             panic!("expected provider form modal");
         };
         assert_eq!(m.focused, FormField::Name);
+    }
+
+    #[test]
+    fn provider_form_kind_change_prefills_empty_urls_in_add_flow() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut m = ProviderFormModal::new_for_add();
+        m.focused = FormField::Kind;
+        // Start from Codex (both URL buffers untouched) and cycle forward
+        // one step to Minimax, its immediate successor.
+        m.kind = ProviderKind::Codex;
+        assert!(m.anthropic_base_url.is_empty());
+        assert!(m.openai_base_url.is_empty());
+
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+
+        assert_eq!(m.kind, ProviderKind::Minimax);
+        assert_eq!(m.anthropic_base_url, "https://api.minimaxi.com/anthropic");
+        assert_eq!(m.openai_base_url, "https://api.minimaxi.com/v1");
+    }
+
+    #[test]
+    fn provider_form_kind_change_does_not_overwrite_typed_url() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut m = ProviderFormModal::new_for_add();
+        m.focused = FormField::Kind;
+        m.anthropic_base_url = "https://custom.example.com".into();
+
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+
+        assert_eq!(m.kind, ProviderKind::Zai);
+        // User-typed value survives the kind change untouched.
+        assert_eq!(m.anthropic_base_url, "https://custom.example.com");
+        // The other, still-empty buffer gets prefilled from Zai's defaults.
+        assert_eq!(m.openai_base_url, "https://api.z.ai/api/paas/v4");
+    }
+
+    #[test]
+    fn provider_form_kind_change_does_not_prefill_in_edit_flow() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let payload = proxy_admin_api::ProviderPayload {
+            name: "anthropic".into(),
+            kind: "anthropic".into(),
+            enabled: true,
+            auth: proxy_admin_api::AuthPayload::Passthrough,
+            anthropic_base_url: None,
+            openai_base_url: None,
+            reasoning_effort: None,
+            thinking_mode: None,
+            max_concurrent: None,
+            sanitize_empty_tools: None,
+        };
+        let mut m = ProviderFormModal::from_provider(0, &payload);
+        m.focused = FormField::Kind;
+        assert!(m.anthropic_base_url.is_empty());
+        assert!(m.openai_base_url.is_empty());
+
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+
+        assert_eq!(m.kind, ProviderKind::Zai);
+        // Edit flow never prefills, even though both buffers were empty.
+        assert!(m.anthropic_base_url.is_empty());
+        assert!(m.openai_base_url.is_empty());
+    }
+
+    #[test]
+    fn provider_form_kind_change_re_derives_stale_defaults_across_multiple_cycles() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut m = ProviderFormModal::new_for_add();
+        m.focused = FormField::Kind;
+        // A genuine user-typed value that doesn't match any kind's default.
+        m.anthropic_base_url = "https://custom.example.com".into();
+
+        // Anthropic -> Zai: openai_base_url (empty) is auto-filled with
+        // Zai's defaults. The custom anthropic_base_url is untouched
+        // because it isn't empty and doesn't match Anthropic's default.
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(mut m) = modal else {
+            panic!("expected provider form modal");
+        };
+        assert_eq!(m.kind, ProviderKind::Zai);
+        assert_eq!(m.anthropic_base_url, "https://custom.example.com");
+        assert_eq!(m.openai_base_url, "https://api.z.ai/api/paas/v4");
+
+        // Now overwrite anthropic_base_url with Zai's own default so we can
+        // prove the stale-bleed fix: cycling forward to DeepSeek (whose
+        // anthropic default is None) must CLEAR it instead of leaving
+        // Zai's host behind bound to a DeepSeek key.
+        m.anthropic_base_url = "https://api.z.ai/api/anthropic".into();
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+        assert_eq!(m.kind, ProviderKind::DeepSeek);
+        assert!(
+            m.anthropic_base_url.is_empty(),
+            "stale Zai anthropic default must be cleared for a kind with no anthropic URL"
+        );
+        // openai_base_url held Zai's default (an auto-fill value), so it is
+        // replaced with DeepSeek's default rather than left stale.
+        assert_eq!(m.openai_base_url, "https://api.deepseek.com/v1");
+
+        // Verify a genuine user-typed value survives a further kind
+        // change: type a custom openai_base_url now, then cycle again.
+        let mut m = m;
+        m.openai_base_url = "https://custom-openai.example.com".into();
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+        assert_eq!(m.kind, ProviderKind::OpenAi);
+        assert_eq!(m.openai_base_url, "https://custom-openai.example.com");
     }
 
     #[test]
@@ -2397,7 +2546,7 @@ mod modal_key_tests {
                 kind: "anthropic".into(),
                 enabled: true,
                 auth: proxy_admin_api::AuthPayload::Passthrough,
-                base_url: None,
+                anthropic_base_url: None,
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: None,
@@ -2423,7 +2572,7 @@ mod modal_key_tests {
             other => panic!("expected RoutingForm modal, got {other:?}"),
         }
         assert!(
-            state.flash.as_ref().map_or(false, |f| f.contains("ghost")),
+            state.flash.as_ref().is_some_and(|f| f.contains("ghost")),
             "expected flash to mention stale provider, got: {:?}",
             state.flash
         );

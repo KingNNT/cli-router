@@ -1,9 +1,9 @@
 //! Shared implementation of the Anthropic Messages API protocol
 //! (`POST /v1/messages` with SSE streaming and `usage` JSON shape).
 //!
-//! Both `AnthropicProvider` and `ZaiProvider` speak this protocol; their
-//! `Provider` impls delegate the protocol-level logic into the free
-//! functions below, and only differ in `name()` and `base_url`.
+//! `UpstreamProvider` instances configured for Anthropic-shaped providers
+//! (e.g. Anthropic, Z.ai) delegate their protocol-level logic into the free
+//! functions below, differing only in `name()` and `base_url`.
 
 use crate::adapters::usage::anthropic_sse::AnthropicSseParser;
 use crate::application::errors::ProxyError;

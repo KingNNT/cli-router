@@ -341,6 +341,31 @@ impl ProviderKind {
             _ => ProviderKind::Anthropic,
         }
     }
+
+    /// Default endpoint URLs for this provider kind, as
+    /// `(anthropic_base_url, openai_base_url)`. Mirrors
+    /// `proxy::adapters::providers::upstream::default_urls` (kept in sync
+    /// manually — `proxy-tui` does not depend on the `proxy` crate).
+    pub fn default_urls(self) -> (Option<&'static str>, Option<&'static str>) {
+        match self {
+            ProviderKind::Anthropic => (Some("https://api.anthropic.com"), None),
+            ProviderKind::Zai => (
+                Some("https://api.z.ai/api/anthropic"),
+                Some("https://api.z.ai/api/paas/v4"),
+            ),
+            ProviderKind::DeepSeek => (None, Some("https://api.deepseek.com/v1")),
+            ProviderKind::OpenAi => (None, Some("https://api.openai.com/v1")),
+            ProviderKind::Codex => (None, Some("https://chatgpt.com/backend-api/codex")),
+            ProviderKind::Minimax => (
+                Some("https://api.minimaxi.com/anthropic"),
+                Some("https://api.minimaxi.com/v1"),
+            ),
+            ProviderKind::Kimi => (
+                Some("https://api.moonshot.ai/anthropic"),
+                Some("https://api.moonshot.ai/v1"),
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -549,7 +574,7 @@ impl ThinkingModeInput {
 pub enum FormField {
     Name,
     Kind,
-    BaseUrl,
+    AnthropicBaseUrl,
     OpenaiBaseUrl,
     ReasoningEffort,
     ThinkingMode,
@@ -579,7 +604,7 @@ fn field_order(auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Vec<For
     let mut order = vec![
         FormField::Name,
         FormField::Kind,
-        FormField::BaseUrl,
+        FormField::AnthropicBaseUrl,
         FormField::OpenaiBaseUrl,
     ];
     if matches!(provider_kind, ProviderKind::Codex | ProviderKind::Anthropic) {
@@ -628,7 +653,7 @@ pub struct ProviderFormModal {
     pub focused: FormField,
     pub name: String,
     pub kind: ProviderKind,
-    pub base_url: String,
+    pub anthropic_base_url: String,
     pub openai_base_url: String,
     pub reasoning_effort: ReasoningEffortInput,
     pub thinking_mode: ThinkingModeInput,
@@ -653,7 +678,7 @@ impl ProviderFormModal {
             focused: FormField::Name,
             name: String::new(),
             kind: ProviderKind::Anthropic,
-            base_url: String::new(),
+            anthropic_base_url: String::new(),
             openai_base_url: String::new(),
             reasoning_effort: ReasoningEffortInput::Unset,
             thinking_mode: ThinkingModeInput::Unset,
@@ -681,7 +706,7 @@ impl ProviderFormModal {
             focused: FormField::Name,
             name: p.name.clone(),
             kind: ProviderKind::from_str_or_default(&p.kind),
-            base_url: p.base_url.clone().unwrap_or_default(),
+            anthropic_base_url: p.anthropic_base_url.clone().unwrap_or_default(),
             openai_base_url: p.openai_base_url.clone().unwrap_or_default(),
             reasoning_effort: ReasoningEffortInput::from_option(p.reasoning_effort.as_deref()),
             thinking_mode: ThinkingModeInput::from_option(p.thinking_mode.as_deref()),

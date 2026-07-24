@@ -41,16 +41,65 @@ impl Direction {
     }
 }
 
+/// Which wire formats a provider can serve natively.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FormatSupport {
+    pub anthropic: bool,
+    pub openai: bool,
+}
+
+impl FormatSupport {
+    /// Support exactly one format.
+    pub fn single(format: ApiFormat) -> Self {
+        match format {
+            ApiFormat::Anthropic => Self {
+                anthropic: true,
+                openai: false,
+            },
+            ApiFormat::OpenAI => Self {
+                anthropic: false,
+                openai: true,
+            },
+        }
+    }
+
+    /// Support both formats (dual-endpoint provider).
+    pub fn both() -> Self {
+        Self {
+            anthropic: true,
+            openai: true,
+        }
+    }
+
+    /// Whether the given format is supported.
+    pub fn has(&self, format: ApiFormat) -> bool {
+        match format {
+            ApiFormat::Anthropic => self.anthropic,
+            ApiFormat::OpenAI => self.openai,
+        }
+    }
+
+    /// The single supported format. Caller must ensure exactly one is
+    /// supported (i.e. call only when `!has(client_format)`); prefers
+    /// Anthropic if — through misconfiguration — both were false.
+    pub fn sole(&self) -> ApiFormat {
+        if self.openai && !self.anthropic {
+            ApiFormat::OpenAI
+        } else {
+            ApiFormat::Anthropic
+        }
+    }
+}
+
 #[async_trait]
 pub trait Provider: Send + Sync {
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &str;
 
-    /// Native API format this provider speaks. Used by the translation layer
-    /// to decide whether to translate between Anthropic and OpenAI shapes.
-    /// Defaults to Anthropic for compatibility with pre-translation tests.
-    fn native_format(&self) -> ApiFormat {
-        ApiFormat::Anthropic
-    }
+    /// Which wire formats this provider can serve natively. Used by the
+    /// translation layer to decide whether to translate between Anthropic
+    /// and OpenAI shapes.
+    fn supported_formats(&self) -> FormatSupport;
+
     fn parse_model(&self, body: &[u8]) -> Result<String, String>;
 
     /// Parse model and stream flag in a single JSON pass. Default implementation
@@ -147,5 +196,33 @@ mod direction_tests {
             Direction::OpenAIToAnthropic.as_label(),
             Some("openai→anthropic")
         );
+    }
+}
+
+#[cfg(test)]
+mod format_support_tests {
+    use super::*;
+
+    #[test]
+    fn single_anthropic_supports_only_anthropic() {
+        let s = FormatSupport::single(ApiFormat::Anthropic);
+        assert!(s.has(ApiFormat::Anthropic));
+        assert!(!s.has(ApiFormat::OpenAI));
+        assert_eq!(s.sole(), ApiFormat::Anthropic);
+    }
+
+    #[test]
+    fn single_openai_supports_only_openai() {
+        let s = FormatSupport::single(ApiFormat::OpenAI);
+        assert!(!s.has(ApiFormat::Anthropic));
+        assert!(s.has(ApiFormat::OpenAI));
+        assert_eq!(s.sole(), ApiFormat::OpenAI);
+    }
+
+    #[test]
+    fn both_supports_both() {
+        let s = FormatSupport::both();
+        assert!(s.has(ApiFormat::Anthropic));
+        assert!(s.has(ApiFormat::OpenAI));
     }
 }

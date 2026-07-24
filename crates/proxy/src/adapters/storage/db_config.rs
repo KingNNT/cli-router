@@ -106,7 +106,7 @@ impl ConfigRepository for DbConfigRepository {
             tx.execute("DELETE FROM providers", []).map_err(db_err)?;
             let mut stmt = tx
                 .prepare(
-                    "INSERT INTO providers (name, kind, base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
+                    "INSERT INTO providers (name, kind, anthropic_base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
                      auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent, sanitize_empty_tools, enabled)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 )
@@ -117,7 +117,7 @@ impl ConfigRepository for DbConfigRepository {
                 stmt.execute(rusqlite::params![
                     p.name,
                     kind_str,
-                    p.base_url,
+                    p.anthropic_base_url,
                     p.openai_base_url,
                     p.reasoning_effort,
                     match p.thinking_mode {
@@ -191,6 +191,11 @@ impl ConfigRepository for DbConfigRepository {
 
 // -- Helpers --
 
+/// Treat an empty URL string as "not configured".
+fn none_if_empty(v: Option<String>) -> Option<String> {
+    v.filter(|s| !s.is_empty())
+}
+
 fn load_setting(conn: &Connection, key: &str) -> Option<String> {
     conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
         r.get(0)
@@ -201,7 +206,7 @@ fn load_setting(conn: &Connection, key: &str) -> Option<String> {
 fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError> {
     let mut stmt = conn
         .prepare(
-            "SELECT name, kind, base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
+            "SELECT name, kind, anthropic_base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms,
                     max_concurrent, sanitize_empty_tools, enabled
              FROM providers ORDER BY id",
@@ -215,8 +220,8 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
             Ok(ProviderConfig {
                 name: row.get(0)?,
                 kind: parse_kind(&kind_str),
-                base_url: row.get(2)?,
-                openai_base_url: row.get(3)?,
+                anthropic_base_url: none_if_empty(row.get(2)?),
+                openai_base_url: none_if_empty(row.get(3)?),
                 reasoning_effort: row.get(4)?,
                 thinking_mode: {
                     match thinking_mode_str.as_str() {
@@ -463,7 +468,7 @@ mod tests {
             auth: AuthConfig::Bearer {
                 value: "secret".into(),
             },
-            base_url: Some("https://example.com".into()),
+            anthropic_base_url: Some("https://example.com".into()),
             openai_base_url: Some("https://example.com/v1".into()),
             reasoning_effort: Some("high".into()),
             thinking_mode: ThinkingMode::SplitOnly,
@@ -512,6 +517,56 @@ mod tests {
     }
 
     #[test]
+    fn provider_two_urls_round_trip() {
+        let repo = test_repo();
+        let mut cfg = repo.load().unwrap();
+        cfg.providers.push(ProviderConfig {
+            name: "mm".into(),
+            kind: ProviderKind::Minimax,
+            enabled: true,
+            auth: AuthConfig::Bearer { value: "k".into() },
+            anthropic_base_url: Some("https://a/anthropic".into()),
+            openai_base_url: Some("https://a/v1".into()),
+            reasoning_effort: None,
+            thinking_mode: ThinkingMode::SplitOnly,
+            max_concurrent: None,
+            sanitize_empty_tools: false,
+        });
+        repo.save(&cfg).unwrap();
+        let loaded = repo.load().unwrap();
+        let p = loaded.providers.iter().find(|p| p.name == "mm").unwrap();
+        assert_eq!(p.anthropic_base_url.as_deref(), Some("https://a/anthropic"));
+        assert_eq!(p.openai_base_url.as_deref(), Some("https://a/v1"));
+    }
+
+    #[test]
+    fn empty_urls_normalize_to_none_on_load() {
+        let repo = test_repo();
+        let mut cfg = repo.load().unwrap();
+        cfg.providers.push(ProviderConfig {
+            name: "empty-urls".into(),
+            kind: ProviderKind::Anthropic,
+            enabled: true,
+            auth: AuthConfig::Passthrough,
+            anthropic_base_url: Some(String::new()),
+            openai_base_url: Some(String::new()),
+            reasoning_effort: None,
+            thinking_mode: ThinkingMode::SplitOnly,
+            max_concurrent: None,
+            sanitize_empty_tools: false,
+        });
+        repo.save(&cfg).unwrap();
+        let loaded = repo.load().unwrap();
+        let p = loaded
+            .providers
+            .iter()
+            .find(|p| p.name == "empty-urls")
+            .unwrap();
+        assert_eq!(p.anthropic_base_url, None);
+        assert_eq!(p.openai_base_url, None);
+    }
+
+    #[test]
     fn save_overwrites_previous() {
         let repo = test_repo();
         let mut cfg = repo.load().unwrap();
@@ -555,7 +610,7 @@ mod tests {
                 name: format!("p{i}"),
                 kind: ProviderKind::Anthropic,
                 auth: auth.clone(),
-                base_url: None,
+                anthropic_base_url: None,
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
@@ -616,7 +671,7 @@ mod tests {
             name: "moonshot".into(),
             kind: ProviderKind::Kimi,
             auth: AuthConfig::Passthrough,
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
@@ -642,7 +697,7 @@ mod tests {
             name: "off".into(),
             kind: ProviderKind::Anthropic,
             auth: AuthConfig::Passthrough,
-            base_url: None,
+            anthropic_base_url: None,
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,

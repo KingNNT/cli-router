@@ -8,7 +8,9 @@
 
 use super::builder::{BuildError, build_from_config};
 use crate::application::errors::ProxyError;
-use crate::application::ports::{Provider, QuotaPort, UpstreamResponse, UsageParser};
+use crate::application::ports::{
+    FormatSupport, Provider, QuotaPort, UpstreamResponse, UsageParser,
+};
 use crate::config::Config;
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
@@ -49,14 +51,18 @@ impl LiveProvider {
     }
 }
 
-// `native_format` intentionally not overridden — translation triggers per-entry
-// inside messages_protocol after routing has picked a leaf provider.
+// Delegates to the inner provider — translation triggers per-entry inside
+// messages_protocol after routing has picked a leaf provider.
 #[async_trait]
 impl Provider for LiveProvider {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         // Static name — same Phase 1 limitation: per-request leaf provider
         // lives in the routing table, not visible from this trait.
         "router"
+    }
+
+    fn supported_formats(&self) -> FormatSupport {
+        self.current().supported_formats()
     }
 
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {
@@ -109,27 +115,37 @@ impl Provider for LiveProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapters::providers::AnthropicProvider;
+    use crate::adapters::providers::AuthHeader;
+    use crate::adapters::providers::upstream::{Quirks, UpstreamProvider};
     use crate::adapters::quota::NoopQuota;
 
     fn noop_quota() -> Arc<dyn QuotaPort> {
         Arc::new(NoopQuota)
     }
 
+    fn named_provider(name: &str) -> Arc<dyn Provider> {
+        Arc::new(UpstreamProvider::new(
+            name.to_string(),
+            Some("https://example.invalid".to_string()),
+            None,
+            AuthHeader::Passthrough,
+            Quirks::none(),
+            reqwest::Client::new(),
+        ))
+    }
+
     #[test]
     fn current_returns_initial_after_construction() {
-        let initial: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(reqwest::Client::new()));
+        let initial = named_provider("anthropic");
         let live = LiveProvider::new(initial.clone(), noop_quota());
         assert_eq!(live.current().name(), "anthropic");
     }
 
     #[test]
     fn swap_replaces_inner() {
-        let initial: Arc<dyn Provider> = Arc::new(AnthropicProvider::new(reqwest::Client::new()));
+        let initial = named_provider("anthropic");
         let live = LiveProvider::new(initial, noop_quota());
-        let new: Arc<dyn Provider> = Arc::new(crate::adapters::providers::ZaiProvider::new(
-            reqwest::Client::new(),
-        ));
+        let new = named_provider("zai");
         live.swap(new);
         assert_eq!(live.current().name(), "zai");
     }
