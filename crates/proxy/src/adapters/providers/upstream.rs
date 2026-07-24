@@ -21,9 +21,6 @@ pub struct Quirks {
     pub strip_tool_choice: bool,
     /// Sanitize empty-tool responses (Kimi).
     pub sanitize_empty_tools: bool,
-    /// Inject reasoning effort into the Anthropic request output config
-    /// (Anthropic).
-    pub reasoning_effort: Option<String>,
 }
 
 impl Quirks {
@@ -36,7 +33,6 @@ impl Quirks {
 pub fn quirks_for(
     kind: ProviderKind,
     thinking: ThinkingMode,
-    reasoning_effort: Option<String>,
     sanitize_empty_tools: bool,
 ) -> Quirks {
     match kind {
@@ -53,11 +49,7 @@ pub fn quirks_for(
             sanitize_empty_tools,
             ..Quirks::none()
         },
-        ProviderKind::Anthropic => Quirks {
-            reasoning_effort,
-            ..Quirks::none()
-        },
-        ProviderKind::Zai | ProviderKind::OpenAi => Quirks::none(),
+        ProviderKind::Anthropic | ProviderKind::Zai | ProviderKind::OpenAi => Quirks::none(),
         // Codex is bespoke and never built as an UpstreamProvider.
         ProviderKind::Codex => Quirks::none(),
     }
@@ -139,13 +131,10 @@ impl UpstreamProvider {
         self
     }
 
-    /// Apply Anthropic-format request quirks. Currently: inject a default
-    /// reasoning effort into `output_config.effort` (Anthropic).
+    /// Apply Anthropic-format request quirks: merge the resolved thinking
+    /// patch, if any.
     fn apply_anthropic_request_quirks(&self, body: Bytes) -> Bytes {
         let mut body = body;
-        if let Some(effort) = self.quirks.reasoning_effort.as_deref() {
-            inject_effort(&mut body, Some(effort));
-        }
         if let Some(injection) = &self.thinking_anthropic {
             body = injection.apply(body);
         }
@@ -259,43 +248,6 @@ fn inject_reasoning_split(body: &Bytes) -> Bytes {
     serde_json::to_vec(&value)
         .map(Bytes::from)
         .unwrap_or_else(|_| body.clone())
-}
-
-/// Inject `output_config.effort` into an Anthropic Messages API request body
-/// if the provider has a default effort configured AND the request doesn't
-/// already specify one.
-fn inject_effort(body: &mut Bytes, default_effort: Option<&str>) {
-    let Some(effort) = default_effort else {
-        return;
-    };
-
-    let Ok(mut parsed) = serde_json::from_slice::<Value>(body) else {
-        return;
-    };
-
-    let already_set = parsed
-        .get("output_config")
-        .and_then(|oc| oc.get("effort"))
-        .and_then(|e| e.as_str())
-        .is_some_and(|s| !s.is_empty());
-
-    if already_set {
-        return;
-    }
-
-    let oc = parsed
-        .as_object_mut()
-        .unwrap()
-        .entry("output_config")
-        .or_insert_with(|| Value::Object(serde_json::Map::new()));
-
-    if let Some(oc_obj) = oc.as_object_mut() {
-        oc_obj.insert("effort".into(), Value::String(effort.to_string()));
-    }
-
-    if let Ok(reencoded) = serde_json::to_vec(&parsed) {
-        *body = Bytes::from(reencoded);
-    }
 }
 
 /// Models that support `tool_choice`. Only `deepseek-chat` (V3) is known to
@@ -463,7 +415,6 @@ mod tests {
         assert!(q.strip_thinking.is_none());
         assert!(!q.strip_tool_choice);
         assert!(!q.sanitize_empty_tools);
-        assert!(q.reasoning_effort.is_none());
     }
 
     fn dual_provider(mode: FormatMode) -> UpstreamProvider {
@@ -520,39 +471,32 @@ mod tests {
 
     #[test]
     fn preset_minimax_enables_reasoning_split_and_strip() {
-        let q = quirks_for(ProviderKind::Minimax, ThinkingMode::SplitOnly, None, false);
+        let q = quirks_for(ProviderKind::Minimax, ThinkingMode::SplitOnly, false);
         assert!(q.reasoning_split);
         assert_eq!(q.strip_thinking, Some(ThinkingMode::SplitOnly));
     }
 
     #[test]
     fn preset_deepseek_strips_tool_choice() {
-        let q = quirks_for(ProviderKind::DeepSeek, ThinkingMode::SplitOnly, None, false);
+        let q = quirks_for(ProviderKind::DeepSeek, ThinkingMode::SplitOnly, false);
         assert!(q.strip_tool_choice);
         assert!(!q.reasoning_split);
     }
 
     #[test]
     fn preset_kimi_sanitizes_when_configured() {
-        let q = quirks_for(ProviderKind::Kimi, ThinkingMode::SplitOnly, None, true);
+        let q = quirks_for(ProviderKind::Kimi, ThinkingMode::SplitOnly, true);
         assert!(q.sanitize_empty_tools);
     }
 
     #[test]
-    fn preset_anthropic_carries_reasoning_effort() {
-        let q = quirks_for(
+    fn preset_anthropic_zai_and_openai_have_no_quirks() {
+        for k in [
             ProviderKind::Anthropic,
-            ThinkingMode::SplitOnly,
-            Some("high".into()),
-            false,
-        );
-        assert_eq!(q.reasoning_effort.as_deref(), Some("high"));
-    }
-
-    #[test]
-    fn preset_zai_and_openai_have_no_quirks() {
-        for k in [ProviderKind::Zai, ProviderKind::OpenAi] {
-            let q = quirks_for(k, ThinkingMode::SplitOnly, None, false);
+            ProviderKind::Zai,
+            ProviderKind::OpenAi,
+        ] {
+            let q = quirks_for(k, ThinkingMode::SplitOnly, false);
             assert!(!q.reasoning_split && !q.strip_tool_choice && !q.sanitize_empty_tools);
         }
     }
@@ -598,31 +542,12 @@ mod tests {
             None,
             Some("https://o".into()),
             AuthHeader::Bearer("k".into()),
-            quirks_for(ProviderKind::Minimax, ThinkingMode::SplitOnly, None, false),
+            quirks_for(ProviderKind::Minimax, ThinkingMode::SplitOnly, false),
             reqwest::Client::new(),
         );
         let out = p.apply_openai_request_quirks(Bytes::from(r#"{"model":"m","messages":[]}"#));
         let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(v["reasoning_split"], true);
-    }
-
-    #[test]
-    fn anthropic_request_quirks_inject_effort_for_anthropic() {
-        let p = UpstreamProvider::new(
-            "an".into(),
-            Some("https://a".into()),
-            None,
-            AuthHeader::Passthrough,
-            quirks_for(
-                ProviderKind::Anthropic,
-                ThinkingMode::SplitOnly,
-                Some("high".into()),
-                false,
-            ),
-            reqwest::Client::new(),
-        );
-        let out = p.apply_anthropic_request_quirks(Bytes::from(r#"{"model":"m","messages":[]}"#));
-        assert_ne!(out, Bytes::from(r#"{"model":"m","messages":[]}"#));
     }
 
     #[test]
@@ -632,7 +557,7 @@ mod tests {
             None,
             Some("https://o".into()),
             AuthHeader::Bearer("k".into()),
-            quirks_for(ProviderKind::DeepSeek, ThinkingMode::SplitOnly, None, false),
+            quirks_for(ProviderKind::DeepSeek, ThinkingMode::SplitOnly, false),
             reqwest::Client::new(),
         );
 

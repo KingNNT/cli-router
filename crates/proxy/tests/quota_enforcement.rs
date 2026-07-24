@@ -145,7 +145,6 @@ fn hot_reload_preserves_quota_enforcement() {
             auth: AuthConfig::Passthrough,
             anthropic_base_url: Some("https://api.anthropic.com".into()),
             openai_base_url: None,
-            reasoning_effort: None,
             thinking_mode: proxy::config::ThinkingMode::SplitOnly,
             format_mode: proxy::config::FormatMode::Both,
             max_concurrent: None,

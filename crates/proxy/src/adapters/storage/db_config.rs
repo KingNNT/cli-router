@@ -106,9 +106,9 @@ impl ConfigRepository for DbConfigRepository {
             tx.execute("DELETE FROM providers", []).map_err(db_err)?;
             let mut stmt = tx
                 .prepare(
-                    "INSERT INTO providers (name, kind, anthropic_base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
+                    "INSERT INTO providers (name, kind, anthropic_base_url, openai_base_url, thinking_mode, auth_type,
                      auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent, sanitize_empty_tools, enabled, format_mode, thinking_level, thinking_force)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                 )
                 .map_err(db_err)?;
             for p in &config.providers {
@@ -119,7 +119,6 @@ impl ConfigRepository for DbConfigRepository {
                     kind_str,
                     p.anthropic_base_url,
                     p.openai_base_url,
-                    p.reasoning_effort,
                     match p.thinking_mode {
                         ThinkingMode::SplitOnly => "split_only",
                         ThinkingMode::StripAll => "strip_all",
@@ -213,7 +212,7 @@ fn load_setting(conn: &Connection, key: &str) -> Option<String> {
 fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError> {
     let mut stmt = conn
         .prepare(
-            "SELECT name, kind, anthropic_base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
+            "SELECT name, kind, anthropic_base_url, openai_base_url, thinking_mode, auth_type,
                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms,
                     max_concurrent, sanitize_empty_tools, enabled, format_mode, thinking_level, thinking_force
              FROM providers ORDER BY id",
@@ -222,14 +221,13 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
     let rows = stmt
         .query_map([], |row| {
             let kind_str: String = row.get(1)?;
-            let auth_type_str: String = row.get(6)?;
-            let thinking_mode_str: String = row.get(5)?;
+            let auth_type_str: String = row.get(5)?;
+            let thinking_mode_str: String = row.get(4)?;
             Ok(ProviderConfig {
                 name: row.get(0)?,
                 kind: parse_kind(&kind_str),
                 anthropic_base_url: none_if_empty(row.get(2)?),
                 openai_base_url: none_if_empty(row.get(3)?),
-                reasoning_effort: row.get(4)?,
                 thinking_mode: {
                     match thinking_mode_str.as_str() {
                         "strip_all" => ThinkingMode::StripAll,
@@ -238,23 +236,23 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
                 },
                 auth: columns_to_auth(
                     &auth_type_str,
+                    row.get(6)?,
                     row.get(7)?,
                     row.get(8)?,
                     row.get(9)?,
                     row.get(10)?,
-                    row.get(11)?,
                 ),
-                max_concurrent: row.get::<_, Option<i64>>(12)?.map(|v| v.max(0) as usize),
-                sanitize_empty_tools: row.get::<_, i64>(13)? != 0,
-                enabled: row.get::<_, i64>(14)? != 0,
-                format_mode: match row.get::<_, String>(15)?.as_str() {
+                max_concurrent: row.get::<_, Option<i64>>(11)?.map(|v| v.max(0) as usize),
+                sanitize_empty_tools: row.get::<_, i64>(12)? != 0,
+                enabled: row.get::<_, i64>(13)? != 0,
+                format_mode: match row.get::<_, String>(14)?.as_str() {
                     "anthropic" => FormatMode::Anthropic,
                     "openai" => FormatMode::OpenAi,
                     _ => FormatMode::Both,
                 },
-                thinking_level: ThinkingLevel::parse(&row.get::<_, String>(16)?)
+                thinking_level: ThinkingLevel::parse(&row.get::<_, String>(15)?)
                     .unwrap_or_default(),
-                thinking_force: row.get::<_, i64>(17)? != 0,
+                thinking_force: row.get::<_, i64>(16)? != 0,
             })
         })
         .map_err(db_err)?;
@@ -478,8 +476,8 @@ mod tests {
         let mut cfg = repo.load().unwrap();
         cfg.port = 9999;
         cfg.providers.push(ProviderConfig {
-            thinking_level: crate::config::ThinkingLevel::Unset,
-            thinking_force: false,
+            thinking_level: crate::config::ThinkingLevel::High,
+            thinking_force: true,
             name: "test".into(),
             kind: ProviderKind::Zai,
             auth: AuthConfig::Bearer {
@@ -487,7 +485,6 @@ mod tests {
             },
             anthropic_base_url: Some("https://example.com".into()),
             openai_base_url: Some("https://example.com/v1".into()),
-            reasoning_effort: Some("high".into()),
             thinking_mode: ThinkingMode::SplitOnly,
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
@@ -520,9 +517,10 @@ mod tests {
         assert_eq!(loaded.providers[0].name, "test");
         assert_eq!(loaded.providers[0].kind, ProviderKind::Zai);
         assert_eq!(
-            loaded.providers[0].reasoning_effort.as_deref(),
-            Some("high")
+            loaded.providers[0].thinking_level,
+            crate::config::ThinkingLevel::High
         );
+        assert!(loaded.providers[0].thinking_force);
         assert!(matches!(
             loaded.providers[0].auth,
             AuthConfig::Bearer { .. }
@@ -547,7 +545,6 @@ mod tests {
             auth: AuthConfig::Bearer { value: "k".into() },
             anthropic_base_url: Some("https://a/anthropic".into()),
             openai_base_url: Some("https://a/v1".into()),
-            reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
@@ -573,7 +570,6 @@ mod tests {
             auth: AuthConfig::Passthrough,
             anthropic_base_url: Some(String::new()),
             openai_base_url: Some(String::new()),
-            reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
@@ -638,7 +634,6 @@ mod tests {
                 auth: auth.clone(),
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
@@ -702,7 +697,6 @@ mod tests {
             auth: AuthConfig::Passthrough,
             anthropic_base_url: None,
             openai_base_url: None,
-            reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
@@ -731,7 +725,6 @@ mod tests {
             auth: AuthConfig::Passthrough,
             anthropic_base_url: None,
             openai_base_url: None,
-            reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,

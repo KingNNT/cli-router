@@ -49,8 +49,6 @@ pub struct ProviderConfig {
     #[serde(default)]
     pub thinking_force: bool,
     #[serde(default)]
-    pub reasoning_effort: Option<String>,
-    #[serde(default)]
     pub thinking_mode: ThinkingMode,
     /// Max concurrent in-flight requests to this provider. `None` falls back to
     /// the routing default. Raise it to let a single fast provider serve more
@@ -554,13 +552,6 @@ mod tests {
     }
 
     #[test]
-    fn provider_config_deserializes_reasoning_effort() {
-        let json = r#"{"name":"codex-main","kind":"codex","reasoning_effort":"high"}"#;
-        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(provider.reasoning_effort.as_deref(), Some("high"));
-    }
-
-    #[test]
     fn provider_config_defaults_thinking_mode_to_split_only() {
         let json = r#"{"name":"minimax","kind":"minimax"}"#;
         let provider: ProviderConfig = serde_json::from_str(json).unwrap();
@@ -609,7 +600,6 @@ mod tests {
                 auth: AuthConfig::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
@@ -649,7 +639,6 @@ mod tests {
                     auth: AuthConfig::Passthrough,
                     anthropic_base_url: None,
                     openai_base_url: None,
-                    reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
@@ -664,7 +653,6 @@ mod tests {
                     auth: AuthConfig::Passthrough,
                     anthropic_base_url: None,
                     openai_base_url: None,
-                    reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
@@ -719,7 +707,6 @@ mod tests {
                 auth: AuthConfig::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
@@ -757,7 +744,6 @@ mod tests {
                     auth: AuthConfig::Passthrough,
                     anthropic_base_url: None,
                     openai_base_url: None,
-                    reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
@@ -772,7 +758,6 @@ mod tests {
                     auth: AuthConfig::Passthrough,
                     anthropic_base_url: None,
                     openai_base_url: None,
-                    reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
@@ -809,7 +794,6 @@ mod tests {
                 auth: AuthConfig::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,

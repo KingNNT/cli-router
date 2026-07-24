@@ -57,7 +57,8 @@ Ràng buộc validate (`Config::validate`):
 | `base_url` | `string?` | ❌ | theo kind | mọi kind | Ghi đè endpoint chính. Với provider dual-format đây là endpoint **Anthropic-compatible**; với provider OpenAI-only đây là endpoint OpenAI-compatible. |
 | `openai_base_url` | `string?` | ❌ | theo kind | `zai`, `minimax`, `kimi` | Ghi đè endpoint **OpenAI-compatible** cho provider dual-format. Bị bỏ qua với các kind khác. |
 | `format_mode` | `string?` | ❌ | `"both"` | mọi kind trừ `codex` | Giới hạn endpoint mà proxy được phép dùng: `both` (client nói format nào thì đi thẳng format đó), `anthropic` (luôn đi endpoint Anthropic, dịch client OpenAI), `openai` (luôn đi endpoint OpenAI, dịch client Anthropic). Xem §5b. |
-| `reasoning_effort` | `string?` | ❌ | `null` | `anthropic`, `codex` | Mức reasoning mặc định khi request không tự chỉ định (vd `"high"`, `"medium"`, `"low"`, `"minimal"`). |
+| `thinking_level` | `string?` | ❌ | `"unset"` | mọi kind | Mức suy nghĩ của upstream, chọn trong danh sách riêng của từng kind. Xem §5c. |
+| `thinking_force` | `bool?` | ❌ | `false` | mọi kind | `true` thì mức này đè lên tham số client gửi; `false` thì chỉ điền khi client bỏ trống. |
 | `thinking_mode` | `string?` | ❌ | `"split_only"` | `minimax` | Cách xử lý nội dung thinking/reasoning trong response. Xem §5. |
 | `max_concurrent` | `number?` | ❌ | `null` (dùng default của pool) | mọi kind | Số request đồng thời tối đa tới provider này. Tăng để một provider nhanh phục vụ nhiều request; giảm để tránh vượt rate limit. |
 
@@ -154,6 +155,46 @@ OpenAI (opencode).
 
 ---
 
+## 5c. `thinking_level` — mức suy nghĩ của upstream
+
+Mỗi kind có một khoang wire khác nhau để điều khiển mức suy nghĩ (`output_config.effort`,
+`reasoning.effort`, `reasoning_effort`, hoặc `thinking.type` tùy provider). `thinking_level`
+là một field chung duy nhất trừu tượng hóa tất cả các khoang đó: proxy tự dịch giá trị đã
+chọn sang đúng shape JSON của kind, merge vào body gửi đi (theo RFC 7396 JSON Merge Patch)
+sau khi `format_mode`/dịch định dạng đã quyết định request thực sự đi format nào.
+
+`unset` (default) nghĩa là proxy không chèn gì cả — upstream dùng mặc định của chính nó.
+Mỗi kind chỉ cho chọn trong danh sách mức mà upstream của nó thực sự hỗ trợ; admin API và
+TUI dùng chung một bảng nên hai nơi không bao giờ lệch nhau:
+
+| kind | Các mức được hỗ trợ |
+|---|---|
+| `anthropic` | `off` · `low` · `medium` · `high` · `xhigh` · `max` |
+| `codex` | `off` · `minimal` · `low` · `medium` · `high` · `xhigh` |
+| `openai` | `off` · `minimal` · `low` · `medium` · `high` · `xhigh` |
+| `zai` | `off` · `high` · `max` |
+| `deepseek` | `high` · `max` |
+| `kimi` | `low` · `high` · `max` |
+| `minimax` | `off` · `adaptive` |
+
+`thinking_force` quyết định mức này ghi đè hay chỉ điền khuyết:
+
+- **`false`** (default) — proxy chỉ chèn mức đã cấu hình vào các key mà request của client
+  **chưa** có sẵn. Client vẫn kiểm soát được theo từng request.
+- **`true`** — patch merge đè lên bất kể client gửi gì, mức cấu hình luôn thắng.
+
+Lưu ý theo từng kind:
+
+- **DeepSeek** chấp nhận `low`/`medium` ở tầng wire nhưng upstream tự map cả hai về `high`,
+  nên hai mức đó không được liệt kê trong danh sách chọn của `deepseek` — chọn thẳng `high`
+  hoặc `max`.
+- **MiniMax M2.x** bỏ qua `off`: model vẫn giữ reasoning bật dù `thinking.type` được đặt
+  `disabled`. Chỉ M3 tôn trọng giá trị này.
+- **Kimi K2.x** trả lỗi nếu request mang **cả** `thinking` lẫn `reasoning_effort` cùng lúc —
+  tránh cấu hình chồng lấn thủ công từ phía client khi provider đã có `thinking_level`.
+
+---
+
 ## 6. Hướng dẫn cài đặt từng provider
 
 Mỗi provider tối thiểu cần một entry trong `providers` + ít nhất một `routing` rule trỏ tới nó.
@@ -167,7 +208,7 @@ Các block dưới đây là phần tử của mảng `providers` / `routing` tr
   "name": "anthropic",
   "kind": "anthropic",
   "auth": { "type": "api_key", "value": "sk-ant-..." }
-  // "reasoning_effort": "high"   // tùy chọn: mức mặc định khi request không chỉ định
+  // "thinking_level": "high"   // tùy chọn: mức mặc định khi request không chỉ định — xem §5c
 }
 // routing[]
 { "match": { "model": "claude-*" }, "provider": "anthropic" }
@@ -245,7 +286,7 @@ Endpoint Anthropic mặc định (`.../api/anthropic`) đã trỏ Coding Plan kh
   "name": "codex",
   "kind": "codex",
   "auth": { "type": "codex_auto" },   // đọc ~/.codex/auth.json
-  "reasoning_effort": "high"           // tùy chọn
+  "thinking_level": "high"             // tùy chọn — xem §5c
 }
 // routing[]
 { "match": { "model": "gpt-5-codex*" }, "provider": "codex" }
@@ -253,7 +294,7 @@ Endpoint Anthropic mặc định (`.../api/anthropic`) đã trỏ Coding Plan kh
 
 - Endpoint Codex Responses API (`https://chatgpt.com/backend-api/codex`); proxy dịch OpenAI-format sang Responses.
 - Auth ưu tiên `codex_auto` (không lưu token trong DB) hoặc `openai_oauth`.
-- `reasoning_effort` map sang `reasoning.effort` của Responses API.
+- `thinking_level` được chèn vào body OpenAI-format trước khi dịch, rồi map sang `reasoning.effort` của Responses API.
 
 ### 6.6 MiniMax
 
