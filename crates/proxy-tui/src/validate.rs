@@ -133,6 +133,11 @@ pub fn validate_provider_form(
         } else {
             None
         },
+        // The TUI form has no thinking-level control yet (added in a later
+        // task); until then every edit clears thinking_level/thinking_force
+        // back to unset/false on the edited provider.
+        thinking_level: None,
+        thinking_force: None,
         format_mode: input.format_mode.map(str::to_string),
         max_concurrent: input.max_concurrent,
         sanitize_empty_tools: if input.kind == "kimi" {
@@ -201,6 +206,8 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: None,
+            thinking_level: None,
+            thinking_force: None,
             format_mode: None,
             max_concurrent: None,
             sanitize_empty_tools: None,

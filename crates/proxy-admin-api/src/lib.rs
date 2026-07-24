@@ -122,10 +122,21 @@ pub struct ProviderPayload {
     pub anthropic_base_url: Option<String>,
     #[serde(default)]
     pub openai_base_url: Option<String>,
+    /// Retired: no longer read by the proxy. Superseded by `thinking_level`.
+    /// Removed together with the TUI code that sets it (a later task).
     #[serde(default)]
     pub reasoning_effort: Option<String>,
     #[serde(default)]
     pub thinking_mode: Option<String>,
+    /// Thinking level for this provider, from the kind's offered list:
+    /// `unset` | `off` | `minimal` | `low` | `medium` | `high` | `xhigh` |
+    /// `max` | `adaptive`. Absent or empty means `unset`.
+    #[serde(default)]
+    pub thinking_level: Option<String>,
+    /// When true the level overrides a value the client sent; when false it
+    /// only fills in what the client omitted.
+    #[serde(default)]
+    pub thinking_force: Option<bool>,
     /// Which configured endpoint(s) the proxy may use: `both` (default),
     /// `anthropic`, or `openai`. Pinning one format makes the proxy translate
     /// clients that speak the other.
@@ -592,6 +603,8 @@ mod config_payload_tests {
                 openai_base_url: None,
                 reasoning_effort: Some("high".into()),
                 thinking_mode: None,
+                thinking_level: Some("high".into()),
+                thinking_force: Some(true),
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
@@ -620,6 +633,8 @@ mod config_payload_tests {
             parsed.providers[0].reasoning_effort.as_deref(),
             Some("high")
         );
+        assert_eq!(parsed.providers[0].thinking_level.as_deref(), Some("high"));
+        assert_eq!(parsed.providers[0].thinking_force, Some(true));
         assert_eq!(parsed.quota.len(), 1);
         assert_eq!(parsed.quota[0].provider, "zai");
         assert!(parsed.affinity.enabled);
