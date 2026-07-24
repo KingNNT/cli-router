@@ -542,7 +542,7 @@ fn estimate_tokens(body: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::{BoxedByteStream, BoxedError, UpstreamResponse};
+    use crate::application::ports::{BoxedByteStream, BoxedError, FormatSupport, UpstreamResponse};
     use async_trait::async_trait;
     use bytes::Bytes;
     use chrono::NaiveDate;
@@ -618,6 +618,9 @@ mod tests {
     impl Provider for FakeProvider {
         fn name(&self) -> &'static str {
             "fake"
+        }
+        fn supported_formats(&self) -> FormatSupport {
+            FormatSupport::single(ApiFormat::Anthropic)
         }
         fn parse_model(&self, _body: &[u8]) -> Result<String, String> {
             self.parse_model_response.lock().unwrap().clone()

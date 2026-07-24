@@ -571,8 +571,14 @@ fn codex_provider_properties() {
         AuthHeader::Bearer("test-key".into()),
     );
     assert_eq!(provider.name(), "codex");
-    assert_eq!(
-        provider.native_format(),
-        proxy::application::ports::ApiFormat::OpenAI
+    assert!(
+        provider
+            .supported_formats()
+            .has(proxy::application::ports::ApiFormat::OpenAI)
+    );
+    assert!(
+        !provider
+            .supported_formats()
+            .has(proxy::application::ports::ApiFormat::Anthropic)
     );
 }

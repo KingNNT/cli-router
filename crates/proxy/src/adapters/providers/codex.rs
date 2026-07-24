@@ -6,7 +6,9 @@
 
 use super::messages_protocol::{self, AuthHeader, HOP_BY_HOP};
 use crate::application::errors::ProxyError;
-use crate::application::ports::{ApiFormat, Provider, UpstreamResponse, UsageParser};
+use crate::application::ports::{
+    ApiFormat, FormatSupport, Provider, UpstreamResponse, UsageParser,
+};
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
 use axum::http::HeaderMap;
@@ -85,8 +87,8 @@ impl Provider for CodexProvider {
         "codex"
     }
 
-    fn native_format(&self) -> ApiFormat {
-        ApiFormat::OpenAI
+    fn supported_formats(&self) -> FormatSupport {
+        FormatSupport::single(ApiFormat::OpenAI)
     }
 
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {
@@ -1088,9 +1090,10 @@ mod tests {
     }
 
     #[test]
-    fn native_format_is_openai() {
+    fn supported_formats_is_openai_only() {
         let p = CodexProvider::new(reqwest::Client::new());
-        assert_eq!(p.native_format(), ApiFormat::OpenAI);
+        assert!(p.supported_formats().has(ApiFormat::OpenAI));
+        assert!(!p.supported_formats().has(ApiFormat::Anthropic));
     }
 
     #[test]

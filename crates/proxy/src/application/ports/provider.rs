@@ -86,18 +86,10 @@ impl FormatSupport {
 pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
 
-    /// Native API format this provider speaks. Used by the translation layer
-    /// to decide whether to translate between Anthropic and OpenAI shapes.
-    /// Defaults to Anthropic for compatibility with pre-translation tests.
-    fn native_format(&self) -> ApiFormat {
-        ApiFormat::Anthropic
-    }
-
-    /// Which formats this provider can serve natively. Default derives from
-    /// `native_format()`; providers that speak both override this.
-    fn supported_formats(&self) -> FormatSupport {
-        FormatSupport::single(self.native_format())
-    }
+    /// Which wire formats this provider can serve natively. Used by the
+    /// translation layer to decide whether to translate between Anthropic
+    /// and OpenAI shapes.
+    fn supported_formats(&self) -> FormatSupport;
 
     fn parse_model(&self, body: &[u8]) -> Result<String, String>;
 

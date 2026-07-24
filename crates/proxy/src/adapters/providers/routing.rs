@@ -265,13 +265,17 @@ impl RoutingProviderBuilder {
     }
 }
 
-// `native_format` intentionally not overridden — routing is dynamic and the leaf
-// provider's native_format is what matters; translation triggers per-entry inside
-// messages_protocol after routing has selected an entry.
+// Routing accepts both client formats at the top; the leaf provider's
+// `supported_formats()` is what matters for translation, selected per-entry
+// inside messages_protocol after routing has picked a leaf.
 #[async_trait]
 impl Provider for RoutingProvider {
     fn name(&self) -> &str {
         "router"
+    }
+
+    fn supported_formats(&self) -> FormatSupport {
+        FormatSupport::both()
     }
 
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {

@@ -8,7 +8,9 @@
 
 use super::builder::{BuildError, build_from_config};
 use crate::application::errors::ProxyError;
-use crate::application::ports::{Provider, QuotaPort, UpstreamResponse, UsageParser};
+use crate::application::ports::{
+    FormatSupport, Provider, QuotaPort, UpstreamResponse, UsageParser,
+};
 use crate::config::Config;
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
@@ -49,14 +51,18 @@ impl LiveProvider {
     }
 }
 
-// `native_format` intentionally not overridden — translation triggers per-entry
-// inside messages_protocol after routing has picked a leaf provider.
+// Delegates to the inner provider — translation triggers per-entry inside
+// messages_protocol after routing has picked a leaf provider.
 #[async_trait]
 impl Provider for LiveProvider {
     fn name(&self) -> &str {
         // Static name — same Phase 1 limitation: per-request leaf provider
         // lives in the routing table, not visible from this trait.
         "router"
+    }
+
+    fn supported_formats(&self) -> FormatSupport {
+        self.current().supported_formats()
     }
 
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {
