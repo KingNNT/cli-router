@@ -270,7 +270,7 @@ impl RoutingProviderBuilder {
 // messages_protocol after routing has selected an entry.
 #[async_trait]
 impl Provider for RoutingProvider {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "router"
     }
 

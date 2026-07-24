@@ -1,5 +1,12 @@
+use super::messages_protocol::AuthHeader;
 use super::minimax_stream::ThinkingMode;
+use crate::application::errors::ProxyError;
+use crate::application::ports::{FormatSupport, Provider, UpstreamResponse, UsageParser};
 use crate::config::ProviderKind;
+use crate::domain::UsageRecord;
+use async_trait::async_trait;
+use axum::http::HeaderMap;
+use bytes::Bytes;
 
 /// Per-provider request/response behaviors on the forward path, as data.
 #[derive(Debug, Clone, Default)]
@@ -55,6 +62,93 @@ pub fn quirks_for(
     }
 }
 
+#[allow(dead_code)]
+pub struct UpstreamProvider {
+    name: String,
+    anthropic_base_url: Option<String>,
+    openai_base_url: Option<String>,
+    auth: AuthHeader,
+    quirks: Quirks,
+    http: reqwest::Client,
+}
+
+impl UpstreamProvider {
+    pub fn new(
+        name: String,
+        anthropic_base_url: Option<String>,
+        openai_base_url: Option<String>,
+        auth: AuthHeader,
+        quirks: Quirks,
+        http: reqwest::Client,
+    ) -> Self {
+        Self {
+            name,
+            anthropic_base_url,
+            openai_base_url,
+            auth,
+            quirks,
+            http,
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for UpstreamProvider {
+    fn name(&self) -> &str {
+        self.name.as_str()
+    }
+
+    fn supported_formats(&self) -> FormatSupport {
+        FormatSupport {
+            anthropic: self
+                .anthropic_base_url
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+            openai: self
+                .openai_base_url
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
+        }
+    }
+
+    // parse_model / usage parsers / forward / forward_openai — Task 4.
+    fn parse_model(&self, body: &[u8]) -> Result<String, String> {
+        super::messages_protocol::parse_model(body)
+    }
+    fn usage_parser(&self) -> Box<dyn UsageParser> {
+        super::messages_protocol::usage_parser()
+    }
+    fn parse_usage_json(&self, body: &[u8]) -> Result<UsageRecord, String> {
+        super::messages_protocol::parse_usage_json(body)
+    }
+    fn usage_parser_openai(&self) -> Box<dyn UsageParser> {
+        super::messages_protocol::openai_usage_parser()
+    }
+    fn parse_usage_json_openai(&self, body: &[u8]) -> Result<UsageRecord, String> {
+        super::messages_protocol::parse_openai_usage_json(body)
+    }
+    async fn forward(
+        &self,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        let _ = (path, headers, body, streaming);
+        Err(ProxyError::BadRequest("not yet implemented".into()))
+    }
+    async fn forward_openai(
+        &self,
+        path: &str,
+        headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        let _ = (path, headers, body, streaming);
+        Err(ProxyError::BadRequest("not yet implemented".into()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,7 +186,12 @@ mod tests {
 
     #[test]
     fn preset_anthropic_carries_reasoning_effort() {
-        let q = quirks_for(ProviderKind::Anthropic, ThinkingMode::SplitOnly, Some("high".into()), false);
+        let q = quirks_for(
+            ProviderKind::Anthropic,
+            ThinkingMode::SplitOnly,
+            Some("high".into()),
+            false,
+        );
         assert_eq!(q.reasoning_effort.as_deref(), Some("high"));
     }
 
@@ -102,5 +201,39 @@ mod tests {
             let q = quirks_for(k, ThinkingMode::SplitOnly, None, false);
             assert!(!q.reasoning_split && !q.reorder_tool_responses && !q.sanitize_empty_tools);
         }
+    }
+
+    use super::super::messages_protocol::AuthHeader;
+    use crate::application::ports::{ApiFormat, Provider};
+
+    fn up(anthropic: Option<&str>, openai: Option<&str>) -> UpstreamProvider {
+        UpstreamProvider::new(
+            "p".into(),
+            anthropic.map(str::to_string),
+            openai.map(str::to_string),
+            AuthHeader::Passthrough,
+            Quirks::none(),
+            reqwest::Client::new(),
+        )
+    }
+
+    #[test]
+    fn supported_formats_reflect_configured_urls() {
+        let both = up(Some("https://a"), Some("https://o"));
+        assert!(both.supported_formats().has(ApiFormat::Anthropic));
+        assert!(both.supported_formats().has(ApiFormat::OpenAI));
+
+        let anth = up(Some("https://a"), None);
+        assert!(anth.supported_formats().has(ApiFormat::Anthropic));
+        assert!(!anth.supported_formats().has(ApiFormat::OpenAI));
+
+        let oai = up(None, Some("https://o"));
+        assert!(!oai.supported_formats().has(ApiFormat::Anthropic));
+        assert!(oai.supported_formats().has(ApiFormat::OpenAI));
+    }
+
+    #[test]
+    fn name_is_the_configured_name() {
+        assert_eq!(up(Some("https://a"), None).name(), "p");
     }
 }

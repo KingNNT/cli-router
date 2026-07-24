@@ -53,7 +53,7 @@ impl LiveProvider {
 // inside messages_protocol after routing has picked a leaf provider.
 #[async_trait]
 impl Provider for LiveProvider {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         // Static name — same Phase 1 limitation: per-request leaf provider
         // lives in the routing table, not visible from this trait.
         "router"

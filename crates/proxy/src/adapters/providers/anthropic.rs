@@ -120,7 +120,7 @@ fn inject_effort(body: &mut Bytes, default_effort: Option<&str>) {
 
 #[async_trait]
 impl Provider for AnthropicProvider {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "anthropic"
     }
 

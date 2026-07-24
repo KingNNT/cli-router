@@ -81,7 +81,7 @@ impl CodexProvider {
 
 #[async_trait]
 impl Provider for CodexProvider {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "codex"
     }
 

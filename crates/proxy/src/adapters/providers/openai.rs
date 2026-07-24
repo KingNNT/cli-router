@@ -51,7 +51,7 @@ impl OpenAiProvider {
 
 #[async_trait]
 impl Provider for OpenAiProvider {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "openai"
     }
 

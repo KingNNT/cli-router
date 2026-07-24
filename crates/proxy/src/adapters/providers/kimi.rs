@@ -83,7 +83,7 @@ impl KimiProvider {
 
 #[async_trait]
 impl Provider for KimiProvider {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "kimi"
     }
 

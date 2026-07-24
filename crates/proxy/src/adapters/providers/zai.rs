@@ -76,7 +76,7 @@ impl ZaiProvider {
 
 #[async_trait]
 impl Provider for ZaiProvider {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "zai"
     }
 

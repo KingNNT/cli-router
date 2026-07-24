@@ -84,7 +84,7 @@ impl FormatSupport {
 
 #[async_trait]
 pub trait Provider: Send + Sync {
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &str;
 
     /// Native API format this provider speaks. Used by the translation layer
     /// to decide whether to translate between Anthropic and OpenAI shapes.

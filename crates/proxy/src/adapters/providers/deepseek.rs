@@ -104,7 +104,7 @@ impl DeepSeekProvider {
 
 #[async_trait]
 impl Provider for DeepSeekProvider {
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "deepseek"
     }
 
