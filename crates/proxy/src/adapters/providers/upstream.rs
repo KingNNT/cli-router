@@ -92,6 +92,8 @@ pub struct UpstreamProvider {
     auth: AuthHeader,
     quirks: Quirks,
     format_mode: FormatMode,
+    thinking_anthropic: Option<super::thinking::ThinkingInjection>,
+    thinking_openai: Option<super::thinking::ThinkingInjection>,
     http: reqwest::Client,
 }
 
@@ -111,6 +113,8 @@ impl UpstreamProvider {
             auth,
             quirks,
             format_mode: FormatMode::Both,
+            thinking_anthropic: None,
+            thinking_openai: None,
             http,
         }
     }
@@ -122,12 +126,28 @@ impl UpstreamProvider {
         self
     }
 
+    /// Attach the provider's resolved thinking patch, one branch per wire
+    /// format. Each branch is applied only on requests actually sent in that
+    /// format, after `format_mode` and any translation have run.
+    pub fn with_thinking(
+        mut self,
+        anthropic: Option<super::thinking::ThinkingInjection>,
+        openai: Option<super::thinking::ThinkingInjection>,
+    ) -> Self {
+        self.thinking_anthropic = anthropic;
+        self.thinking_openai = openai;
+        self
+    }
+
     /// Apply Anthropic-format request quirks. Currently: inject a default
     /// reasoning effort into `output_config.effort` (Anthropic).
     fn apply_anthropic_request_quirks(&self, body: Bytes) -> Bytes {
         let mut body = body;
         if let Some(effort) = self.quirks.reasoning_effort.as_deref() {
             inject_effort(&mut body, Some(effort));
+        }
+        if let Some(injection) = &self.thinking_anthropic {
+            body = injection.apply(body);
         }
         body
     }
@@ -141,6 +161,9 @@ impl UpstreamProvider {
         }
         if self.quirks.strip_tool_choice {
             body = strip_tool_choice_if_unsupported(body);
+        }
+        if let Some(injection) = &self.thinking_openai {
+            body = injection.apply(body);
         }
         body
     }
@@ -637,5 +660,87 @@ mod tests {
         let (a, o) = default_urls(ProviderKind::DeepSeek);
         assert!(a.is_none());
         assert!(o.is_some());
+    }
+
+    #[test]
+    fn anthropic_path_merges_the_anthropic_thinking_branch() {
+        let p = UpstreamProvider::new(
+            "anthropic".to_string(),
+            Some("https://api.anthropic.com".to_string()),
+            None,
+            AuthHeader::Bearer("k".to_string()),
+            Quirks::none(),
+            reqwest::Client::new(),
+        )
+        .with_thinking(
+            Some(super::super::thinking::ThinkingInjection::new(
+                serde_json::json!({"output_config": {"effort": "high"}}),
+                true,
+            )),
+            None,
+        );
+        let out = p.apply_anthropic_request_quirks(Bytes::from(r#"{"model":"claude-opus-5"}"#));
+        let v: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["output_config"]["effort"], "high");
+    }
+
+    #[test]
+    fn openai_path_merges_the_openai_thinking_branch() {
+        let p = UpstreamProvider::new(
+            "deepseek".to_string(),
+            None,
+            Some("https://api.deepseek.com/v1".to_string()),
+            AuthHeader::Bearer("k".to_string()),
+            Quirks::none(),
+            reqwest::Client::new(),
+        )
+        .with_thinking(
+            None,
+            Some(super::super::thinking::ThinkingInjection::new(
+                serde_json::json!({"reasoning_effort": "max"}),
+                true,
+            )),
+        );
+        let out = p.apply_openai_request_quirks(Bytes::from(r#"{"model":"deepseek-v4-pro"}"#));
+        let v: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["reasoning_effort"], "max");
+    }
+
+    /// The two branches are independent: an Anthropic-only injection must not
+    /// leak into an OpenAI-format body.
+    #[test]
+    fn each_format_only_sees_its_own_branch() {
+        let p = UpstreamProvider::new(
+            "zai".to_string(),
+            Some("https://api.z.ai/api/anthropic".to_string()),
+            Some("https://api.z.ai/api/paas/v4".to_string()),
+            AuthHeader::Bearer("k".to_string()),
+            Quirks::none(),
+            reqwest::Client::new(),
+        )
+        .with_thinking(
+            Some(super::super::thinking::ThinkingInjection::new(
+                serde_json::json!({"anthropic_only": true}),
+                true,
+            )),
+            None,
+        );
+        let out = p.apply_openai_request_quirks(Bytes::from(r#"{"model":"glm-5.2"}"#));
+        let v: Value = serde_json::from_slice(&out).unwrap();
+        assert!(v.get("anthropic_only").is_none());
+    }
+
+    #[test]
+    fn no_injection_leaves_the_body_byte_identical() {
+        let p = UpstreamProvider::new(
+            "zai".to_string(),
+            Some("https://api.z.ai/api/anthropic".to_string()),
+            None,
+            AuthHeader::Bearer("k".to_string()),
+            Quirks::none(),
+            reqwest::Client::new(),
+        );
+        let body = Bytes::from(r#"{"model":"glm-5.2"}"#);
+        assert_eq!(p.apply_anthropic_request_quirks(body.clone()), body);
     }
 }
