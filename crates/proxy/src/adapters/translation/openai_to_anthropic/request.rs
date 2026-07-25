@@ -77,11 +77,16 @@ fn translate_tool_def(tool: &Value) -> Value {
     })
 }
 
+/// Anthropic accepts `tool_choice` only as an object (`{"type": "auto"}`,
+/// `{"type": "any"}`, `{"type": "none"}`, `{"type": "tool", "name": …}`).
+/// OpenAI spells the first three as bare strings, so every one of them has to
+/// be wrapped — forwarding the string reaches the upstream as
+/// `"tool_choice": "auto"` and is rejected outright.
 fn translate_tool_choice(tc: &Value) -> Value {
     match tc {
-        Value::String(s) if s == "auto" => json!("auto"),
-        Value::String(s) if s == "required" => json!("any"),
-        Value::String(s) if s == "none" => json!("none"),
+        Value::String(s) if s == "auto" => json!({"type": "auto"}),
+        Value::String(s) if s == "required" => json!({"type": "any"}),
+        Value::String(s) if s == "none" => json!({"type": "none"}),
         Value::Object(map) if map.get("type").and_then(|t| t.as_str()) == Some("function") => {
             let name = map
                 .get("function")
@@ -386,7 +391,32 @@ mod tests {
     fn tool_choice_required_becomes_any() {
         let body = br#"{"model":"x","messages":[],"tool_choice":"required"}"#;
         let out: Value = serde_json::from_slice(&translate(body).unwrap()).unwrap();
-        assert_eq!(out["tool_choice"], "any");
+        assert_eq!(out["tool_choice"], json!({"type": "any"}));
+    }
+
+    /// OpenAI spells `tool_choice` as a bare string; Anthropic only accepts an
+    /// object. Emitting the string reaches the upstream as `"tool_choice":
+    /// "auto"` and is rejected — MiniMax answers `400 invalid params`. The AI
+    /// SDK that opencode uses sends `"auto"` on every tool-bearing request, so
+    /// this is the common path, not an edge case.
+    #[test]
+    fn tool_choice_strings_become_anthropic_objects() {
+        for (openai, anthropic) in [
+            ("auto", json!({"type": "auto"})),
+            ("required", json!({"type": "any"})),
+            ("none", json!({"type": "none"})),
+        ] {
+            let body = format!(r#"{{"model":"x","messages":[],"tool_choice":"{openai}"}}"#);
+            let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+            assert_eq!(
+                out["tool_choice"], anthropic,
+                "OpenAI tool_choice {openai:?} must translate to an object"
+            );
+            assert!(
+                !out["tool_choice"].is_string(),
+                "a bare string is rejected by the Anthropic API"
+            );
+        }
     }
 
     #[test]

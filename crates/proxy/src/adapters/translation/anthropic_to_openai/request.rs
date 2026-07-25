@@ -211,14 +211,24 @@ fn strip_schema_keywords(mut v: Value) -> Value {
     v
 }
 
+/// The inverse of the OpenAI→Anthropic mapping: Anthropic always sends an
+/// object, OpenAI wants a bare string for everything except a named tool. The
+/// bare-string arms are tolerance for a client that already speaks OpenAI's
+/// spelling; Anthropic itself never sends them.
 fn translate_tool_choice(tc: &Value) -> Value {
     match tc {
         Value::String(s) if s == "auto" => json!("auto"),
         Value::String(s) if s == "any" => json!("required"),
         Value::String(s) if s == "none" => json!("none"),
-        Value::Object(map) if map.get("type").and_then(|t| t.as_str()) == Some("tool") => {
-            json!({"type": "function", "function": {"name": map.get("name").cloned().unwrap_or(Value::Null)}})
-        }
+        Value::Object(map) => match map.get("type").and_then(|t| t.as_str()) {
+            Some("auto") => json!("auto"),
+            Some("any") => json!("required"),
+            Some("none") => json!("none"),
+            Some("tool") => {
+                json!({"type": "function", "function": {"name": map.get("name").cloned().unwrap_or(Value::Null)}})
+            }
+            _ => tc.clone(),
+        },
         other => other.clone(),
     }
 }
@@ -684,6 +694,29 @@ mod tests {
         let body = br#"{"model":"x","max_tokens":10,"messages":[],"tool_choice":"any"}"#;
         let out: Value = serde_json::from_slice(&translate(body).unwrap()).unwrap();
         assert_eq!(out["tool_choice"], "required");
+    }
+
+    /// Anthropic sends `tool_choice` as an object; OpenAI expects a bare
+    /// string for the three non-named choices. Passing the object through
+    /// unchanged is off-spec — it only survives today because some upstreams
+    /// happen to tolerate it.
+    #[test]
+    fn tool_choice_objects_become_openai_strings() {
+        for (anthropic, openai) in [
+            (r#"{"type":"auto"}"#, "auto"),
+            (r#"{"type":"any"}"#, "required"),
+            (r#"{"type":"none"}"#, "none"),
+        ] {
+            let body = format!(
+                r#"{{"model":"x","max_tokens":10,"messages":[],"tool_choice":{anthropic}}}"#
+            );
+            let out: Value = serde_json::from_slice(&translate(body.as_bytes()).unwrap()).unwrap();
+            assert_eq!(
+                out["tool_choice"],
+                json!(openai),
+                "Anthropic tool_choice {anthropic} must translate to {openai:?}"
+            );
+        }
     }
 
     #[test]
