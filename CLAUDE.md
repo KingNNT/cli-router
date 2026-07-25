@@ -55,7 +55,7 @@ mise run dev:seed-requests # insert mock requests into dev DB
 mise run prod:apps:install         # install proxy, proxy-tui, and analysis
 mise run prod:apps:install-proxy   # install proxy binary (restarts service if loaded)
 mise run prod:apps:uninstall       # uninstall all binaries
-mise run prod:deploy               # install all binaries and register launchd service
+mise run prod:deploy               # uninstall service + binaries, then reinstall all and register launchd service
 
 # Service (macOS)
 mise run prod:service:install   # build proxy, install, and run as LaunchAgent

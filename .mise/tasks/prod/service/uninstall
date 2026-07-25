@@ -11,6 +11,17 @@ SERVICE_TARGET="$SERVICE_DOMAIN/$SERVICE_LABEL"
 
 if [ -f "$SERVICE_PLIST" ]; then
     launchctl bootout "$SERVICE_TARGET" 2>/dev/null || true
+
+    # bootout can return before launchd has reaped the process; wait so a
+    # follow-up bootstrap (prod:deploy) doesn't hit AddrInUse on the same port.
+    for _ in $(seq 1 50); do
+        launchctl print "$SERVICE_TARGET" >/dev/null 2>&1 || break
+        sleep 0.1
+    done
+    if launchctl print "$SERVICE_TARGET" >/dev/null 2>&1; then
+        echo "warning: $SERVICE_TARGET still loaded after 5s" >&2
+    fi
+
     rm -f "$SERVICE_PLIST"
     echo "service uninstalled"
 else
