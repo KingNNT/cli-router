@@ -1,8 +1,25 @@
 #!/usr/bin/env bash
-#MISE description="Ship to production: install all binaries and register the proxy service"
+#MISE description="Ship to production: tear down the old service + binaries, then install fresh"
 #MISE alias="prod"
-#MISE depends=["prod:apps:install-proxy-tui", "prod:apps:install-analysis", "prod:service:install"]
 
 set -euo pipefail
+
+# Steps run sequentially on purpose — `depends` would let mise interleave them,
+# and the teardown has to finish before anything is reinstalled.
+
+echo "==> [1/4] removing existing service"
+mise run prod:service:uninstall
+
+echo "==> [2/4] uninstalling existing binaries"
+mise run prod:apps:uninstall
+
+echo "==> [3/4] installing proxy-tui + analysis"
+mise run prod:apps:install-proxy-tui
+mise run prod:apps:install-analysis
+
+# service:install builds + installs the proxy binary itself, then registers the
+# LaunchAgent — so proxy is deliberately absent from step 3.
+echo "==> [4/4] installing proxy + registering service"
+mise run prod:service:install
 
 echo "Production deployment complete."
