@@ -41,8 +41,13 @@ pub struct ProviderConfig {
     /// Which of the configured endpoints the proxy may use. See [`FormatMode`].
     #[serde(default)]
     pub format_mode: FormatMode,
+    /// How hard this provider's upstream should think. See [`ThinkingLevel`].
     #[serde(default)]
-    pub reasoning_effort: Option<String>,
+    pub thinking_level: ThinkingLevel,
+    /// When true the level overrides whatever the client sent; when false it
+    /// only fills in what the client omitted.
+    #[serde(default)]
+    pub thinking_force: bool,
     #[serde(default)]
     pub thinking_mode: ThinkingMode,
     /// Max concurrent in-flight requests to this provider. `None` falls back to
@@ -96,6 +101,64 @@ pub enum FormatMode {
     /// Always talk OpenAI upstream; translate Anthropic clients.
     #[serde(alias = "openai")]
     OpenAi,
+}
+
+/// How hard the upstream model should think, chosen per provider from the
+/// closed list its API actually supports (see
+/// `adapters::providers::thinking::thinking_levels`).
+///
+/// `Unset` means the proxy sends nothing and the upstream default applies.
+/// The variants are a union across providers — no single provider offers all
+/// of them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingLevel {
+    #[default]
+    Unset,
+    Off,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    #[serde(rename = "xhigh")]
+    XHigh,
+    Max,
+    Adaptive,
+}
+
+impl ThinkingLevel {
+    /// Wire and storage spelling. Also the value shown in the TUI and accepted
+    /// by the admin API.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ThinkingLevel::Unset => "unset",
+            ThinkingLevel::Off => "off",
+            ThinkingLevel::Minimal => "minimal",
+            ThinkingLevel::Low => "low",
+            ThinkingLevel::Medium => "medium",
+            ThinkingLevel::High => "high",
+            ThinkingLevel::XHigh => "xhigh",
+            ThinkingLevel::Max => "max",
+            ThinkingLevel::Adaptive => "adaptive",
+        }
+    }
+
+    /// Parse a stored or wire value. Unknown input yields `None` so callers can
+    /// reject it rather than silently defaulting.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "unset" | "" => Some(ThinkingLevel::Unset),
+            "off" => Some(ThinkingLevel::Off),
+            "minimal" => Some(ThinkingLevel::Minimal),
+            "low" => Some(ThinkingLevel::Low),
+            "medium" => Some(ThinkingLevel::Medium),
+            "high" => Some(ThinkingLevel::High),
+            "xhigh" => Some(ThinkingLevel::XHigh),
+            "max" => Some(ThinkingLevel::Max),
+            "adaptive" => Some(ThinkingLevel::Adaptive),
+            _ => None,
+        }
+    }
 }
 
 /// Controls how MiniMax thinking/reasoning content is stripped from responses.
@@ -489,13 +552,6 @@ mod tests {
     }
 
     #[test]
-    fn provider_config_deserializes_reasoning_effort() {
-        let json = r#"{"name":"codex-main","kind":"codex","reasoning_effort":"high"}"#;
-        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(provider.reasoning_effort.as_deref(), Some("high"));
-    }
-
-    #[test]
     fn provider_config_defaults_thinking_mode_to_split_only() {
         let json = r#"{"name":"minimax","kind":"minimax"}"#;
         let provider: ProviderConfig = serde_json::from_str(json).unwrap();
@@ -537,12 +593,13 @@ mod tests {
             proxy_db: PathBuf::new(),
             pricing_db: PathBuf::new(),
             providers: vec![ProviderConfig {
+                thinking_level: ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "disabled".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
@@ -575,12 +632,13 @@ mod tests {
             pricing_db: PathBuf::new(),
             providers: vec![
                 ProviderConfig {
+                    thinking_level: ThinkingLevel::Unset,
+                    thinking_force: false,
                     name: "main".into(),
                     kind: ProviderKind::Anthropic,
                     auth: AuthConfig::Passthrough,
                     anthropic_base_url: None,
                     openai_base_url: None,
-                    reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
@@ -588,12 +646,13 @@ mod tests {
                     enabled: true,
                 },
                 ProviderConfig {
+                    thinking_level: ThinkingLevel::Unset,
+                    thinking_force: false,
                     name: "fallback".into(),
                     kind: ProviderKind::Zai,
                     auth: AuthConfig::Passthrough,
                     anthropic_base_url: None,
                     openai_base_url: None,
-                    reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
@@ -641,12 +700,13 @@ mod tests {
             proxy_db: PathBuf::new(),
             pricing_db: PathBuf::new(),
             providers: vec![ProviderConfig {
+                thinking_level: ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "anthropic".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
@@ -677,12 +737,13 @@ mod tests {
             pricing_db: PathBuf::new(),
             providers: vec![
                 ProviderConfig {
+                    thinking_level: ThinkingLevel::Unset,
+                    thinking_force: false,
                     name: "x".into(),
                     kind: ProviderKind::Anthropic,
                     auth: AuthConfig::Passthrough,
                     anthropic_base_url: None,
                     openai_base_url: None,
-                    reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
@@ -690,12 +751,13 @@ mod tests {
                     enabled: true,
                 },
                 ProviderConfig {
+                    thinking_level: ThinkingLevel::Unset,
+                    thinking_force: false,
                     name: "x".into(),
                     kind: ProviderKind::Zai,
                     auth: AuthConfig::Passthrough,
                     anthropic_base_url: None,
                     openai_base_url: None,
-                    reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
@@ -725,12 +787,13 @@ mod tests {
             proxy_db: PathBuf::new(),
             pricing_db: PathBuf::new(),
             providers: vec![ProviderConfig {
+                thinking_level: ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "anthropic".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,

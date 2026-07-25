@@ -368,158 +368,104 @@ impl ProviderKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReasoningEffortInput {
+/// Cycle widget for the per-provider thinking level. The offered list is
+/// scoped to the provider kind, mirroring
+/// `proxy::adapters::providers::thinking::thinking_levels` — the TUI cannot
+/// depend on the proxy crate, so the table is duplicated here the way the
+/// effort lists were before it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ThinkingLevelInput {
+    #[default]
     Unset,
-    None,
+    Off,
     Minimal,
     Low,
     Medium,
     High,
     XHigh,
     Max,
+    Adaptive,
 }
 
-impl ReasoningEffortInput {
+impl ThinkingLevelInput {
     pub fn label(self) -> &'static str {
         match self {
-            ReasoningEffortInput::Unset => "unset",
-            ReasoningEffortInput::None => "none",
-            ReasoningEffortInput::Minimal => "minimal",
-            ReasoningEffortInput::Low => "low",
-            ReasoningEffortInput::Medium => "medium",
-            ReasoningEffortInput::High => "high",
-            ReasoningEffortInput::XHigh => "xhigh",
-            ReasoningEffortInput::Max => "max",
+            ThinkingLevelInput::Unset => "unset",
+            ThinkingLevelInput::Off => "off",
+            ThinkingLevelInput::Minimal => "minimal",
+            ThinkingLevelInput::Low => "low",
+            ThinkingLevelInput::Medium => "medium",
+            ThinkingLevelInput::High => "high",
+            ThinkingLevelInput::XHigh => "xhigh",
+            ThinkingLevelInput::Max => "max",
+            ThinkingLevelInput::Adaptive => "adaptive",
         }
     }
 
+    /// `None` for `Unset` so the payload omits the field entirely.
     pub fn as_option(self) -> Option<&'static str> {
         match self {
-            ReasoningEffortInput::Unset => None,
-            ReasoningEffortInput::None => Some("none"),
-            ReasoningEffortInput::Minimal => Some("minimal"),
-            ReasoningEffortInput::Low => Some("low"),
-            ReasoningEffortInput::Medium => Some("medium"),
-            ReasoningEffortInput::High => Some("high"),
-            ReasoningEffortInput::XHigh => Some("xhigh"),
-            ReasoningEffortInput::Max => Some("max"),
+            ThinkingLevelInput::Unset => None,
+            other => Some(other.label()),
         }
     }
 
     pub fn from_option(value: Option<&str>) -> Self {
         match value {
-            Some("none") => ReasoningEffortInput::None,
-            Some("minimal") => ReasoningEffortInput::Minimal,
-            Some("low") => ReasoningEffortInput::Low,
-            Some("medium") => ReasoningEffortInput::Medium,
-            Some("high") => ReasoningEffortInput::High,
-            Some("xhigh") => ReasoningEffortInput::XHigh,
-            Some("max") => ReasoningEffortInput::Max,
-            _ => ReasoningEffortInput::Unset,
+            Some("off") => ThinkingLevelInput::Off,
+            Some("minimal") => ThinkingLevelInput::Minimal,
+            Some("low") => ThinkingLevelInput::Low,
+            Some("medium") => ThinkingLevelInput::Medium,
+            Some("high") => ThinkingLevelInput::High,
+            Some("xhigh") => ThinkingLevelInput::XHigh,
+            Some("max") => ThinkingLevelInput::Max,
+            Some("adaptive") => ThinkingLevelInput::Adaptive,
+            _ => ThinkingLevelInput::Unset,
         }
     }
 
-    /// Whether this effort value is valid for the given provider kind.
-    pub fn is_valid_for(self, provider_kind: ProviderKind) -> bool {
-        match provider_kind {
-            ProviderKind::Codex => matches!(
-                self,
-                ReasoningEffortInput::None
-                    | ReasoningEffortInput::Minimal
-                    | ReasoningEffortInput::Low
-                    | ReasoningEffortInput::Medium
-                    | ReasoningEffortInput::High
-                    | ReasoningEffortInput::XHigh
-            ),
-            ProviderKind::Anthropic => matches!(
-                self,
-                ReasoningEffortInput::Low
-                    | ReasoningEffortInput::Medium
-                    | ReasoningEffortInput::High
-                    | ReasoningEffortInput::XHigh
-                    | ReasoningEffortInput::Max
-            ),
-            _ => false,
+    pub fn levels_for(kind: ProviderKind) -> &'static [ThinkingLevelInput] {
+        use ThinkingLevelInput::*;
+        match kind {
+            ProviderKind::Anthropic => &[Off, Low, Medium, High, XHigh, Max],
+            ProviderKind::Codex | ProviderKind::OpenAi => &[Off, Minimal, Low, Medium, High, XHigh],
+            ProviderKind::Zai => &[Off, High, Max],
+            ProviderKind::DeepSeek => &[High, Max],
+            ProviderKind::Kimi => &[Low, High, Max],
+            ProviderKind::Minimax => &[Off, Adaptive],
         }
     }
 
-    /// Effort levels for each provider (Unset is handled separately).
-    const CODEX_EFFORTS: &[ReasoningEffortInput] = &[
-        ReasoningEffortInput::None,
-        ReasoningEffortInput::Minimal,
-        ReasoningEffortInput::Low,
-        ReasoningEffortInput::Medium,
-        ReasoningEffortInput::High,
-        ReasoningEffortInput::XHigh,
-    ];
-
-    const ANTHROPIC_EFFORTS: &[ReasoningEffortInput] = &[
-        ReasoningEffortInput::Low,
-        ReasoningEffortInput::Medium,
-        ReasoningEffortInput::High,
-        ReasoningEffortInput::XHigh,
-        ReasoningEffortInput::Max,
-    ];
-
-    /// Return the effort list for a provider kind.
-    fn efforts_for(provider_kind: ProviderKind) -> &'static [ReasoningEffortInput] {
-        match provider_kind {
-            ProviderKind::Codex => Self::CODEX_EFFORTS,
-            ProviderKind::Anthropic => Self::ANTHROPIC_EFFORTS,
-            _ => &[],
-        }
-    }
-
-    /// Cycle to the next valid effort for the given provider.
-    /// Unset always goes to the first valid effort; values outside the
-    /// provider's set are clamped back to the first valid effort.
-    pub fn cycle_next_for(self, provider_kind: ProviderKind) -> Self {
-        let efforts = Self::efforts_for(provider_kind);
-        if efforts.is_empty() {
-            return ReasoningEffortInput::Unset;
-        }
-        match self {
-            ReasoningEffortInput::Unset => efforts[0],
-            current => {
-                if let Some(idx) = efforts.iter().position(|&e| e == current) {
-                    efforts[(idx + 1) % efforts.len()]
-                } else {
-                    efforts[0]
-                }
-            }
-        }
-    }
-
-    pub fn cycle_prev_for(self, provider_kind: ProviderKind) -> Self {
-        let efforts = Self::efforts_for(provider_kind);
-        if efforts.is_empty() {
-            return ReasoningEffortInput::Unset;
-        }
-        match self {
-            ReasoningEffortInput::Unset => efforts[efforts.len() - 1],
-            current => {
-                if let Some(idx) = efforts.iter().position(|&e| e == current) {
-                    efforts[(idx + efforts.len() - 1) % efforts.len()]
-                } else {
-                    efforts[efforts.len() - 1]
-                }
-            }
-        }
-    }
-
-    /// Clamp the current value to a valid one for the given provider.
-    /// If the value is not valid for this provider, returns Unset.
-    pub fn clamp_for(self, provider_kind: ProviderKind) -> Self {
-        if self == ReasoningEffortInput::Unset || self.is_valid_for(provider_kind) {
+    /// Reset to `Unset` when the level isn't offered by `kind`, so changing the
+    /// provider kind can't leave a value the admin API will reject.
+    pub fn clamp_to(self, kind: ProviderKind) -> Self {
+        if self == ThinkingLevelInput::Unset || Self::levels_for(kind).contains(&self) {
             self
         } else {
-            ReasoningEffortInput::Unset
+            ThinkingLevelInput::Unset
+        }
+    }
+
+    pub fn cycle_next_for(self, kind: ProviderKind) -> Self {
+        let levels = Self::levels_for(kind);
+        match levels.iter().position(|l| *l == self) {
+            None => levels[0],
+            Some(i) if i + 1 == levels.len() => ThinkingLevelInput::Unset,
+            Some(i) => levels[i + 1],
+        }
+    }
+
+    pub fn cycle_prev_for(self, kind: ProviderKind) -> Self {
+        let levels = Self::levels_for(kind);
+        match levels.iter().position(|l| *l == self) {
+            None => levels[levels.len() - 1],
+            Some(0) => ThinkingLevelInput::Unset,
+            Some(i) => levels[i - 1],
         }
     }
 }
 
-/// Cycle widget state for MiniMax thinking_mode. Mirrors ReasoningEffortInput.
+/// Cycle widget state for MiniMax thinking_mode. Mirrors ThinkingLevelInput.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThinkingModeInput {
     #[default]
@@ -630,7 +576,8 @@ pub enum FormField {
     AnthropicBaseUrl,
     OpenaiBaseUrl,
     FormatMode,
-    ReasoningEffort,
+    ThinkingLevel,
+    ThinkingForce,
     ThinkingMode,
     SanitizeEmptyTools,
     AuthKind,
@@ -640,21 +587,35 @@ pub enum FormField {
 }
 
 impl FormField {
-    pub fn next(self, auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Self {
-        let order = field_order(auth_kind, provider_kind);
+    pub fn next(
+        self,
+        auth_kind: AuthInputKind,
+        provider_kind: ProviderKind,
+        thinking_level: ThinkingLevelInput,
+    ) -> Self {
+        let order = field_order(auth_kind, provider_kind, thinking_level);
         let idx = order.iter().position(|f| *f == self).unwrap_or(0);
         order[(idx + 1) % order.len()]
     }
-    pub fn prev(self, auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Self {
-        let order = field_order(auth_kind, provider_kind);
+    pub fn prev(
+        self,
+        auth_kind: AuthInputKind,
+        provider_kind: ProviderKind,
+        thinking_level: ThinkingLevelInput,
+    ) -> Self {
+        let order = field_order(auth_kind, provider_kind, thinking_level);
         let idx = order.iter().position(|f| *f == self).unwrap_or(0);
         order[(idx + order.len() - 1) % order.len()]
     }
 }
 
 /// Field traversal order. AuthValue is omitted when the auth kind doesn't
-/// need a typed value.
-fn field_order(auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Vec<FormField> {
+/// need a typed value. ThinkingForce is offered only once a level is set.
+fn field_order(
+    auth_kind: AuthInputKind,
+    provider_kind: ProviderKind,
+    thinking_level: ThinkingLevelInput,
+) -> Vec<FormField> {
     let mut order = vec![
         FormField::Name,
         FormField::Kind,
@@ -666,8 +627,9 @@ fn field_order(auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Vec<For
     if provider_kind != ProviderKind::Codex {
         order.push(FormField::FormatMode);
     }
-    if matches!(provider_kind, ProviderKind::Codex | ProviderKind::Anthropic) {
-        order.push(FormField::ReasoningEffort);
+    order.push(FormField::ThinkingLevel);
+    if thinking_level != ThinkingLevelInput::Unset {
+        order.push(FormField::ThinkingForce);
     }
     if provider_kind == ProviderKind::Minimax {
         order.push(FormField::ThinkingMode);
@@ -715,7 +677,8 @@ pub struct ProviderFormModal {
     pub anthropic_base_url: String,
     pub openai_base_url: String,
     pub format_mode: FormatModeInput,
-    pub reasoning_effort: ReasoningEffortInput,
+    pub thinking_level: ThinkingLevelInput,
+    pub thinking_force: bool,
     pub thinking_mode: ThinkingModeInput,
     pub sanitize_empty_tools: bool,
     /// Whether this provider is active and eligible for routing.
@@ -741,7 +704,8 @@ impl ProviderFormModal {
             anthropic_base_url: String::new(),
             openai_base_url: String::new(),
             format_mode: FormatModeInput::Both,
-            reasoning_effort: ReasoningEffortInput::Unset,
+            thinking_level: ThinkingLevelInput::Unset,
+            thinking_force: false,
             thinking_mode: ThinkingModeInput::Unset,
             sanitize_empty_tools: false,
             enabled: true,
@@ -769,7 +733,8 @@ impl ProviderFormModal {
             kind: ProviderKind::from_str_or_default(&p.kind),
             anthropic_base_url: p.anthropic_base_url.clone().unwrap_or_default(),
             openai_base_url: p.openai_base_url.clone().unwrap_or_default(),
-            reasoning_effort: ReasoningEffortInput::from_option(p.reasoning_effort.as_deref()),
+            thinking_level: ThinkingLevelInput::from_option(p.thinking_level.as_deref()),
+            thinking_force: p.thinking_force.unwrap_or(false),
             format_mode: FormatModeInput::from_option(p.format_mode.as_deref()),
             thinking_mode: ThinkingModeInput::from_option(p.thinking_mode.as_deref()),
             sanitize_empty_tools: p.sanitize_empty_tools.unwrap_or(false),
@@ -1148,7 +1113,11 @@ mod form_field_tests {
     fn next_wraps_past_save_back_to_name() {
         let f = FormField::Save;
         assert_eq!(
-            f.next(AuthInputKind::ApiKey, ProviderKind::Anthropic),
+            f.next(
+                AuthInputKind::ApiKey,
+                ProviderKind::Anthropic,
+                ThinkingLevelInput::Unset
+            ),
             FormField::Name
         );
     }
@@ -1157,7 +1126,11 @@ mod form_field_tests {
     fn prev_wraps_from_name_to_save() {
         let f = FormField::Name;
         assert_eq!(
-            f.prev(AuthInputKind::ApiKey, ProviderKind::Anthropic),
+            f.prev(
+                AuthInputKind::ApiKey,
+                ProviderKind::Anthropic,
+                ThinkingLevelInput::Unset
+            ),
             FormField::Save
         );
     }
@@ -1166,14 +1139,22 @@ mod form_field_tests {
     fn passthrough_skips_auth_value_field() {
         let f = FormField::AuthKind;
         assert_eq!(
-            f.next(AuthInputKind::Passthrough, ProviderKind::Anthropic),
+            f.next(
+                AuthInputKind::Passthrough,
+                ProviderKind::Anthropic,
+                ThinkingLevelInput::Unset
+            ),
             FormField::Enabled
         );
     }
 
     #[test]
     fn field_order_includes_enabled() {
-        let order = field_order(AuthInputKind::Passthrough, ProviderKind::Anthropic);
+        let order = field_order(
+            AuthInputKind::Passthrough,
+            ProviderKind::Anthropic,
+            ThinkingLevelInput::Unset,
+        );
         assert!(order.contains(&FormField::Enabled));
         assert_eq!(order.last().copied(), Some(FormField::Save));
     }
@@ -1182,17 +1163,25 @@ mod form_field_tests {
     fn api_key_includes_auth_value_field() {
         let f = FormField::AuthKind;
         assert_eq!(
-            f.next(AuthInputKind::ApiKey, ProviderKind::Anthropic),
+            f.next(
+                AuthInputKind::ApiKey,
+                ProviderKind::Anthropic,
+                ThinkingLevelInput::Unset
+            ),
             FormField::AuthValue
         );
     }
 
     #[test]
-    fn codex_includes_reasoning_effort_field() {
+    fn codex_includes_thinking_level_field() {
         let f = FormField::OpenaiBaseUrl;
         assert_eq!(
-            f.next(AuthInputKind::Passthrough, ProviderKind::Codex),
-            FormField::ReasoningEffort
+            f.next(
+                AuthInputKind::Passthrough,
+                ProviderKind::Codex,
+                ThinkingLevelInput::Unset
+            ),
+            FormField::ThinkingLevel
         );
     }
 
@@ -1200,13 +1189,99 @@ mod form_field_tests {
     fn format_mode_field_offered_for_upstream_kinds_and_hidden_for_codex() {
         let f = FormField::OpenaiBaseUrl;
         assert_eq!(
-            f.next(AuthInputKind::Passthrough, ProviderKind::Minimax),
+            f.next(
+                AuthInputKind::Passthrough,
+                ProviderKind::Minimax,
+                ThinkingLevelInput::Unset
+            ),
             FormField::FormatMode
         );
         assert_eq!(
-            f.next(AuthInputKind::Passthrough, ProviderKind::Codex),
-            FormField::ReasoningEffort
+            f.next(
+                AuthInputKind::Passthrough,
+                ProviderKind::Codex,
+                ThinkingLevelInput::Unset
+            ),
+            FormField::ThinkingLevel
         );
+    }
+
+    #[test]
+    fn thinking_levels_are_scoped_to_the_provider_kind() {
+        use super::ThinkingLevelInput;
+        assert_eq!(
+            ThinkingLevelInput::levels_for(ProviderKind::DeepSeek),
+            &[ThinkingLevelInput::High, ThinkingLevelInput::Max]
+        );
+        assert_eq!(
+            ThinkingLevelInput::levels_for(ProviderKind::Minimax),
+            &[ThinkingLevelInput::Off, ThinkingLevelInput::Adaptive]
+        );
+    }
+
+    #[test]
+    fn cycling_wraps_within_the_kind_list_and_includes_unset() {
+        use super::ThinkingLevelInput;
+        // unset → first offered → ... → last offered → unset
+        let k = ProviderKind::DeepSeek;
+        assert_eq!(
+            ThinkingLevelInput::Unset.cycle_next_for(k),
+            ThinkingLevelInput::High
+        );
+        assert_eq!(
+            ThinkingLevelInput::Max.cycle_next_for(k),
+            ThinkingLevelInput::Unset
+        );
+        assert_eq!(
+            ThinkingLevelInput::Unset.cycle_prev_for(k),
+            ThinkingLevelInput::Max
+        );
+    }
+
+    /// A level that is invalid for the newly chosen kind must not survive a
+    /// kind change, or the form would submit something the API rejects.
+    #[test]
+    fn a_level_invalid_for_the_new_kind_falls_back_to_unset() {
+        use super::ThinkingLevelInput;
+        assert_eq!(
+            ThinkingLevelInput::Adaptive.clamp_to(ProviderKind::DeepSeek),
+            ThinkingLevelInput::Unset
+        );
+        assert_eq!(
+            ThinkingLevelInput::High.clamp_to(ProviderKind::DeepSeek),
+            ThinkingLevelInput::High
+        );
+    }
+
+    #[test]
+    fn thinking_level_round_trips_through_payload_strings() {
+        use super::ThinkingLevelInput;
+        for level in [
+            ThinkingLevelInput::Unset,
+            ThinkingLevelInput::Off,
+            ThinkingLevelInput::High,
+            ThinkingLevelInput::XHigh,
+            ThinkingLevelInput::Adaptive,
+        ] {
+            assert_eq!(ThinkingLevelInput::from_option(level.as_option()), level);
+        }
+    }
+
+    #[test]
+    fn force_row_is_offered_only_when_a_level_is_set() {
+        let order = field_order(
+            AuthInputKind::Bearer,
+            ProviderKind::DeepSeek,
+            ThinkingLevelInput::Unset,
+        );
+        assert!(!order.contains(&FormField::ThinkingForce));
+
+        let order = field_order(
+            AuthInputKind::Bearer,
+            ProviderKind::DeepSeek,
+            ThinkingLevelInput::High,
+        );
+        assert!(order.contains(&FormField::ThinkingForce));
     }
 
     #[test]
@@ -1281,10 +1356,14 @@ mod form_field_tests {
 
     #[test]
     fn minimax_includes_thinking_mode_field() {
-        use super::{AuthInputKind, FormField, ProviderKind, field_order};
-        let order = field_order(AuthInputKind::Passthrough, ProviderKind::Minimax);
+        use super::{AuthInputKind, FormField, ProviderKind, ThinkingLevelInput, field_order};
+        let order = field_order(
+            AuthInputKind::Passthrough,
+            ProviderKind::Minimax,
+            ThinkingLevelInput::Unset,
+        );
         assert!(order.contains(&FormField::ThinkingMode));
-        assert!(!order.contains(&FormField::ReasoningEffort));
+        assert!(order.contains(&FormField::ThinkingLevel));
     }
 
     #[test]
@@ -1347,15 +1426,23 @@ mod form_field_tests {
 
     #[test]
     fn kimi_includes_sanitize_empty_tools_field() {
-        use super::{AuthInputKind, FormField, ProviderKind, field_order};
-        let order = field_order(AuthInputKind::Passthrough, ProviderKind::Kimi);
+        use super::{AuthInputKind, FormField, ProviderKind, ThinkingLevelInput, field_order};
+        let order = field_order(
+            AuthInputKind::Passthrough,
+            ProviderKind::Kimi,
+            ThinkingLevelInput::Unset,
+        );
         assert!(order.contains(&FormField::SanitizeEmptyTools));
     }
 
     #[test]
     fn non_kimi_excludes_sanitize_empty_tools_field() {
-        use super::{AuthInputKind, FormField, ProviderKind, field_order};
-        let order = field_order(AuthInputKind::Passthrough, ProviderKind::Zai);
+        use super::{AuthInputKind, FormField, ProviderKind, ThinkingLevelInput, field_order};
+        let order = field_order(
+            AuthInputKind::Passthrough,
+            ProviderKind::Zai,
+            ThinkingLevelInput::Unset,
+        );
         assert!(!order.contains(&FormField::SanitizeEmptyTools));
     }
 

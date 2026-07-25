@@ -701,7 +701,8 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                 auth: auth_to_payload(&p.auth),
                 anthropic_base_url: p.anthropic_base_url.clone(),
                 openai_base_url: p.openai_base_url.clone(),
-                reasoning_effort: p.reasoning_effort.clone(),
+                thinking_level: Some(p.thinking_level.as_str().to_string()),
+                thinking_force: Some(p.thinking_force),
                 thinking_mode: Some(match p.thinking_mode {
                     crate::config::ThinkingMode::SplitOnly => "split_only".to_string(),
                     crate::config::ThinkingMode::StripAll => "strip_all".to_string(),
@@ -760,25 +761,29 @@ fn payload_to_config(
         .into_iter()
         .map(|pp| {
             let kind = str_to_kind(&pp.kind)?;
-            let reasoning_effort = match pp.reasoning_effort.as_deref().map(str::trim) {
-                None | Some("") => None,
-                Some(v) => {
-                    let valid = match &kind {
-                        ProviderKind::Codex => {
-                            matches!(v, "none" | "minimal" | "low" | "medium" | "high" | "xhigh")
+            let thinking_level = match pp.thinking_level.as_deref().map(str::trim) {
+                None | Some("") => crate::config::ThinkingLevel::Unset,
+                Some(raw) => {
+                    let parsed = crate::config::ThinkingLevel::parse(raw);
+                    let offered = crate::adapters::providers::thinking::thinking_levels(kind);
+                    match parsed {
+                        Some(crate::config::ThinkingLevel::Unset) => {
+                            crate::config::ThinkingLevel::Unset
                         }
-                        ProviderKind::Anthropic => {
-                            matches!(v, "low" | "medium" | "high" | "xhigh" | "max")
+                        Some(level) if offered.contains(&level) => level,
+                        _ => {
+                            let valid = offered
+                                .iter()
+                                .map(|l| l.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            return Err(ProxyError::BadRequest(format!(
+                                "invalid thinking_level '{raw}' for provider '{}' (valid for kind '{}': unset, {valid})",
+                                pp.name,
+                                kind_to_str(kind),
+                            )));
                         }
-                        _ => false,
-                    };
-                    if !valid {
-                        return Err(ProxyError::BadRequest(format!(
-                            "invalid reasoning_effort '{v}' for provider '{}' (reasoning_effort is only supported for codex and anthropic providers)",
-                            pp.name
-                        )));
                     }
-                    Some(v.to_string())
                 }
             };
             let thinking_mode = match pp.thinking_mode.as_deref().map(str::trim) {
@@ -808,9 +813,16 @@ fn payload_to_config(
                 auth: payload_to_auth(pp.auth),
                 anthropic_base_url: pp.anthropic_base_url,
                 openai_base_url: pp.openai_base_url,
-                reasoning_effort,
                 thinking_mode,
                 format_mode,
+                // A stale `thinking_force: true` persisted alongside an
+                // `Unset` level would stay invisible (the TUI hides the Force
+                // row when there's no level) until the level was later set,
+                // at which point it would silently reactivate. Force it to
+                // `false` here so `Unset` always means "no override, ever".
+                thinking_force: thinking_level != crate::config::ThinkingLevel::Unset
+                    && pp.thinking_force.unwrap_or(false),
+                thinking_level,
                 max_concurrent: pp.max_concurrent,
                 sanitize_empty_tools: pp.sanitize_empty_tools.unwrap_or(false),
                 enabled: pp.enabled,
@@ -1259,6 +1271,8 @@ mod tests {
             proxy_db: PathBuf::from("/tmp/proxy.db"),
             pricing_db: PathBuf::from("/tmp/pricing.db"),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "anthropic".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::ApiKey {
@@ -1266,7 +1280,6 @@ mod tests {
                 },
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
@@ -1295,84 +1308,138 @@ mod tests {
         assert_eq!(payload.routing[0].provider, "anthropic");
     }
 
-    #[test]
-    fn config_payload_preserves_reasoning_effort() {
-        let cfg = Config {
+    fn config_with_thinking(
+        kind: ProviderKind,
+        level: crate::config::ThinkingLevel,
+        force: bool,
+    ) -> Config {
+        Config {
             port: 8787,
             proxy_db: PathBuf::from("/tmp/proxy.db"),
             pricing_db: PathBuf::from("/tmp/pricing.db"),
             providers: vec![ProviderConfig {
-                name: "codex-main".into(),
-                kind: ProviderKind::Codex,
-                auth: AuthConfig::CodexAuto,
+                name: "p".into(),
+                kind,
+                auth: AuthConfig::Bearer { value: "k".into() },
                 anthropic_base_url: None,
-                openai_base_url: None,
-                reasoning_effort: Some("high".into()),
-                thinking_mode: crate::config::ThinkingMode::SplitOnly,
+                openai_base_url: Some("https://example.invalid".into()),
                 format_mode: crate::config::FormatMode::Both,
+                thinking_level: level,
+                thinking_force: force,
+                thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
             }],
             routing: vec![],
-            affinity: AffinityConfig::default(),
+            affinity: Default::default(),
             quota: vec![],
-        };
+        }
+    }
 
+    #[test]
+    fn payload_round_trips_the_thinking_level() {
+        let cfg =
+            config_with_thinking(ProviderKind::Kimi, crate::config::ThinkingLevel::High, true);
         let payload = config_to_payload(&cfg);
-        assert_eq!(
-            payload.providers[0].reasoning_effort.as_deref(),
-            Some("high")
-        );
+        assert_eq!(payload.providers[0].thinking_level.as_deref(), Some("high"));
+        assert_eq!(payload.providers[0].thinking_force, Some(true));
 
         let restored = payload_to_config(
             payload,
-            PathBuf::from("/tmp/proxy.db"),
-            PathBuf::from("/tmp/pricing.db"),
+            PathBuf::from("/tmp/p.db"),
+            PathBuf::from("/tmp/pr.db"),
             &cfg,
         )
         .unwrap();
         assert_eq!(
-            restored.providers[0].reasoning_effort.as_deref(),
-            Some("high")
+            restored.providers[0].thinking_level,
+            crate::config::ThinkingLevel::High
+        );
+        assert!(restored.providers[0].thinking_force);
+    }
+
+    #[test]
+    fn payload_to_config_forces_thinking_force_false_when_level_is_unset() {
+        // A stale `thinking_force: true` saved alongside `Unset` (e.g. from
+        // before the level was cleared) must not survive a round trip: the
+        // TUI hides the Force row for `Unset`, so a leftover `true` would be
+        // invisible and would silently reactivate once a level was set.
+        let cfg = config_with_thinking(
+            ProviderKind::Kimi,
+            crate::config::ThinkingLevel::Unset,
+            true,
+        );
+        let payload = config_to_payload(&cfg);
+        assert_eq!(payload.providers[0].thinking_force, Some(true));
+
+        let restored = payload_to_config(
+            payload,
+            PathBuf::from("/tmp/p.db"),
+            PathBuf::from("/tmp/pr.db"),
+            &cfg,
+        )
+        .unwrap();
+        assert_eq!(
+            restored.providers[0].thinking_level,
+            crate::config::ThinkingLevel::Unset
+        );
+        assert!(!restored.providers[0].thinking_force);
+    }
+
+    #[test]
+    fn payload_to_config_rejects_a_level_the_kind_does_not_offer() {
+        // DeepSeek maps low/medium to high server-side, so they are not offered.
+        let mut payload = config_to_payload(&config_with_thinking(
+            ProviderKind::DeepSeek,
+            crate::config::ThinkingLevel::Max,
+            false,
+        ));
+        payload.providers[0].thinking_level = Some("low".into());
+        let err = payload_to_config(
+            payload,
+            PathBuf::from("/tmp/p.db"),
+            PathBuf::from("/tmp/pr.db"),
+            &config_with_thinking(
+                ProviderKind::DeepSeek,
+                crate::config::ThinkingLevel::Unset,
+                false,
+            ),
+        )
+        .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("thinking_level"), "got: {msg}");
+        assert!(
+            msg.contains("high"),
+            "the error must list the valid levels: {msg}"
         );
     }
 
     #[test]
-    fn payload_to_config_rejects_invalid_reasoning_effort() {
-        let p = ConfigPayload {
-            port: 8787,
-            providers: vec![ProviderPayload {
-                name: "codex-main".into(),
-                kind: "codex".into(),
-                enabled: true,
-                auth: AuthPayload::CodexAuto,
-                anthropic_base_url: None,
-                openai_base_url: None,
-                reasoning_effort: Some("extreme".into()),
-                thinking_mode: None,
-                format_mode: None,
-                max_concurrent: None,
-                sanitize_empty_tools: None,
-            }],
-            routing: vec![],
-            quota: vec![],
-            affinity: AffinityPayload::default(),
-            proxy_db: None,
-            pricing_db: None,
-        };
-        let existing = Config {
-            port: 8787,
-            proxy_db: PathBuf::new(),
-            pricing_db: PathBuf::new(),
-            providers: vec![],
-            routing: vec![],
-            affinity: AffinityConfig::default(),
-            quota: Vec::new(),
-        };
-
-        let err = payload_to_config(p, PathBuf::new(), PathBuf::new(), &existing).unwrap_err();
-        assert!(err.to_string().contains("invalid reasoning_effort"));
+    fn payload_to_config_treats_missing_and_empty_level_as_unset() {
+        for value in [None, Some(String::new())] {
+            let mut payload = config_to_payload(&config_with_thinking(
+                ProviderKind::Zai,
+                crate::config::ThinkingLevel::High,
+                false,
+            ));
+            payload.providers[0].thinking_level = value;
+            let restored = payload_to_config(
+                payload,
+                PathBuf::from("/tmp/p.db"),
+                PathBuf::from("/tmp/pr.db"),
+                &config_with_thinking(
+                    ProviderKind::Zai,
+                    crate::config::ThinkingLevel::Unset,
+                    false,
+                ),
+            )
+            .unwrap();
+            assert_eq!(
+                restored.providers[0].thinking_level,
+                crate::config::ThinkingLevel::Unset
+            );
+        }
     }
 
     #[test]
@@ -1382,12 +1449,13 @@ mod tests {
             proxy_db: PathBuf::from("/tmp/proxy.db"),
             pricing_db: PathBuf::from("/tmp/pricing.db"),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "minimax".into(),
                 kind: ProviderKind::Minimax,
                 auth: AuthConfig::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::StripAll,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
@@ -1425,12 +1493,13 @@ mod tests {
             proxy_db: PathBuf::from("/tmp/proxy.db"),
             pricing_db: PathBuf::from("/tmp/pricing.db"),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "moonshot".into(),
                 kind: ProviderKind::Kimi,
                 auth: AuthConfig::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
@@ -1466,8 +1535,9 @@ mod tests {
                 auth: AuthPayload::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: Some("garbage".into()),
+                thinking_level: None,
+                thinking_force: None,
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
@@ -1522,8 +1592,9 @@ mod tests {
                 auth: AuthPayload::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: None,
+                thinking_level: None,
+                thinking_force: None,
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
@@ -1593,12 +1664,13 @@ mod tests {
             proxy_db: PathBuf::from("/tmp/proxy.db"),
             pricing_db: PathBuf::from("/tmp/pricing.db"),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "off".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
@@ -1631,12 +1703,13 @@ mod tests {
             proxy_db: PathBuf::from("/tmp/proxy.db"),
             pricing_db: PathBuf::from("/tmp/pricing.db"),
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "off".into(),
                 kind: ProviderKind::Anthropic,
                 auth: AuthConfig::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,

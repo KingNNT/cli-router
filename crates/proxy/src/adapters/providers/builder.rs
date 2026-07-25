@@ -69,13 +69,26 @@ pub fn build_leaf(
             }
         }
     };
+    let (thinking_anthropic, thinking_openai) =
+        match super::thinking::thinking_patch(p.kind, p.thinking_level) {
+            Some(patch) => (
+                patch
+                    .anthropic
+                    .map(|v| super::thinking::ThinkingInjection::new(v, p.thinking_force)),
+                patch
+                    .openai
+                    .map(|v| super::thinking::ThinkingInjection::new(v, p.thinking_force)),
+            ),
+            None => (None, None),
+        };
+
     // Codex is bespoke: translates to the OpenAI Responses API.
     if let ProviderKind::Codex = p.kind {
-        return Ok(Arc::new(CodexProvider::configure_with_reasoning_effort(
+        return Ok(Arc::new(CodexProvider::configure_with_thinking(
             http,
             p.openai_base_url.clone(),
             auth,
-            p.reasoning_effort.clone(),
+            thinking_openai,
         )));
     }
 
@@ -96,12 +109,7 @@ pub fn build_leaf(
         crate::config::ThinkingMode::SplitOnly => minimax_stream::ThinkingMode::SplitOnly,
         crate::config::ThinkingMode::StripAll => minimax_stream::ThinkingMode::StripAll,
     };
-    let quirks = quirks_for(
-        p.kind,
-        thinking,
-        p.reasoning_effort.clone(),
-        p.sanitize_empty_tools,
-    );
+    let quirks = quirks_for(p.kind, thinking, p.sanitize_empty_tools);
     Ok(Arc::new(
         UpstreamProvider::new(
             p.name.clone(),
@@ -111,7 +119,8 @@ pub fn build_leaf(
             quirks,
             http,
         )
-        .with_format_mode(p.format_mode),
+        .with_format_mode(p.format_mode)
+        .with_thinking(thinking_anthropic, thinking_openai),
     ))
 }
 
@@ -352,12 +361,13 @@ mod tests {
 
     fn cfg(openai: Option<&str>, base: Option<&str>) -> ProviderConfig {
         ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
             name: "zai".into(),
             kind: ProviderKind::Zai,
             auth: AuthConfig::Bearer { value: "x".into() },
             anthropic_base_url: base.map(str::to_string),
             openai_base_url: openai.map(str::to_string),
-            reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
@@ -370,13 +380,14 @@ mod tests {
     fn minimax_config_builds_dual_capable_provider() {
         let p = build_leaf(
             &ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "mm".into(),
                 kind: ProviderKind::Minimax,
                 enabled: true,
                 auth: AuthConfig::Bearer { value: "k".into() },
                 anthropic_base_url: Some("https://api.minimax.io/anthropic".into()),
                 openai_base_url: Some("https://api.minimax.io/v1".into()),
-                reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
@@ -390,16 +401,39 @@ mod tests {
     }
 
     #[test]
+    fn build_leaf_resolves_the_thinking_level_into_the_request() {
+        let cfg = ProviderConfig {
+            name: "deepseek".into(),
+            kind: ProviderKind::DeepSeek,
+            auth: AuthConfig::Bearer { value: "k".into() },
+            anthropic_base_url: None,
+            openai_base_url: Some("https://api.deepseek.com/v1".into()),
+            format_mode: crate::config::FormatMode::Both,
+            thinking_level: crate::config::ThinkingLevel::Max,
+            thinking_force: true,
+            thinking_mode: ThinkingMode::SplitOnly,
+            max_concurrent: None,
+            sanitize_empty_tools: false,
+            enabled: true,
+        };
+        // Building must succeed and the provider must advertise the OpenAI
+        // endpoint; the patch itself is covered by the UpstreamProvider tests.
+        let provider = build_leaf(&cfg, reqwest::Client::new()).unwrap();
+        assert!(provider.supported_formats().openai);
+    }
+
+    #[test]
     fn provider_with_no_urls_is_rejected() {
         let err = build_leaf(
             &ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "bad".into(),
                 kind: ProviderKind::DeepSeek,
                 enabled: true,
                 auth: AuthConfig::Bearer { value: "k".into() },
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
@@ -415,26 +449,28 @@ mod tests {
         let cfg = Config {
             providers: vec![
                 ProviderConfig {
+                    thinking_level: crate::config::ThinkingLevel::Unset,
+                    thinking_force: false,
                     name: "on".into(),
                     kind: ProviderKind::Anthropic,
                     enabled: true,
                     auth: AuthConfig::Passthrough,
                     anthropic_base_url: Some("https://api.anthropic.com".into()),
                     openai_base_url: None,
-                    reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                 },
                 ProviderConfig {
+                    thinking_level: crate::config::ThinkingLevel::Unset,
+                    thinking_force: false,
                     name: "off".into(),
                     kind: ProviderKind::Anthropic,
                     enabled: false,
                     auth: AuthConfig::Passthrough,
                     anthropic_base_url: None,
                     openai_base_url: None,
-                    reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
@@ -482,6 +518,8 @@ mod tests {
         let config = Config {
             providers: vec![
                 ProviderConfig {
+                    thinking_level: crate::config::ThinkingLevel::Unset,
+                    thinking_force: false,
                     name: "on".into(),
                     kind: ProviderKind::Codex,
                     enabled: true,
@@ -490,13 +528,14 @@ mod tests {
                     },
                     anthropic_base_url: None,
                     openai_base_url: Some("https://example.test/backend-api/codex".into()),
-                    reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                 },
                 ProviderConfig {
+                    thinking_level: crate::config::ThinkingLevel::Unset,
+                    thinking_force: false,
                     name: "off".into(),
                     kind: ProviderKind::Codex,
                     enabled: false,
@@ -505,7 +544,6 @@ mod tests {
                     },
                     anthropic_base_url: None,
                     openai_base_url: Some("https://example.test/backend-api/codex".into()),
-                    reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
@@ -526,6 +564,8 @@ mod tests {
     fn live_account_usage_drops_provider_when_disabled() {
         let config = Arc::new(std::sync::RwLock::new(empty_config()));
         config.write().unwrap().providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
             name: "claude".to_string(),
             kind: ProviderKind::Anthropic,
             auth: AuthConfig::AnthropicOAuth {
@@ -535,7 +575,6 @@ mod tests {
             },
             anthropic_base_url: None,
             openai_base_url: None,
-            reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
@@ -562,6 +601,8 @@ mod tests {
     fn build_account_usage_maps_codex_to_supported_adapter() {
         let config = Config {
             providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
                 name: "codex-main".to_string(),
                 kind: ProviderKind::Codex,
                 anthropic_base_url: None,
@@ -569,7 +610,6 @@ mod tests {
                 auth: AuthConfig::Bearer {
                     value: "token-123".to_string(),
                 },
-                reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
@@ -616,6 +656,8 @@ mod tests {
 
         // Add an Anthropic provider at runtime (as the admin API does).
         config.write().unwrap().providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
             name: "claude".to_string(),
             kind: ProviderKind::Anthropic,
             auth: AuthConfig::AnthropicOAuth {
@@ -625,7 +667,6 @@ mod tests {
             },
             anthropic_base_url: None,
             openai_base_url: None,
-            reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
@@ -645,6 +686,8 @@ mod tests {
     fn live_account_usage_reuses_adapters_while_provider_set_is_stable() {
         let mut config = empty_config();
         config.providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
             name: "claude".to_string(),
             kind: ProviderKind::Anthropic,
             auth: AuthConfig::AnthropicOAuth {
@@ -654,7 +697,6 @@ mod tests {
             },
             anthropic_base_url: None,
             openai_base_url: None,
-            reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,

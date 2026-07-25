@@ -1263,11 +1263,19 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
             format!("< {} >    [←/→ to cycle]", m.format_mode.label()),
         ));
     }
-    if m.kind == crate::app::ProviderKind::Codex {
+    lines.push(row(
+        FormField::ThinkingLevel,
+        "Thinking:",
+        format!("< {} >    [←/→ to cycle]", m.thinking_level.label()),
+    ));
+    if m.thinking_level != crate::app::ThinkingLevelInput::Unset {
         lines.push(row(
-            FormField::ReasoningEffort,
-            "Reasoning Effort:",
-            format!("< {} >    [←/→ to cycle]", m.reasoning_effort.label()),
+            FormField::ThinkingForce,
+            "Force:",
+            format!(
+                "< {} >    [←/→ to toggle]",
+                if m.thinking_force { "on" } else { "off" }
+            ),
         ));
     }
     if m.kind == crate::app::ProviderKind::Minimax {
@@ -1831,8 +1839,9 @@ mod tests {
                 },
                 anthropic_base_url: Some("https://api.anthropic.com".into()),
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: None,
+                thinking_level: None,
+                thinking_force: None,
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
@@ -1846,8 +1855,9 @@ mod tests {
                 },
                 anthropic_base_url: None,
                 openai_base_url: Some("https://api.openai.com/v1".into()),
-                reasoning_effort: None,
                 thinking_mode: None,
+                thinking_level: None,
+                thinking_force: None,
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,

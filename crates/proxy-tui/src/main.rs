@@ -1091,11 +1091,11 @@ fn handle_form_key(
         (_, KeyCode::Esc) => Modal::None,
 
         (FormState::Editing, KeyCode::Down) => {
-            m.focused = m.focused.next(m.auth_kind, m.kind);
+            m.focused = m.focused.next(m.auth_kind, m.kind, m.thinking_level);
             Modal::ProviderForm(m)
         }
         (FormState::Editing, KeyCode::Up) => {
-            m.focused = m.focused.prev(m.auth_kind, m.kind);
+            m.focused = m.focused.prev(m.auth_kind, m.kind, m.thinking_level);
             Modal::ProviderForm(m)
         }
         (FormState::Editing, KeyCode::Left) => {
@@ -1234,7 +1234,8 @@ fn submit_non_oauth_save(
         kind: m.kind.label(),
         anthropic_base_url: Some(&m.anthropic_base_url),
         openai_base_url: Some(&m.openai_base_url),
-        reasoning_effort: m.reasoning_effort.as_option(),
+        thinking_level: m.thinking_level.as_option(),
+        thinking_force: m.thinking_force,
         thinking_mode: m.thinking_mode.as_option(),
         format_mode: m.format_mode.as_option(),
         sanitize_empty_tools: m.sanitize_empty_tools,
@@ -1294,7 +1295,7 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
             } else {
                 m.kind.cycle_prev()
             };
-            m.reasoning_effort = m.reasoning_effort.clamp_for(m.kind);
+            m.thinking_level = m.thinking_level.clamp_to(m.kind);
             if m.kind != ProviderKind::Minimax {
                 m.thinking_mode = crate::app::ThinkingModeInput::Unset;
             }
@@ -1323,12 +1324,15 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
                 }
             }
         }
-        FormField::ReasoningEffort => {
-            m.reasoning_effort = if forward {
-                m.reasoning_effort.cycle_next_for(m.kind)
+        FormField::ThinkingLevel => {
+            m.thinking_level = if forward {
+                m.thinking_level.cycle_next_for(m.kind)
             } else {
-                m.reasoning_effort.cycle_prev_for(m.kind)
+                m.thinking_level.cycle_prev_for(m.kind)
             };
+        }
+        FormField::ThinkingForce => {
+            m.thinking_force = !m.thinking_force;
         }
         FormField::FormatMode => {
             m.format_mode = if forward {
@@ -1413,7 +1417,8 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
             kind: m.kind.label(),
             anthropic_base_url: Some(&m.anthropic_base_url),
             openai_base_url: Some(&m.openai_base_url),
-            reasoning_effort: m.reasoning_effort.as_option(),
+            thinking_level: m.thinking_level.as_option(),
+            thinking_force: m.thinking_force,
             thinking_mode: m.thinking_mode.as_option(),
             format_mode: m.format_mode.as_option(),
             sanitize_empty_tools: m.sanitize_empty_tools,
@@ -1910,7 +1915,8 @@ fn submit_oauth_edit(
         kind: m.kind.label(),
         anthropic_base_url: Some(&m.anthropic_base_url),
         openai_base_url: Some(&m.openai_base_url),
-        reasoning_effort: m.reasoning_effort.as_option(),
+        thinking_level: m.thinking_level.as_option(),
+        thinking_force: m.thinking_force,
         thinking_mode: m.thinking_mode.as_option(),
         format_mode: m.format_mode.as_option(),
         sanitize_empty_tools: m.sanitize_empty_tools,
@@ -1936,7 +1942,8 @@ fn submit_oauth_edit(
             || prev.kind != provider.kind
             || prev.anthropic_base_url != provider.anthropic_base_url
             || prev.openai_base_url != provider.openai_base_url
-            || prev.reasoning_effort != provider.reasoning_effort
+            || prev.thinking_level != provider.thinking_level
+            || prev.thinking_force != provider.thinking_force
             || prev.thinking_mode != provider.thinking_mode
             || prev.sanitize_empty_tools != provider.sanitize_empty_tools
     } else {
@@ -2178,8 +2185,9 @@ mod modal_key_tests {
             auth: proxy_admin_api::AuthPayload::Passthrough,
             anthropic_base_url: None,
             openai_base_url: None,
-            reasoning_effort: None,
             thinking_mode: None,
+            thinking_level: None,
+            thinking_force: None,
             format_mode: None,
             max_concurrent: None,
             sanitize_empty_tools: None,
@@ -2559,8 +2567,9 @@ mod modal_key_tests {
                 auth: proxy_admin_api::AuthPayload::Passthrough,
                 anthropic_base_url: None,
                 openai_base_url: None,
-                reasoning_effort: None,
                 thinking_mode: None,
+                thinking_level: None,
+                thinking_force: None,
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,

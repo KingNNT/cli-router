@@ -42,7 +42,8 @@ pub struct FormInputs<'a> {
     pub kind: &'a str,
     pub anthropic_base_url: Option<&'a str>,
     pub openai_base_url: Option<&'a str>,
-    pub reasoning_effort: Option<&'a str>,
+    pub thinking_level: Option<&'a str>,
+    pub thinking_force: bool,
     pub thinking_mode: Option<&'a str>,
     /// Which endpoint(s) the proxy may use: `both`, `anthropic`, `openai`.
     pub format_mode: Option<&'a str>,
@@ -119,20 +120,13 @@ pub fn validate_provider_form(
             .openai_base_url
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty()),
-        reasoning_effort: if matches!(input.kind, "codex" | "anthropic") {
-            input
-                .reasoning_effort
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-        } else {
-            None
-        },
         thinking_mode: if input.kind == "minimax" {
             input.thinking_mode.map(str::to_string)
         } else {
             None
         },
+        thinking_level: input.thinking_level.map(str::to_string),
+        thinking_force: Some(input.thinking_force),
         format_mode: input.format_mode.map(str::to_string),
         max_concurrent: input.max_concurrent,
         sanitize_empty_tools: if input.kind == "kimi" {
@@ -199,8 +193,9 @@ mod tests {
             auth: AuthPayload::Passthrough,
             anthropic_base_url: None,
             openai_base_url: None,
-            reasoning_effort: None,
             thinking_mode: None,
+            thinking_level: None,
+            thinking_force: None,
             format_mode: None,
             max_concurrent: None,
             sanitize_empty_tools: None,
@@ -225,7 +220,8 @@ mod tests {
             kind: "anthropic",
             anthropic_base_url: None,
             openai_base_url: None,
-            reasoning_effort: None,
+            thinking_level: None,
+            thinking_force: false,
             thinking_mode: None,
             format_mode: None,
             max_concurrent: None,
@@ -324,78 +320,6 @@ mod tests {
     }
 
     #[test]
-    fn codex_provider_preserves_reasoning_effort() {
-        let auth = AuthPayload::CodexAuto;
-        let cfg = empty_cfg();
-        let input = FormInputs {
-            name: "codex-main",
-            kind: "codex",
-            anthropic_base_url: None,
-            openai_base_url: None,
-            reasoning_effort: Some("high"),
-            thinking_mode: None,
-            format_mode: None,
-            max_concurrent: None,
-            auth: &auth,
-            editing_index: None,
-            original_name: None,
-            sanitize_empty_tools: false,
-            enabled: true,
-        };
-
-        let provider = validate_provider_form(&input, &cfg).unwrap();
-        assert_eq!(provider.reasoning_effort.as_deref(), Some("high"));
-    }
-
-    #[test]
-    fn non_codex_provider_drops_reasoning_effort() {
-        let auth = AuthPayload::Passthrough;
-        let cfg = empty_cfg();
-        let input = FormInputs {
-            name: "zai-main",
-            kind: "zai",
-            anthropic_base_url: None,
-            openai_base_url: None,
-            reasoning_effort: Some("high"),
-            thinking_mode: None,
-            format_mode: None,
-            max_concurrent: None,
-            auth: &auth,
-            editing_index: None,
-            original_name: None,
-            sanitize_empty_tools: false,
-            enabled: true,
-        };
-
-        let provider = validate_provider_form(&input, &cfg).unwrap();
-        assert_eq!(provider.reasoning_effort, None);
-    }
-
-    #[test]
-    fn anthropic_provider_preserves_reasoning_effort() {
-        let auth = AuthPayload::Passthrough;
-        let cfg = empty_cfg();
-        let input = FormInputs {
-            name: "anthropic-main",
-            kind: "anthropic",
-            anthropic_base_url: None,
-            openai_base_url: None,
-            reasoning_effort: Some("high"),
-            thinking_mode: None,
-            format_mode: None,
-            max_concurrent: None,
-            auth: &auth,
-            editing_index: None,
-            original_name: None,
-            sanitize_empty_tools: false,
-            enabled: true,
-        };
-
-        let provider = validate_provider_form(&input, &cfg).unwrap();
-        assert_eq!(provider.reasoning_effort.as_deref(), Some("high"));
-    }
-
-    #[test]
     fn kimi_provider_preserves_sanitize_empty_tools() {
         let auth = AuthPayload::Passthrough;
         let cfg = empty_cfg();
@@ -404,7 +328,8 @@ mod tests {
             kind: "kimi",
             anthropic_base_url: None,
             openai_base_url: None,
-            reasoning_effort: None,
+            thinking_level: None,
+            thinking_force: false,
             thinking_mode: None,
             format_mode: None,
             max_concurrent: None,
@@ -428,7 +353,8 @@ mod tests {
             kind: "zai",
             anthropic_base_url: None,
             openai_base_url: None,
-            reasoning_effort: None,
+            thinking_level: None,
+            thinking_force: false,
             thinking_mode: None,
             format_mode: None,
             max_concurrent: None,
@@ -441,6 +367,32 @@ mod tests {
 
         let provider = validate_provider_form(&input, &cfg).unwrap();
         assert_eq!(provider.sanitize_empty_tools, None);
+    }
+
+    #[test]
+    fn thinking_level_and_force_carry_through_to_the_payload() {
+        let auth = AuthPayload::Passthrough;
+        let cfg = empty_cfg();
+        let input = FormInputs {
+            name: "zai-main",
+            kind: "zai",
+            anthropic_base_url: None,
+            openai_base_url: None,
+            thinking_level: Some("high"),
+            thinking_force: true,
+            thinking_mode: None,
+            format_mode: None,
+            max_concurrent: None,
+            auth: &auth,
+            editing_index: None,
+            original_name: None,
+            sanitize_empty_tools: false,
+            enabled: true,
+        };
+
+        let provider = validate_provider_form(&input, &cfg).unwrap();
+        assert_eq!(provider.thinking_level.as_deref(), Some("high"));
+        assert_eq!(provider.thinking_force, Some(true));
     }
 
     #[test]
