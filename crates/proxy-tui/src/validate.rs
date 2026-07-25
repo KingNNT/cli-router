@@ -44,6 +44,8 @@ pub struct FormInputs<'a> {
     pub openai_base_url: Option<&'a str>,
     pub reasoning_effort: Option<&'a str>,
     pub thinking_mode: Option<&'a str>,
+    /// Which endpoint(s) the proxy may use: `both`, `anthropic`, `openai`.
+    pub format_mode: Option<&'a str>,
     pub sanitize_empty_tools: bool,
     /// Whether the provider is active and eligible for routing.
     pub enabled: bool,
@@ -131,6 +133,7 @@ pub fn validate_provider_form(
         } else {
             None
         },
+        format_mode: input.format_mode.map(str::to_string),
         max_concurrent: input.max_concurrent,
         sanitize_empty_tools: if input.kind == "kimi" {
             Some(input.sanitize_empty_tools)
@@ -198,6 +201,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: None,
+            format_mode: None,
             max_concurrent: None,
             sanitize_empty_tools: None,
         }
@@ -223,6 +227,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: None,
+            format_mode: None,
             max_concurrent: None,
             auth,
             editing_index: None,
@@ -329,6 +334,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: Some("high"),
             thinking_mode: None,
+            format_mode: None,
             max_concurrent: None,
             auth: &auth,
             editing_index: None,
@@ -352,6 +358,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: Some("high"),
             thinking_mode: None,
+            format_mode: None,
             max_concurrent: None,
             auth: &auth,
             editing_index: None,
@@ -375,6 +382,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: Some("high"),
             thinking_mode: None,
+            format_mode: None,
             max_concurrent: None,
             auth: &auth,
             editing_index: None,
@@ -398,6 +406,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: None,
+            format_mode: None,
             max_concurrent: None,
             auth: &auth,
             editing_index: None,
@@ -421,6 +430,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: None,
+            format_mode: None,
             max_concurrent: None,
             auth: &auth,
             editing_index: None,

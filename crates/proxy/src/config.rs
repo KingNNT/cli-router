@@ -38,6 +38,9 @@ pub struct ProviderConfig {
     pub anthropic_base_url: Option<String>,
     #[serde(default)]
     pub openai_base_url: Option<String>,
+    /// Which of the configured endpoints the proxy may use. See [`FormatMode`].
+    #[serde(default)]
+    pub format_mode: FormatMode,
     #[serde(default)]
     pub reasoning_effort: Option<String>,
     #[serde(default)]
@@ -68,6 +71,31 @@ pub enum ProviderKind {
     Minimax,
     #[serde(alias = "kimi", alias = "moonshot")]
     Kimi,
+}
+
+/// Which wire format(s) the proxy is allowed to use when talking to this
+/// provider, regardless of how many endpoint URLs are configured.
+///
+/// `Both` (the default) lets the client's format decide, so a request passes
+/// through untranslated whenever the provider serves that format. Pinning a
+/// single format forces translation for clients speaking the other one —
+/// useful when one of an upstream's two endpoints is buggy. MiniMax is the
+/// motivating case: its OpenAI endpoint splits thinking from answer on the
+/// `</think>` tag while the model routinely emits the answer's first
+/// characters *before* that tag, so they vanish into `reasoning_content`.
+/// Pinning MiniMax to `Anthropic` routes every client onto the endpoint that
+/// splits correctly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum FormatMode {
+    /// Use whichever configured endpoint matches the client's format.
+    #[default]
+    Both,
+    /// Always talk Anthropic upstream; translate OpenAI clients.
+    Anthropic,
+    /// Always talk OpenAI upstream; translate Anthropic clients.
+    #[serde(alias = "openai")]
+    OpenAi,
 }
 
 /// Controls how MiniMax thinking/reasoning content is stripped from responses.
@@ -516,6 +544,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
+                format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: false,
@@ -553,6 +582,7 @@ mod tests {
                     openai_base_url: None,
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
+                    format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                     enabled: true,
@@ -565,6 +595,7 @@ mod tests {
                     openai_base_url: None,
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
+                    format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                     enabled: false,
@@ -617,6 +648,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
+                format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
@@ -652,6 +684,7 @@ mod tests {
                     openai_base_url: None,
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
+                    format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                     enabled: true,
@@ -664,6 +697,7 @@ mod tests {
                     openai_base_url: None,
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
+                    format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                     enabled: true,
@@ -698,6 +732,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
+                format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,

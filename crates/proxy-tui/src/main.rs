@@ -1236,6 +1236,7 @@ fn submit_non_oauth_save(
         openai_base_url: Some(&m.openai_base_url),
         reasoning_effort: m.reasoning_effort.as_option(),
         thinking_mode: m.thinking_mode.as_option(),
+        format_mode: m.format_mode.as_option(),
         sanitize_empty_tools: m.sanitize_empty_tools,
         enabled: m.enabled,
 
@@ -1329,6 +1330,13 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
                 m.reasoning_effort.cycle_prev_for(m.kind)
             };
         }
+        FormField::FormatMode => {
+            m.format_mode = if forward {
+                m.format_mode.cycle_next()
+            } else {
+                m.format_mode.cycle_prev()
+            };
+        }
         FormField::ThinkingMode => {
             m.thinking_mode = if forward {
                 m.thinking_mode.cycle_next()
@@ -1407,6 +1415,7 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
             openai_base_url: Some(&m.openai_base_url),
             reasoning_effort: m.reasoning_effort.as_option(),
             thinking_mode: m.thinking_mode.as_option(),
+            format_mode: m.format_mode.as_option(),
             sanitize_empty_tools: m.sanitize_empty_tools,
             enabled: m.enabled,
 
@@ -1903,6 +1912,7 @@ fn submit_oauth_edit(
         openai_base_url: Some(&m.openai_base_url),
         reasoning_effort: m.reasoning_effort.as_option(),
         thinking_mode: m.thinking_mode.as_option(),
+        format_mode: m.format_mode.as_option(),
         sanitize_empty_tools: m.sanitize_empty_tools,
         enabled: m.enabled,
 
@@ -2170,6 +2180,7 @@ mod modal_key_tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: None,
+            format_mode: None,
             max_concurrent: None,
             sanitize_empty_tools: None,
         };
@@ -2550,6 +2561,7 @@ mod modal_key_tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: None,
+                format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
             }],

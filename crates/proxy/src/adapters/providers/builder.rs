@@ -102,14 +102,17 @@ pub fn build_leaf(
         p.reasoning_effort.clone(),
         p.sanitize_empty_tools,
     );
-    Ok(Arc::new(UpstreamProvider::new(
-        p.name.clone(),
-        p.anthropic_base_url.clone(),
-        p.openai_base_url.clone(),
-        auth,
-        quirks,
-        http,
-    )))
+    Ok(Arc::new(
+        UpstreamProvider::new(
+            p.name.clone(),
+            p.anthropic_base_url.clone(),
+            p.openai_base_url.clone(),
+            auth,
+            quirks,
+            http,
+        )
+        .with_format_mode(p.format_mode),
+    ))
 }
 
 /// Build the per-name leaf map.
@@ -356,6 +359,7 @@ mod tests {
             openai_base_url: openai.map(str::to_string),
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
@@ -374,6 +378,7 @@ mod tests {
                 openai_base_url: Some("https://api.minimax.io/v1".into()),
                 reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
+                format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
             },
@@ -396,6 +401,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
+                format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
             },
@@ -417,6 +423,7 @@ mod tests {
                     openai_base_url: None,
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
+                    format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                 },
@@ -429,6 +436,7 @@ mod tests {
                     openai_base_url: None,
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
+                    format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                 },
@@ -484,6 +492,7 @@ mod tests {
                     openai_base_url: Some("https://example.test/backend-api/codex".into()),
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
+                    format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                 },
@@ -498,6 +507,7 @@ mod tests {
                     openai_base_url: Some("https://example.test/backend-api/codex".into()),
                     reasoning_effort: None,
                     thinking_mode: ThinkingMode::SplitOnly,
+                    format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                 },
@@ -527,6 +537,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
@@ -560,6 +571,7 @@ mod tests {
                 },
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
+                format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
@@ -615,6 +627,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
@@ -643,6 +656,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,

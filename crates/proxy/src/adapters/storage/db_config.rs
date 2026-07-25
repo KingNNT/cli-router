@@ -6,8 +6,8 @@ use rusqlite::Connection;
 
 use crate::application::ports::ConfigRepository;
 use crate::config::{
-    AffinityConfig, AuthConfig, Config, ConfigError, MatchSpec, ProviderConfig, ProviderKind,
-    QuotaRule, RoutingRule, RoutingStrategy, ThinkingMode,
+    AffinityConfig, AuthConfig, Config, ConfigError, FormatMode, MatchSpec, ProviderConfig,
+    ProviderKind, QuotaRule, RoutingRule, RoutingStrategy, ThinkingMode,
 };
 
 /// Convert rusqlite errors into ConfigError::Validation.
@@ -107,8 +107,8 @@ impl ConfigRepository for DbConfigRepository {
             let mut stmt = tx
                 .prepare(
                     "INSERT INTO providers (name, kind, anthropic_base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
-                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent, sanitize_empty_tools, enabled)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent, sanitize_empty_tools, enabled, format_mode)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
                 )
                 .map_err(db_err)?;
             for p in &config.providers {
@@ -133,6 +133,11 @@ impl ConfigRepository for DbConfigRepository {
                     p.max_concurrent.map(|v| v as i64),
                     p.sanitize_empty_tools as i64,
                     p.enabled as i64,
+                    match p.format_mode {
+                        FormatMode::Both => "both",
+                        FormatMode::Anthropic => "anthropic",
+                        FormatMode::OpenAi => "openai",
+                    },
                 ])
                 .map_err(db_err)?;
             }
@@ -208,7 +213,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
         .prepare(
             "SELECT name, kind, anthropic_base_url, openai_base_url, reasoning_effort, thinking_mode, auth_type,
                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms,
-                    max_concurrent, sanitize_empty_tools, enabled
+                    max_concurrent, sanitize_empty_tools, enabled, format_mode
              FROM providers ORDER BY id",
         )
         .map_err(db_err)?;
@@ -240,6 +245,11 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
                 max_concurrent: row.get::<_, Option<i64>>(12)?.map(|v| v.max(0) as usize),
                 sanitize_empty_tools: row.get::<_, i64>(13)? != 0,
                 enabled: row.get::<_, i64>(14)? != 0,
+                format_mode: match row.get::<_, String>(15)?.as_str() {
+                    "anthropic" => FormatMode::Anthropic,
+                    "openai" => FormatMode::OpenAi,
+                    _ => FormatMode::Both,
+                },
             })
         })
         .map_err(db_err)?;
@@ -472,6 +482,7 @@ mod tests {
             openai_base_url: Some("https://example.com/v1".into()),
             reasoning_effort: Some("high".into()),
             thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
@@ -529,6 +540,7 @@ mod tests {
             openai_base_url: Some("https://a/v1".into()),
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
         });
@@ -552,6 +564,7 @@ mod tests {
             openai_base_url: Some(String::new()),
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
         });
@@ -614,6 +627,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: ThinkingMode::SplitOnly,
+                format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
@@ -675,6 +689,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: true,
             enabled: true,
@@ -701,6 +716,7 @@ mod tests {
             openai_base_url: None,
             reasoning_effort: None,
             thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: false,

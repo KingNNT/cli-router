@@ -570,12 +570,66 @@ impl ThinkingModeInput {
     }
 }
 
+/// Cycle widget state for the per-provider wire-format policy. Unlike the
+/// other cycles there is no "unset": `both` is the default and is sent
+/// explicitly, so an edit can always move a provider back off a pinned format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FormatModeInput {
+    #[default]
+    Both,
+    Anthropic,
+    OpenAi,
+}
+
+impl FormatModeInput {
+    pub fn label(self) -> &'static str {
+        match self {
+            FormatModeInput::Both => "both",
+            FormatModeInput::Anthropic => "anthropic only",
+            FormatModeInput::OpenAi => "openai only",
+        }
+    }
+
+    pub fn as_option(self) -> Option<&'static str> {
+        match self {
+            FormatModeInput::Both => Some("both"),
+            FormatModeInput::Anthropic => Some("anthropic"),
+            FormatModeInput::OpenAi => Some("openai"),
+        }
+    }
+
+    pub fn from_option(opt: Option<&str>) -> Self {
+        match opt {
+            Some("anthropic") => FormatModeInput::Anthropic,
+            Some("openai") => FormatModeInput::OpenAi,
+            _ => FormatModeInput::Both,
+        }
+    }
+
+    pub fn cycle_next(self) -> Self {
+        match self {
+            FormatModeInput::Both => FormatModeInput::Anthropic,
+            FormatModeInput::Anthropic => FormatModeInput::OpenAi,
+            FormatModeInput::OpenAi => FormatModeInput::Both,
+        }
+    }
+
+    pub fn cycle_prev(self) -> Self {
+        match self {
+            FormatModeInput::Both => FormatModeInput::OpenAi,
+            FormatModeInput::Anthropic => FormatModeInput::Both,
+            FormatModeInput::OpenAi => FormatModeInput::Anthropic,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormField {
     Name,
     Kind,
     AnthropicBaseUrl,
     OpenaiBaseUrl,
+    FormatMode,
     ReasoningEffort,
     ThinkingMode,
     SanitizeEmptyTools,
@@ -607,6 +661,11 @@ fn field_order(auth_kind: AuthInputKind, provider_kind: ProviderKind) -> Vec<For
         FormField::AnthropicBaseUrl,
         FormField::OpenaiBaseUrl,
     ];
+    // Codex is bespoke (always the OpenAI Responses API), so a format policy
+    // would be inert there.
+    if provider_kind != ProviderKind::Codex {
+        order.push(FormField::FormatMode);
+    }
     if matches!(provider_kind, ProviderKind::Codex | ProviderKind::Anthropic) {
         order.push(FormField::ReasoningEffort);
     }
@@ -655,6 +714,7 @@ pub struct ProviderFormModal {
     pub kind: ProviderKind,
     pub anthropic_base_url: String,
     pub openai_base_url: String,
+    pub format_mode: FormatModeInput,
     pub reasoning_effort: ReasoningEffortInput,
     pub thinking_mode: ThinkingModeInput,
     pub sanitize_empty_tools: bool,
@@ -680,6 +740,7 @@ impl ProviderFormModal {
             kind: ProviderKind::Anthropic,
             anthropic_base_url: String::new(),
             openai_base_url: String::new(),
+            format_mode: FormatModeInput::Both,
             reasoning_effort: ReasoningEffortInput::Unset,
             thinking_mode: ThinkingModeInput::Unset,
             sanitize_empty_tools: false,
@@ -709,6 +770,7 @@ impl ProviderFormModal {
             anthropic_base_url: p.anthropic_base_url.clone().unwrap_or_default(),
             openai_base_url: p.openai_base_url.clone().unwrap_or_default(),
             reasoning_effort: ReasoningEffortInput::from_option(p.reasoning_effort.as_deref()),
+            format_mode: FormatModeInput::from_option(p.format_mode.as_deref()),
             thinking_mode: ThinkingModeInput::from_option(p.thinking_mode.as_deref()),
             sanitize_empty_tools: p.sanitize_empty_tools.unwrap_or(false),
             enabled: p.enabled,
@@ -1132,6 +1194,47 @@ mod form_field_tests {
             f.next(AuthInputKind::Passthrough, ProviderKind::Codex),
             FormField::ReasoningEffort
         );
+    }
+
+    #[test]
+    fn format_mode_field_offered_for_upstream_kinds_and_hidden_for_codex() {
+        let f = FormField::OpenaiBaseUrl;
+        assert_eq!(
+            f.next(AuthInputKind::Passthrough, ProviderKind::Minimax),
+            FormField::FormatMode
+        );
+        assert_eq!(
+            f.next(AuthInputKind::Passthrough, ProviderKind::Codex),
+            FormField::ReasoningEffort
+        );
+    }
+
+    #[test]
+    fn format_mode_input_cycles_through_all_three() {
+        use super::FormatModeInput;
+        assert_eq!(
+            FormatModeInput::Both.cycle_next(),
+            FormatModeInput::Anthropic
+        );
+        assert_eq!(
+            FormatModeInput::Anthropic.cycle_next(),
+            FormatModeInput::OpenAi
+        );
+        assert_eq!(FormatModeInput::OpenAi.cycle_next(), FormatModeInput::Both);
+        assert_eq!(FormatModeInput::Both.cycle_prev(), FormatModeInput::OpenAi);
+    }
+
+    #[test]
+    fn format_mode_input_round_trips_through_payload_strings() {
+        use super::FormatModeInput;
+        for m in [
+            FormatModeInput::Both,
+            FormatModeInput::Anthropic,
+            FormatModeInput::OpenAi,
+        ] {
+            assert_eq!(FormatModeInput::from_option(m.as_option()), m);
+        }
+        assert_eq!(FormatModeInput::from_option(None), FormatModeInput::Both);
     }
 
     #[test]

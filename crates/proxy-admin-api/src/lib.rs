@@ -126,6 +126,11 @@ pub struct ProviderPayload {
     pub reasoning_effort: Option<String>,
     #[serde(default)]
     pub thinking_mode: Option<String>,
+    /// Which configured endpoint(s) the proxy may use: `both` (default),
+    /// `anthropic`, or `openai`. Pinning one format makes the proxy translate
+    /// clients that speak the other.
+    #[serde(default)]
+    pub format_mode: Option<String>,
     #[serde(default)]
     pub max_concurrent: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -587,6 +592,7 @@ mod config_payload_tests {
                 openai_base_url: None,
                 reasoning_effort: Some("high".into()),
                 thinking_mode: None,
+                format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
             }],

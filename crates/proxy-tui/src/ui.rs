@@ -1256,6 +1256,13 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
         "OpenAI URL:",
         show_or_placeholder(&m.openai_base_url),
     ));
+    if m.kind != crate::app::ProviderKind::Codex {
+        lines.push(row(
+            FormField::FormatMode,
+            "Format Mode:",
+            format!("< {} >    [←/→ to cycle]", m.format_mode.label()),
+        ));
+    }
     if m.kind == crate::app::ProviderKind::Codex {
         lines.push(row(
             FormField::ReasoningEffort,
@@ -1826,6 +1833,7 @@ mod tests {
                 openai_base_url: None,
                 reasoning_effort: None,
                 thinking_mode: None,
+                format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
             },
@@ -1840,6 +1848,7 @@ mod tests {
                 openai_base_url: Some("https://api.openai.com/v1".into()),
                 reasoning_effort: None,
                 thinking_mode: None,
+                format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
             },
