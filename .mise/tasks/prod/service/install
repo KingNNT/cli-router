@@ -72,6 +72,10 @@ mkdir -p "$LAUNCH_AGENT_DIR" "$SERVICE_LOG_DIR"
         '</plist>'
 } > "$SERVICE_PLIST"
 
+# launchd refuses a group- or world-writable job plist with
+# "Bootstrap failed: 5: Input/output error", so don't inherit a loose umask.
+chmod 644 "$SERVICE_PLIST"
+
 if launchctl print "$SERVICE_TARGET" >/dev/null 2>&1; then
     echo "service already loaded — kickstarting (atomic respawn, no AddrInUse race)"
     launchctl kickstart -k "$SERVICE_TARGET"
