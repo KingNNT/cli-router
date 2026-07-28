@@ -31,6 +31,10 @@ const HOP_BY_HOP: &[&str] = &[
     "upgrade",
     "host",
     "content-length",
+    // The proxy always serves an identity-encoded body (it buffers, filters or
+    // translates upstream payloads), so an upstream `content-encoding` must
+    // never reach the client — it would try to decompress plain bytes.
+    "content-encoding",
 ];
 
 #[utoipa::path(

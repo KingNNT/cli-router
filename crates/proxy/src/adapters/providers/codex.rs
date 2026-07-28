@@ -150,8 +150,13 @@ impl Provider for CodexProvider {
             ProxyError::BadRequest(format!("failed to serialize responses body: {e}"))
         })?;
 
-        // Build the upstream request
-        let mut req = self.http.post(&url).body(serialized);
+        // Build the upstream request. `identity` because the SSE translator
+        // below reads the raw bytes — see HOP_BY_HOP.
+        let mut req = self
+            .http
+            .post(&url)
+            .body(serialized)
+            .header("accept-encoding", "identity");
         let strip_auth = !matches!(self.auth, AuthHeader::Passthrough);
         for (k, v) in headers {
             if HOP_BY_HOP.contains(&k.as_str()) {
