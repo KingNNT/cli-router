@@ -24,6 +24,13 @@ pub(super) const HOP_BY_HOP: &[&str] = &[
     "upgrade",
     "host",
     "content-length",
+    // Content coding is negotiated per hop: the proxy always asks upstream for
+    // an identity body (it parses, filters and sometimes translates the
+    // payload), so neither the client's `accept-encoding` nor the upstream's
+    // `content-encoding` may cross this boundary. Leaking `content-encoding: br`
+    // onto a rewritten body makes clients fail to decode the response.
+    "accept-encoding",
+    "content-encoding",
 ];
 
 /// Headers the proxy may inject — stripped from the incoming request when the
@@ -255,7 +262,12 @@ async fn send_request(
         "sending request to upstream"
     );
     // `body` is `Bytes`; moving it into reqwest is zero-copy (no `to_vec`).
-    let mut req = http.post(&url).body(body);
+    // `identity` is explicit: the HTTP client is built without decompression
+    // features, and the proxy reads the response bytes as SSE/JSON.
+    let mut req = http
+        .post(&url)
+        .body(body)
+        .header("accept-encoding", "identity");
     let strip_auth = !matches!(auth, AuthHeader::Passthrough);
     for (k, v) in headers {
         if HOP_BY_HOP.contains(&k.as_str()) {

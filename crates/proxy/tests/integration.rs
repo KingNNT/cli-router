@@ -684,6 +684,69 @@ async fn streaming_request_forwards_chunks_and_records_usage() {
 }
 
 #[tokio::test]
+async fn client_accept_encoding_is_replaced_with_identity_upstream() {
+    let upstream = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg_1", "usage": {"input_tokens": 1, "output_tokens": 1}
+        })))
+        .mount(&upstream)
+        .await;
+
+    let (proxy_addr, _conn) = start_proxy(upstream.uri()).await;
+    reqwest::Client::new()
+        .post(format!("http://{proxy_addr}/v1/messages"))
+        .header("content-type", "application/json")
+        .header("accept-encoding", "gzip, deflate, br")
+        .body(r#"{"model":"claude-3-5-sonnet-20241022","stream":false,"messages":[]}"#)
+        .send()
+        .await
+        .unwrap();
+
+    let reqs = upstream.received_requests().await.unwrap();
+    let sent = reqs[0].headers.get("accept-encoding");
+    assert_eq!(
+        sent.map(|v| v.to_str().unwrap()),
+        Some("identity"),
+        "proxy must ask upstream for an uncompressed body — it parses and rewrites the payload"
+    );
+}
+
+#[tokio::test]
+async fn upstream_content_encoding_is_not_forwarded_to_client() {
+    let upstream = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-encoding", "br")
+                .set_body_json(serde_json::json!({
+                    "id": "msg_1", "usage": {"input_tokens": 1, "output_tokens": 1}
+                })),
+        )
+        .mount(&upstream)
+        .await;
+
+    let (proxy_addr, _conn) = start_proxy(upstream.uri()).await;
+    let resp = reqwest::Client::new()
+        .post(format!("http://{proxy_addr}/v1/messages"))
+        .header("content-type", "application/json")
+        .body(r#"{"model":"claude-3-5-sonnet-20241022","stream":false,"messages":[]}"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    assert!(
+        resp.headers().get("content-encoding").is_none(),
+        "the proxy hands back an identity-encoded body, so it must not claim a content coding"
+    );
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["id"], "msg_1");
+}
+
+#[tokio::test]
 async fn upstream_error_is_forwarded_and_row_is_marked_errored() {
     let upstream = MockServer::start().await;
     Mock::given(matchers::method("POST"))
