@@ -60,6 +60,10 @@ fn load_all(root: &Path) -> Result<Vec<UsageRecord>, AdapterError> {
 fn visit_dir(dir: &Path, out: &mut Vec<UsageRecord>) -> Result<(), AdapterError> {
     for entry in std::fs::read_dir(dir).map_err(io_err)? {
         let entry = entry.map_err(io_err)?;
+        let file_type = entry.file_type().map_err(io_err)?;
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
         if path.is_dir() {
             visit_dir(&path, out)?;
@@ -347,5 +351,26 @@ mod tests {
     fn default_sessions_root_points_at_codex_sessions() {
         let root = default_sessions_root();
         assert!(root.ends_with(".codex/sessions"), "got {:?}", root);
+    }
+
+    #[test]
+    fn symlinked_directories_are_not_followed() {
+        let tmp = TestRoot::new("symlink");
+        write_session(
+            tmp.path(),
+            "2026/08/08",
+            "2026-08-08",
+            "a.jsonl",
+            "gpt-5.6-sol",
+            100,
+            10,
+        );
+        // A cycle: <root>/2026/08/loop -> <root>/2026
+        std::os::unix::fs::symlink(tmp.path().join("2026"), tmp.path().join("2026/08/loop"))
+            .unwrap();
+
+        let repo = CodexUsageRepository::new(tmp.path().to_path_buf());
+        let ov = repo.overview(&Filter::default()).unwrap();
+        assert_eq!(ov.message_count, 1);
     }
 }
