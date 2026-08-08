@@ -26,8 +26,10 @@
 
 | File | Responsibility |
 | --- | --- |
+| `crates/analysis/src/adapters/gateways/jsonl_records.rs` | **New.** Filtering and aggregation shared by the two JSONL-backed repositories: `in_range`, `matches_filter`, `overview_from`, `daily_by_model_from`. |
 | `crates/analysis/src/adapters/gateways/codex/parser.rs` | **New.** Serde line types + `parse_rollout`: JSONL lines → `Vec<UsageRecord>`. Owns the token-conversion and dedup rules. No filesystem access, so it is testable from string literals. |
-| `crates/analysis/src/adapters/gateways/codex/repository.rs` | **New.** `CodexUsageRepository`: recursive walk of `~/.codex/sessions`, one-shot cache, `UsageRepository` impl, filter matching. |
+| `crates/analysis/src/adapters/gateways/codex/repository.rs` | **New.** `CodexUsageRepository`: recursive walk of `~/.codex/sessions`, one-shot cache, `UsageRepository` impl delegating to `jsonl_records`. |
+| `crates/analysis/src/adapters/gateways/claudecode/repository.rs` | Delegate to `jsonl_records` instead of holding its own copies. |
 | `crates/analysis/src/adapters/gateways/codex/mod.rs` | **New.** Re-exports, mirroring `claudecode/mod.rs`. |
 | `crates/analysis/src/adapters/gateways/mod.rs` | Declare `pub mod codex;`. |
 | `crates/analysis/src/adapters/gateways/dispatching_usage_repository.rs` | Third `DataSource` variant + third dispatch arm. |
@@ -37,7 +39,331 @@
 
 The parser/repository split matters: every subtle rule in the spec (inclusive input, reasoning nesting, duplicate events, model attribution) lives in `parser.rs` and is tested without touching disk.
 
-**Note on duplication:** `in_range` and `matches_filter` are copied from `claudecode/repository.rs` rather than extracted into a shared module. The spec's file list is deliberate — extracting them would modify a working adapter that is out of scope for this change. Leave the duplication.
+**Note on the shared module:** the spec's file list did not include `jsonl_records.rs`. It was added after the spec was approved, by explicit decision: copying `in_range`, `matches_filter`, and both aggregate bodies into the Codex adapter would have duplicated roughly 110 lines of logic. Task 0 extracts them first, as a behaviour-preserving refactor gated by the existing Claude Code tests, so Tasks 1–4 build on the shared code rather than a copy.
+
+---
+
+## Task 0: Extract shared JSONL record helpers
+
+Behaviour-preserving refactor, done first so the Codex repository has something to reuse. No new behaviour: the existing `ClaudeCodeUsageRepository` tests are the gate and must pass **unmodified**.
+
+**Files:**
+- Create: `crates/analysis/src/adapters/gateways/jsonl_records.rs`
+- Modify: `crates/analysis/src/adapters/gateways/claudecode/repository.rs`
+- Modify: `crates/analysis/src/adapters/gateways/mod.rs`
+
+**Interfaces:**
+- Consumes: `crate::application::dto::Filter`, `shared::domain::entities::{DayModelRow, Overview, UsageRecord}`.
+- Produces, all `pub`:
+  - `fn in_range(date: NaiveDate, range: Option<&DateRange>) -> bool`
+  - `fn matches_filter(r: &UsageRecord, filter: &Filter) -> bool`
+  - `fn overview_from(records: &[UsageRecord], filter: &Filter) -> Overview`
+  - `fn daily_by_model_from(records: &[UsageRecord], filter: &Filter) -> Vec<DayModelRow>`
+
+  Task 2's `CodexUsageRepository` calls the last two.
+
+- [ ] **Step 1: Create the shared module**
+
+Create `crates/analysis/src/adapters/gateways/jsonl_records.rs`. The four function bodies are moved verbatim from `claudecode/repository.rs` — this step must not change behaviour:
+
+```rust
+//! Filtering and aggregation shared by the JSONL-backed usage repositories.
+//!
+//! `ClaudeCodeUsageRepository` and `CodexUsageRepository` both hold their
+//! records in memory and answer the same two `UsageRepository` questions, so
+//! the grouping lives here instead of once per adapter. The SQLite repository
+//! does this work in SQL and does not use this module.
+
+use std::collections::{HashMap, HashSet};
+
+use chrono::NaiveDate;
+
+use crate::application::dto::Filter;
+use shared::domain::entities::{DayModelRow, Overview, UsageRecord};
+use shared::domain::value_objects::{Cost, DateRange, ModelId, TokenBreakdown};
+
+pub fn in_range(date: NaiveDate, range: Option<&DateRange>) -> bool {
+    let Some(r) = range else { return true };
+    if let Some(from) = r.from
+        && date < from
+    {
+        return false;
+    }
+    if let Some(to) = r.to
+        && date > to
+    {
+        return false;
+    }
+    true
+}
+
+/// The `provider` field of `Filter` has no counterpart in JSONL records, so it
+/// is a pass-through here.
+pub fn matches_filter(r: &UsageRecord, filter: &Filter) -> bool {
+    if !in_range(r.date, filter.date_range.as_ref()) {
+        return false;
+    }
+    if let Some(p) = &filter.project
+        && r.project.as_str() != p.as_str()
+    {
+        return false;
+    }
+    if let Some(m) = &filter.model
+        && r.model.as_str() != m.as_str()
+    {
+        return false;
+    }
+    if let Some(s) = &filter.session_id
+        && r.session_id != *s
+    {
+        return false;
+    }
+    true
+}
+
+pub fn overview_from(records: &[UsageRecord], filter: &Filter) -> Overview {
+    let mut tokens = TokenBreakdown::default();
+    let mut cost = Cost::zero();
+    let mut messages: u64 = 0;
+    let mut sessions: HashSet<&str> = HashSet::new();
+    for r in records.iter().filter(|r| matches_filter(r, filter)) {
+        tokens += r.tokens;
+        cost += r.cost;
+        messages += 1;
+        if !r.session_id.is_empty() {
+            sessions.insert(r.session_id.as_str());
+        }
+    }
+    let range = filter.date_range.unwrap_or_else(DateRange::unbounded);
+    Overview {
+        range,
+        session_count: sessions.len() as u64,
+        message_count: messages,
+        tokens,
+        cost,
+    }
+}
+
+pub fn daily_by_model_from(records: &[UsageRecord], filter: &Filter) -> Vec<DayModelRow> {
+    type Group = (TokenBreakdown, Cost);
+    let mut map: HashMap<(NaiveDate, String), (ModelId, Group)> = HashMap::new();
+    for r in records.iter().filter(|r| matches_filter(r, filter)) {
+        let key = (r.date, r.model.as_str().to_string());
+        let entry = map
+            .entry(key)
+            .or_insert_with(|| (r.model.clone(), (TokenBreakdown::default(), Cost::zero())));
+        entry.1.0 += r.tokens;
+        entry.1.1 += r.cost;
+    }
+    let mut out: Vec<DayModelRow> = map
+        .into_iter()
+        .map(|((date, _), (model, (tokens, cost)))| DayModelRow {
+            date,
+            model,
+            tokens,
+            cost,
+        })
+        .collect();
+    out.sort_by(|a, b| {
+        b.date
+            .cmp(&a.date)
+            .then_with(|| a.model.as_str().cmp(b.model.as_str()))
+    });
+    out
+}
+```
+
+Declare it in `crates/analysis/src/adapters/gateways/mod.rs`:
+
+```rust
+pub mod claudecode;
+pub mod dispatching_usage_repository;
+pub mod http;
+pub mod jsonl_records;
+pub mod sqlite;
+
+pub use dispatching_usage_repository::{DataSource, DataSourceCell, DispatchingUsageRepository};
+```
+
+- [ ] **Step 2: Add unit tests for the shared module**
+
+Append to `crates/analysis/src/adapters/gateways/jsonl_records.rs`:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::domain::value_objects::{ProjectPath, TokenCount};
+
+    fn record(date: (i32, u32, u32), model: &str, project: &str, session: &str, input: u64) -> UsageRecord {
+        UsageRecord {
+            date: NaiveDate::from_ymd_opt(date.0, date.1, date.2).unwrap(),
+            model: ModelId::new(model).unwrap(),
+            project: ProjectPath::new(project).unwrap(),
+            tokens: TokenBreakdown {
+                input: TokenCount::new(input),
+                ..Default::default()
+            },
+            cost: Cost::zero(),
+            session_id: session.to_string(),
+        }
+    }
+
+    fn range(from: (i32, u32, u32), to: (i32, u32, u32)) -> DateRange {
+        DateRange::new(
+            Some(NaiveDate::from_ymd_opt(from.0, from.1, from.2).unwrap()),
+            Some(NaiveDate::from_ymd_opt(to.0, to.1, to.2).unwrap()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn unbounded_range_admits_everything() {
+        let d = NaiveDate::from_ymd_opt(2026, 8, 8).unwrap();
+        assert!(in_range(d, None));
+    }
+
+    #[test]
+    fn range_excludes_dates_outside_it() {
+        let r = range((2026, 8, 1), (2026, 8, 31));
+        assert!(in_range(NaiveDate::from_ymd_opt(2026, 8, 8).unwrap(), Some(&r)));
+        assert!(!in_range(NaiveDate::from_ymd_opt(2026, 7, 31).unwrap(), Some(&r)));
+        assert!(!in_range(NaiveDate::from_ymd_opt(2026, 9, 1).unwrap(), Some(&r)));
+    }
+
+    #[test]
+    fn provider_filter_is_a_pass_through() {
+        let r = record((2026, 8, 8), "m", "/p", "s", 10);
+        let filter = Filter {
+            provider: Some("anthropic".to_string()),
+            ..Filter::default()
+        };
+        assert!(matches_filter(&r, &filter));
+    }
+
+    #[test]
+    fn model_project_and_session_filters_narrow_the_set() {
+        let r = record((2026, 8, 8), "m1", "/p1", "s1", 10);
+        assert!(!matches_filter(
+            &r,
+            &Filter {
+                model: Some(ModelId::new("m2").unwrap()),
+                ..Filter::default()
+            }
+        ));
+        assert!(!matches_filter(
+            &r,
+            &Filter {
+                project: Some(ProjectPath::new("/p2").unwrap()),
+                ..Filter::default()
+            }
+        ));
+        assert!(!matches_filter(
+            &r,
+            &Filter {
+                session_id: Some("s2".to_string()),
+                ..Filter::default()
+            }
+        ));
+    }
+
+    #[test]
+    fn overview_counts_messages_and_distinct_sessions() {
+        let records = vec![
+            record((2026, 8, 8), "m", "/p", "s1", 10),
+            record((2026, 8, 8), "m", "/p", "s1", 20),
+            record((2026, 8, 7), "m", "/p", "s2", 5),
+        ];
+        let ov = overview_from(&records, &Filter::default());
+        assert_eq!(ov.message_count, 3);
+        assert_eq!(ov.session_count, 2);
+        assert_eq!(ov.tokens.input.value(), 35);
+    }
+
+    #[test]
+    fn overview_respects_the_date_range() {
+        let records = vec![
+            record((2026, 8, 8), "m", "/p", "s1", 10),
+            record((2026, 7, 1), "m", "/p", "s2", 999),
+        ];
+        let filter = Filter {
+            date_range: Some(range((2026, 8, 1), (2026, 8, 31))),
+            ..Filter::default()
+        };
+        let ov = overview_from(&records, &filter);
+        assert_eq!(ov.tokens.input.value(), 10);
+    }
+
+    #[test]
+    fn daily_by_model_groups_and_sorts_newest_first() {
+        let records = vec![
+            record((2026, 8, 7), "m1", "/p", "s", 5),
+            record((2026, 8, 8), "m2", "/p", "s", 20),
+            record((2026, 8, 8), "m1", "/p", "s", 10),
+            record((2026, 8, 8), "m1", "/p", "s", 30),
+        ];
+        let rows = daily_by_model_from(&records, &Filter::default());
+        assert_eq!(rows.len(), 3);
+        // Newest date first, models alphabetical within a date.
+        assert_eq!(rows[0].date.to_string(), "2026-08-08");
+        assert_eq!(rows[0].model.as_str(), "m1");
+        assert_eq!(rows[0].tokens.input.value(), 40);
+        assert_eq!(rows[1].model.as_str(), "m2");
+        assert_eq!(rows[2].date.to_string(), "2026-08-07");
+    }
+}
+```
+
+- [ ] **Step 3: Point the Claude Code adapter at the shared module**
+
+In `crates/analysis/src/adapters/gateways/claudecode/repository.rs`:
+
+1. Delete the free functions `in_range` and `matches_filter` (they now live in `jsonl_records`).
+2. Add the import: `use crate::adapters::gateways::jsonl_records::{daily_by_model_from, overview_from};`
+3. Replace the whole `impl UsageRepository for ClaudeCodeUsageRepository` block with:
+
+```rust
+impl UsageRepository for ClaudeCodeUsageRepository {
+    fn overview(&self, filter: &Filter) -> Result<Overview, ApplicationError> {
+        let records = self.records().map_err(ApplicationError::from)?;
+        Ok(overview_from(&records, filter))
+    }
+
+    fn daily_by_model(&self, filter: &Filter) -> Result<Vec<DayModelRow>, ApplicationError> {
+        let records = self.records().map_err(ApplicationError::from)?;
+        Ok(daily_by_model_from(&records, filter))
+    }
+}
+```
+
+4. Remove imports that are now unused. `cargo clippy` names them; expect `std::collections::HashMap` and some of the `shared::domain::value_objects` imports to go. Keep whatever the parser and the test module still need — `DateRange` and `NaiveDate` are used by the tests.
+
+**Do not touch the `#[cfg(test)] mod tests` block in this file.** Those tests passing unchanged is what proves the refactor preserved behaviour.
+
+- [ ] **Step 4: Run the tests to verify nothing changed**
+
+```bash
+cargo test -p analysis 2>&1 | tail -20
+```
+
+Expected: every pre-existing test still passes, plus the 7 new `jsonl_records` tests.
+
+- [ ] **Step 5: Run the lint gates**
+
+```bash
+cargo fmt && cargo clippy -p analysis --all-targets -- -D warnings 2>&1 | tail -20
+```
+
+Expected: no warnings.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add crates/analysis/src/adapters/gateways
+git commit -m "refactor(analysis): share jsonl record filtering and aggregation"
+```
+
+Allow at least 600 seconds — the pre-commit hook runs the whole test suite.
 
 ---
 
@@ -69,6 +395,7 @@ pub mod claudecode;
 pub mod codex;
 pub mod dispatching_usage_repository;
 pub mod http;
+pub mod jsonl_records;
 pub mod sqlite;
 
 pub use dispatching_usage_repository::{DataSource, DataSourceCell, DispatchingUsageRepository};
@@ -627,21 +954,18 @@ Expected: compile error — `CodexUsageRepository` does not implement `UsageRepo
 Replace the stub at the top of `crates/analysis/src/adapters/gateways/codex/repository.rs` (everything above `#[cfg(test)]`) with:
 
 ```rust
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use chrono::NaiveDate;
-
 use crate::adapters::gateways::codex::parser::parse_rollout;
+use crate::adapters::gateways::jsonl_records::{daily_by_model_from, overview_from};
 use crate::application::dto::Filter;
 use crate::application::ports::UsageRepository;
 use shared::adapters::AdapterError;
 use shared::application::errors::ApplicationError;
 use shared::domain::entities::{DayModelRow, Overview, UsageRecord};
-use shared::domain::value_objects::{Cost, DateRange, ModelId, TokenBreakdown};
 
 pub fn default_sessions_root() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
@@ -708,96 +1032,15 @@ fn io_err(e: std::io::Error) -> AdapterError {
     AdapterError::DataMapping(format!("codex io: {}", e))
 }
 
-fn in_range(date: NaiveDate, range: Option<&DateRange>) -> bool {
-    let Some(r) = range else { return true };
-    if let Some(from) = r.from
-        && date < from
-    {
-        return false;
-    }
-    if let Some(to) = r.to
-        && date > to
-    {
-        return false;
-    }
-    true
-}
-
-fn matches_filter(r: &UsageRecord, filter: &Filter) -> bool {
-    if !in_range(r.date, filter.date_range.as_ref()) {
-        return false;
-    }
-    if let Some(p) = &filter.project
-        && r.project.as_str() != p.as_str()
-    {
-        return false;
-    }
-    if let Some(m) = &filter.model
-        && r.model.as_str() != m.as_str()
-    {
-        return false;
-    }
-    if let Some(s) = &filter.session_id
-        && r.session_id != *s
-    {
-        return false;
-    }
-    // provider filter is not available in rollout records — pass-through.
-    true
-}
-
 impl UsageRepository for CodexUsageRepository {
     fn overview(&self, filter: &Filter) -> Result<Overview, ApplicationError> {
         let records = self.records().map_err(ApplicationError::from)?;
-        let mut tokens = TokenBreakdown::default();
-        let mut cost = Cost::zero();
-        let mut messages: u64 = 0;
-        let mut sessions: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for r in records.iter().filter(|r| matches_filter(r, filter)) {
-            tokens += r.tokens;
-            cost += r.cost;
-            messages += 1;
-            if !r.session_id.is_empty() {
-                sessions.insert(r.session_id.as_str());
-            }
-        }
-        let range = filter.date_range.unwrap_or_else(DateRange::unbounded);
-        Ok(Overview {
-            range,
-            session_count: sessions.len() as u64,
-            message_count: messages,
-            tokens,
-            cost,
-        })
+        Ok(overview_from(&records, filter))
     }
 
     fn daily_by_model(&self, filter: &Filter) -> Result<Vec<DayModelRow>, ApplicationError> {
         let records = self.records().map_err(ApplicationError::from)?;
-        type Group = (TokenBreakdown, Cost);
-        let mut map: HashMap<(NaiveDate, String), (ModelId, Group)> = HashMap::new();
-        for r in records.iter().filter(|r| matches_filter(r, filter)) {
-            let key = (r.date, r.model.as_str().to_string());
-            let entry = map
-                .entry(key)
-                .or_insert_with(|| (r.model.clone(), (TokenBreakdown::default(), Cost::zero())));
-            entry.1.0 += r.tokens;
-            entry.1.1 += r.cost;
-        }
-        let mut out: Vec<DayModelRow> = map
-            .into_iter()
-            .map(|((date, _), (model, (tokens, cost)))| DayModelRow {
-                date,
-                model,
-                tokens,
-                cost,
-            })
-            .collect();
-        out.sort_by(|a, b| {
-            b.date
-                .cmp(&a.date)
-                .then_with(|| a.model.as_str().cmp(b.model.as_str()))
-        });
-        Ok(out)
+        Ok(daily_by_model_from(&records, filter))
     }
 }
 ```
@@ -1123,7 +1366,7 @@ Allow at least 600 seconds.
 
 ## Done When
 
-- `cargo test --workspace` passes with 18 new codex tests plus the updated dispatcher and controller tests.
+- `cargo test --workspace` passes with 7 new `jsonl_records` tests, 18 new codex tests, and the updated dispatcher and controller tests — and every pre-existing Claude Code test still passing unmodified.
 - `cargo clippy --workspace --all-targets -- -D warnings` is clean.
 - Pressing `t` in `cargo run -p analysis` cycles OpenCode → Claude Code → Codex → OpenCode, and the Codex view shows real token and cost figures.
-- Four commits on `feature/codex-usage-source`, none on `develop`.
+- Five commits on `feature/codex-usage-source`, none on `develop`.
