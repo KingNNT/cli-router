@@ -13,7 +13,7 @@ use crate::application::dto::Filter;
 use shared::domain::entities::{DayModelRow, Overview, UsageRecord};
 use shared::domain::value_objects::{Cost, DateRange, ModelId, TokenBreakdown};
 
-pub fn in_range(date: NaiveDate, range: Option<&DateRange>) -> bool {
+pub(crate) fn in_range(date: NaiveDate, range: Option<&DateRange>) -> bool {
     let Some(r) = range else { return true };
     if let Some(from) = r.from
         && date < from
@@ -30,7 +30,7 @@ pub fn in_range(date: NaiveDate, range: Option<&DateRange>) -> bool {
 
 /// The `provider` field of `Filter` has no counterpart in JSONL records, so it
 /// is a pass-through here.
-pub fn matches_filter(r: &UsageRecord, filter: &Filter) -> bool {
+pub(crate) fn matches_filter(r: &UsageRecord, filter: &Filter) -> bool {
     if !in_range(r.date, filter.date_range.as_ref()) {
         return false;
     }
@@ -52,7 +52,7 @@ pub fn matches_filter(r: &UsageRecord, filter: &Filter) -> bool {
     true
 }
 
-pub fn overview_from(records: &[UsageRecord], filter: &Filter) -> Overview {
+pub(crate) fn overview_from(records: &[UsageRecord], filter: &Filter) -> Overview {
     let mut tokens = TokenBreakdown::default();
     let mut cost = Cost::zero();
     let mut messages: u64 = 0;
@@ -75,7 +75,7 @@ pub fn overview_from(records: &[UsageRecord], filter: &Filter) -> Overview {
     }
 }
 
-pub fn daily_by_model_from(records: &[UsageRecord], filter: &Filter) -> Vec<DayModelRow> {
+pub(crate) fn daily_by_model_from(records: &[UsageRecord], filter: &Filter) -> Vec<DayModelRow> {
     type Group = (TokenBreakdown, Cost);
     let mut map: HashMap<(NaiveDate, String), (ModelId, Group)> = HashMap::new();
     for r in records.iter().filter(|r| matches_filter(r, filter)) {

@@ -65,7 +65,7 @@ fn visit_dir(dir: &Path, out: &mut Vec<UsageRecord>) -> Result<(), AdapterError>
             continue;
         }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
             visit_dir(&path, out)?;
         } else if path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
             let f = File::open(&path).map_err(io_err)?;

@@ -60,8 +60,8 @@ struct TokenInfo {
 /// event without a matching request, and the re-emission repeats the previous
 /// event's `total_token_usage` field for field.
 #[derive(Deserialize, Clone, PartialEq)]
-#[allow(dead_code)]
 // Fields are compared as a unit for duplicate detection.
+#[allow(dead_code)]
 struct TokenUsage {
     input_tokens: Option<u64>,
     cached_input_tokens: Option<u64>,
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn model_comes_from_the_most_recent_turn_context() {
-        let ctx2 = r#"{"timestamp":"2026-08-30:00.000Z","type":"turn_context","payload":{"turn_id":"t2","cwd":"/proj","model":"gpt-5.6-terra"}}"#;
+        let ctx2 = r#"{"timestamp":"2026-08-08T12:30:00.000Z","type":"turn_context","payload":{"turn_id":"t2","cwd":"/proj","model":"gpt-5.6-terra"}}"#;
         let count2 = r#"{"timestamp":"2026-08-08T12:30:05.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":99999,"total_tokens":99999},"last_token_usage":{"input_tokens":500,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":50,"total_tokens":550}}}}"#;
         let records = parse(&[META, CTX, COUNT, ctx2, count2]);
         assert_eq!(records.len(), 2);
