@@ -1,4 +1,5 @@
 pub mod claudecode;
+pub mod codex;
 pub mod dispatching_usage_repository;
 pub mod http;
 pub mod jsonl_records;
