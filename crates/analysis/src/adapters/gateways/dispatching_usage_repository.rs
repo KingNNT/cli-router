@@ -10,12 +10,14 @@ use shared::domain::entities::{DayModelRow, Overview};
 pub enum DataSource {
     OpenCode,
     ClaudeCode,
+    Codex,
 }
 
 impl DataSource {
     pub fn from_u8(v: u8) -> Self {
         match v {
             1 => DataSource::ClaudeCode,
+            2 => DataSource::Codex,
             _ => DataSource::OpenCode,
         }
     }
@@ -24,6 +26,7 @@ impl DataSource {
         match self {
             DataSource::OpenCode => 0,
             DataSource::ClaudeCode => 1,
+            DataSource::Codex => 2,
         }
     }
 
@@ -31,13 +34,16 @@ impl DataSource {
         match self {
             DataSource::OpenCode => "OpenCode",
             DataSource::ClaudeCode => "Claude Code",
+            DataSource::Codex => "Codex",
         }
     }
 
+    /// Advances to the next source, wrapping around.
     pub fn toggle(self) -> Self {
         match self {
             DataSource::OpenCode => DataSource::ClaudeCode,
-            DataSource::ClaudeCode => DataSource::OpenCode,
+            DataSource::ClaudeCode => DataSource::Codex,
+            DataSource::Codex => DataSource::OpenCode,
         }
     }
 }
@@ -65,6 +71,7 @@ impl DataSourceCell {
 pub struct DispatchingUsageRepository {
     opencode: Arc<dyn UsageRepository>,
     claudecode: Arc<dyn UsageRepository>,
+    codex: Arc<dyn UsageRepository>,
     current: DataSourceCell,
 }
 
@@ -72,11 +79,13 @@ impl DispatchingUsageRepository {
     pub fn new(
         opencode: Arc<dyn UsageRepository>,
         claudecode: Arc<dyn UsageRepository>,
+        codex: Arc<dyn UsageRepository>,
         current: DataSourceCell,
     ) -> Self {
         Self {
             opencode,
             claudecode,
+            codex,
             current,
         }
     }
@@ -85,6 +94,7 @@ impl DispatchingUsageRepository {
         match self.current.get() {
             DataSource::OpenCode => &self.opencode,
             DataSource::ClaudeCode => &self.claudecode,
+            DataSource::Codex => &self.codex,
         }
     }
 }
@@ -130,9 +140,10 @@ mod tests {
     fn dispatcher_routes_to_opencode_by_default() {
         let oc: Arc<dyn UsageRepository> = Arc::new(fake_with(100));
         let cc: Arc<dyn UsageRepository> = Arc::new(fake_with(999));
+        let cx: Arc<dyn UsageRepository> = Arc::new(fake_with(555));
 
         let cell = DataSourceCell::new(DataSource::OpenCode);
-        let disp = DispatchingUsageRepository::new(oc, cc, cell);
+        let disp = DispatchingUsageRepository::new(oc, cc, cx, cell);
 
         let rows = disp.daily_by_model(&Filter::default()).unwrap();
         assert_eq!(rows[0].tokens.input.value(), 100);
@@ -142,9 +153,10 @@ mod tests {
     fn dispatcher_follows_source_cell_changes() {
         let oc: Arc<dyn UsageRepository> = Arc::new(fake_with(100));
         let cc: Arc<dyn UsageRepository> = Arc::new(fake_with(999));
+        let cx: Arc<dyn UsageRepository> = Arc::new(fake_with(555));
 
         let cell = DataSourceCell::new(DataSource::OpenCode);
-        let disp = DispatchingUsageRepository::new(oc, cc, cell.clone());
+        let disp = DispatchingUsageRepository::new(oc, cc, cx, cell.clone());
 
         assert_eq!(
             disp.daily_by_model(&Filter::default()).unwrap()[0]
@@ -164,9 +176,42 @@ mod tests {
     }
 
     #[test]
-    fn data_source_toggle_flips() {
+    fn data_source_toggle_cycles_three_sources() {
         assert_eq!(DataSource::OpenCode.toggle(), DataSource::ClaudeCode);
-        assert_eq!(DataSource::ClaudeCode.toggle(), DataSource::OpenCode);
+        assert_eq!(DataSource::ClaudeCode.toggle(), DataSource::Codex);
+        assert_eq!(DataSource::Codex.toggle(), DataSource::OpenCode);
+    }
+
+    #[test]
+    fn data_source_u8_round_trips() {
+        for s in [
+            DataSource::OpenCode,
+            DataSource::ClaudeCode,
+            DataSource::Codex,
+        ] {
+            assert_eq!(DataSource::from_u8(s.as_u8()), s);
+        }
+        // Unknown values still fall back to the default source.
+        assert_eq!(DataSource::from_u8(99), DataSource::OpenCode);
+    }
+
+    #[test]
+    fn codex_has_its_own_label() {
+        assert_eq!(DataSource::Codex.label(), "Codex");
+    }
+
+    #[test]
+    fn dispatcher_routes_to_codex_when_selected() {
+        let oc: Arc<dyn UsageRepository> = Arc::new(fake_with(100));
+        let cc: Arc<dyn UsageRepository> = Arc::new(fake_with(999));
+        let cx: Arc<dyn UsageRepository> = Arc::new(fake_with(555));
+
+        let cell = DataSourceCell::new(DataSource::OpenCode);
+        let disp = DispatchingUsageRepository::new(oc, cc, cx, cell.clone());
+
+        cell.set(DataSource::Codex);
+        let rows = disp.daily_by_model(&Filter::default()).unwrap();
+        assert_eq!(rows[0].tokens.input.value(), 555);
     }
 
     // Silence unused-trait import warning in tests that don't call Overview directly.
