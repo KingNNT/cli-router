@@ -6,7 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A Rust workspace named **`cli-router`** with **3 binary apps** and **2 library crates**:
 
-- **`analysis`** — interactive Ratatui TUI that reads the OpenCode SQLite database at `~/.local/share/opencode/opencode.db` and Claude Code's JSONL session files, then renders token/cost usage as a ccusage-style dashboard. Menu-driven, not argv-driven. Has both `lib` and `bin` targets.
+- **`analysis`** — interactive Ratatui TUI that reads the OpenCode SQLite database at
+  `~/.local/share/opencode/opencode.db`, Claude Code's JSONL session files, and Codex CLI's
+  rollout JSONL files at `~/.codex/sessions/`, then renders token/cost usage as a
+  ccusage-style dashboard. Menu-driven, not argv-driven. Has both `lib` and `bin` targets.
 - **`proxy`** — localhost HTTP proxy in front of LLM providers (Anthropic, Z.ai, DeepSeek, OpenAI, Codex, MiniMax). Multi-provider routing with glob-based model matching, `provider/model` namespace overrides, round-robin load balancing with 429 cooldown, affinity-based session stickiness, admin API for live config editing, OAuth flows for Anthropic (PKCE) and OpenAI with automatic token refresh, cross-format translation (Anthropic↔OpenAI), token counting endpoint with local estimation fallback, Swagger/OpenAPI docs via utoipa, and hot reload. Accepts both Anthropic (`POST /v1/messages`) and OpenAI (`POST /v1/chat/completions`) formats, captures token usage from streaming and non-streaming responses, and writes one row per request to a local SQLite file. **Config is stored in SQLite** (single source of truth via `DbConfigRepository`), edited only through the admin API / TUI.
 - **`proxy-tui`** — Ratatui admin client for the proxy daemon. Connects to the proxy's admin API to view status, edit config, manage providers, test connectivity, and initiate OAuth flows (Anthropic and OpenAI).
 
@@ -88,8 +91,8 @@ crates/
 │       │                   GetDashboard / GetPricing / SyncPricing use cases, dtos,
 │       │                   FakeUsageRepository
 │       ├── adapters/       SqliteUsageRepository, ClaudeCodeUsageRepository,
-│       │                   DispatchingUsageRepository, LiteLlmPricingSource,
-│       │                   presenters, view models
+│       │                   CodexUsageRepository, DispatchingUsageRepository,
+│       │                   LiteLlmPricingSource, presenters, view models
 │       ├── tui/            framework ring — ratatui renderer, AppState, event loop,
 │       │                   terminal setup, controllers
 │       ├── lib.rs          library root (shared types for tests)
@@ -259,5 +262,6 @@ Detailed conventions live in `.claude/rules/`:
 - **Pricing lookup correction** — spec `docs/superpowers/specs/2026-05-24-pricing-lookup-correction-design.md`, plan `docs/superpowers/plans/2026-05-24-pricing-lookup-correction.md`.
 - **MiniMax thinking cleanup** — plan `docs/superpowers/plans/2026-06-05-minimax-thinking-cleanup.md`.
 - **MiniMax thinking mode config** — plan `docs/superpowers/plans/2026-06-05-minimax-thinking-mode-config.md`.
+- **Codex usage source** — spec `docs/superpowers/specs/2026-08-08-codex-usage-source-design.md`, plan `docs/superpowers/plans/2026-08-08-codex-usage-source.md`.
 
 Consult these for motivation before changing data shapes, ring boundaries, or proxy contracts.

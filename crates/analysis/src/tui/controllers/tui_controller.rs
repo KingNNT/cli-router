@@ -942,6 +942,16 @@ mod tests {
                 &mut state,
             )
             .unwrap();
+        assert_eq!(state.data_source.get(), DataSource::Codex);
+        assert_eq!(state.status_message.as_deref(), Some("Source: Codex"));
+        assert!(state.dashboard_vm.is_some());
+
+        controller
+            .handle(
+                KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE),
+                &mut state,
+            )
+            .unwrap();
         assert_eq!(state.data_source.get(), DataSource::OpenCode);
     }
 

@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use analysis::adapters::gateways::claudecode::{ClaudeCodeUsageRepository, default_projects_root};
+use analysis::adapters::gateways::codex::{CodexUsageRepository, default_sessions_root};
 use analysis::adapters::gateways::http::LiteLlmPricingSource;
 use analysis::adapters::gateways::sqlite::SqliteUsageRepository;
 use analysis::adapters::gateways::{DataSource, DataSourceCell, DispatchingUsageRepository};
@@ -32,10 +33,14 @@ fn run() -> Result<(), FrameworkError> {
     let claudecode_repo: Arc<dyn UsageRepository> =
         Arc::new(ClaudeCodeUsageRepository::new(default_projects_root()));
 
+    let codex_repo: Arc<dyn UsageRepository> =
+        Arc::new(CodexUsageRepository::new(default_sessions_root()));
+
     let data_source = DataSourceCell::new(DataSource::OpenCode);
     let usage_repo: Arc<dyn UsageRepository> = Arc::new(DispatchingUsageRepository::new(
         opencode_repo,
         claudecode_repo,
+        codex_repo,
         data_source.clone(),
     ));
 
