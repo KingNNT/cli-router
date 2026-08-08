@@ -25,8 +25,13 @@ struct Payload {
     /// Present on `event_msg` lines: `"token_count"`, `"agent_message"`, …
     #[serde(rename = "type")]
     payload_type: Option<String>,
-    /// `session_meta` only.
+    /// `session_meta` only. Present in a minority of real files; when both
+    /// this and `id` are present they hold the same value and `session_id`
+    /// wins.
     session_id: Option<String>,
+    /// `session_meta` only. Present in the large majority of real files
+    /// where `session_id` is absent — the fallback source of the session id.
+    id: Option<String>,
     /// `session_meta` and `turn_context`.
     cwd: Option<String>,
     /// `turn_context` only.
@@ -100,7 +105,7 @@ pub fn parse_rollout(lines: impl Iterator<Item = String>, out: &mut Vec<UsageRec
 
         match evt.line_type.as_deref() {
             Some("session_meta") => {
-                if let Some(id) = payload.session_id {
+                if let Some(id) = payload.session_id.or(payload.id) {
                     session_id = id;
                 }
                 if payload.cwd.is_some() {
@@ -268,5 +273,22 @@ mod tests {
         let records = parse(&[META, ctx_no_cwd, COUNT]);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].project.as_str(), "/proj");
+    }
+
+    #[test]
+    fn session_id_falls_back_to_payload_id_when_session_id_is_absent() {
+        // Most real rollout files carry `id`, not `session_id`, on session_meta.
+        let meta_id_only = r#"{"timestamp":"2026-08-08T12:20:57.961Z","type":"session_meta","payload":{"id":"s-from-id","cwd":"/proj","cli_version":"0.147.0"}}"#;
+        let records = parse(&[meta_id_only, CTX, COUNT]);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].session_id, "s-from-id");
+    }
+
+    #[test]
+    fn session_id_wins_when_both_session_id_and_id_are_present() {
+        let meta_both = r#"{"timestamp":"2026-08-08T12:20:57.961Z","type":"session_meta","payload":{"session_id":"s-session-id","id":"s-id","cwd":"/proj","cli_version":"0.147.0"}}"#;
+        let records = parse(&[meta_both, CTX, COUNT]);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].session_id, "s-session-id");
     }
 }
