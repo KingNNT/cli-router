@@ -3,6 +3,16 @@
 //! Codex emits one `token_count` event per API request. The event carries no
 //! model or turn id, so the model is taken from the most recent `turn_context`
 //! line — parsing must be sequential and stateful.
+//!
+//! Codex Desktop-format rollouts (`originator: "Codex Desktop"`) omit
+//! `turn_context` entirely, so their `token_count` events never get a model
+//! and are skipped by the `current_model` check below. On the sample examined,
+//! every skipped Desktop event carried zero tokens in each of
+//! `input_tokens`/`output_tokens`/`cached_input_tokens`/
+//! `cache_write_input_tokens` — only the aggregate `total_tokens` was
+//! non-zero — so nothing is lost today. A future Desktop format that
+//! populates those buckets would under-report silently; there is no model
+//! field anywhere in the Desktop `session_meta` to fall back to.
 
 use chrono::DateTime;
 use serde::Deserialize;

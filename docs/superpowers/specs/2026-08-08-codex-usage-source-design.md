@@ -23,7 +23,13 @@ walks OpenCode → Claude Code → Codex → OpenCode.
 ## Data source shape
 
 Verified against 61 rollout files on disk (2026-07-20 through 2026-08-08, Codex
-CLI `0.147.0`). All 61 files share one shape — no schema variants to branch on.
+CLI `0.147.0`). The shape described below was verified on the 11 files that
+carry a `turn_context` line. The other 50 — everything under
+`2026/06/18/`, written by `originator: "Codex Desktop"`,
+`cli_version 0.140.0-alpha.19` — are a Desktop-format variant that omits
+`turn_context` entirely; their `token_count` events have no model to attach to
+and are skipped by the parser (see `parser.rs`'s module doc for the data-loss
+analysis).
 
 Each line is a JSON object with a top-level `type`. Three types matter:
 
