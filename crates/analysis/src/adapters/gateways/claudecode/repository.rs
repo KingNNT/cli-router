@@ -1,20 +1,18 @@
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use chrono::{DateTime, NaiveDate};
+use chrono::DateTime;
 use serde::Deserialize;
 
+use crate::adapters::gateways::jsonl_records::{daily_by_model_from, overview_from};
 use crate::application::dto::Filter;
 use crate::application::ports::UsageRepository;
 use shared::adapters::AdapterError;
 use shared::application::errors::ApplicationError;
 use shared::domain::entities::{DayModelRow, Overview, UsageRecord};
-use shared::domain::value_objects::{
-    Cost, DateRange, ModelId, ProjectPath, TokenBreakdown, TokenCount,
-};
+use shared::domain::value_objects::{Cost, ModelId, ProjectPath, TokenBreakdown, TokenCount};
 
 pub fn default_projects_root() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
@@ -136,96 +134,15 @@ fn io_err(e: std::io::Error) -> AdapterError {
     AdapterError::DataMapping(format!("claudecode io: {}", e))
 }
 
-fn in_range(date: NaiveDate, range: Option<&DateRange>) -> bool {
-    let Some(r) = range else { return true };
-    if let Some(from) = r.from
-        && date < from
-    {
-        return false;
-    }
-    if let Some(to) = r.to
-        && date > to
-    {
-        return false;
-    }
-    true
-}
-
-fn matches_filter(r: &UsageRecord, filter: &Filter) -> bool {
-    if !in_range(r.date, filter.date_range.as_ref()) {
-        return false;
-    }
-    if let Some(p) = &filter.project
-        && r.project.as_str() != p.as_str()
-    {
-        return false;
-    }
-    if let Some(m) = &filter.model
-        && r.model.as_str() != m.as_str()
-    {
-        return false;
-    }
-    if let Some(s) = &filter.session_id
-        && r.session_id != *s
-    {
-        return false;
-    }
-    // provider filter is not available in JSONL records — pass-through.
-    true
-}
-
 impl UsageRepository for ClaudeCodeUsageRepository {
     fn overview(&self, filter: &Filter) -> Result<Overview, ApplicationError> {
         let records = self.records().map_err(ApplicationError::from)?;
-        let mut tokens = TokenBreakdown::default();
-        let mut cost = Cost::zero();
-        let mut messages: u64 = 0;
-        let mut sessions: std::collections::HashSet<&str> = std::collections::HashSet::new();
-        for r in records.iter().filter(|r| matches_filter(r, filter)) {
-            tokens += r.tokens;
-            cost += r.cost;
-            messages += 1;
-            if !r.session_id.is_empty() {
-                sessions.insert(r.session_id.as_str());
-            }
-        }
-        let range = filter.date_range.unwrap_or_else(DateRange::unbounded);
-        Ok(Overview {
-            range,
-            session_count: sessions.len() as u64,
-            message_count: messages,
-            tokens,
-            cost,
-        })
+        Ok(overview_from(&records, filter))
     }
 
     fn daily_by_model(&self, filter: &Filter) -> Result<Vec<DayModelRow>, ApplicationError> {
         let records = self.records().map_err(ApplicationError::from)?;
-        type Group = (TokenBreakdown, Cost);
-        let mut map: HashMap<(NaiveDate, String), (ModelId, Group)> = HashMap::new();
-        for r in records.iter().filter(|r| matches_filter(r, filter)) {
-            let key = (r.date, r.model.as_str().to_string());
-            let entry = map
-                .entry(key)
-                .or_insert_with(|| (r.model.clone(), (TokenBreakdown::default(), Cost::zero())));
-            entry.1.0 += r.tokens;
-            entry.1.1 += r.cost;
-        }
-        let mut out: Vec<DayModelRow> = map
-            .into_iter()
-            .map(|((date, _), (model, (tokens, cost)))| DayModelRow {
-                date,
-                model,
-                tokens,
-                cost,
-            })
-            .collect();
-        out.sort_by(|a, b| {
-            b.date
-                .cmp(&a.date)
-                .then_with(|| a.model.as_str().cmp(b.model.as_str()))
-        });
-        Ok(out)
+        Ok(daily_by_model_from(&records, filter))
     }
 }
 
@@ -257,6 +174,8 @@ struct TranscriptUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::NaiveDate;
+    use shared::domain::value_objects::DateRange;
     use std::io::Write;
 
     struct TestRoot(PathBuf);
