@@ -4,7 +4,7 @@ use chrono::NaiveDate;
 
 use crate::adapters::presenters::formatting::{fmt_cost, fmt_num, fmt_num_compact, format_date_md};
 use crate::adapters::view_models::{
-    DashboardViewModel, DayPivotRowVM, ModelBreakdownVM, ModelColumnVM,
+    DashboardViewModel, DayPivotRowVM, ModelBreakdownVM, ModelColumnVM, TotalBreakdownVM,
 };
 use crate::application::dto::GetDashboardOutput;
 use shared::domain::value_objects::{ModelId, TokenBreakdown};
@@ -56,7 +56,7 @@ pub fn present_dashboard(
     let rows: Vec<DayPivotRowVM> = days
         .iter()
         .map(|date| {
-            let mut row_total: u64 = 0;
+            let mut row_tokens = TokenBreakdown::default();
             let mut row_cost: f64 = 0.0;
             let model_cells: Vec<ModelBreakdownVM> = columns
                 .iter()
@@ -65,7 +65,7 @@ pub fn present_dashboard(
                         .get(&(*date, m.clone()))
                         .copied()
                         .unwrap_or_default();
-                    row_total += tb.total().value();
+                    row_tokens += tb;
                     row_cost += cost;
                     breakdown_cell(&tb, cost, m, &out.unpriced_models)
                 })
@@ -73,8 +73,8 @@ pub fn present_dashboard(
             DayPivotRowVM {
                 date_label: format_date_md(*date),
                 model_cells,
-                total: total_cell(row_total),
-                total_cost: cost_cell(row_cost, row_total),
+                total: total_breakdown_cell(&row_tokens),
+                total_cost: cost_cell(row_cost, row_tokens.total().value()),
             }
         })
         .collect();
@@ -95,10 +95,13 @@ pub fn present_dashboard(
         })
         .collect();
 
-    let grand_total_raw: u64 = out.rows.iter().map(|r| r.tokens.total().value()).sum();
-    let grand_total = total_cell(grand_total_raw);
+    let grand_tokens = out
+        .rows
+        .iter()
+        .fold(TokenBreakdown::default(), |acc, r| acc + r.tokens);
+    let grand_total = total_breakdown_cell(&grand_tokens);
     let grand_cost_raw: f64 = out.rows.iter().map(|r| r.cost.value()).sum();
-    let grand_cost = cost_cell(grand_cost_raw, grand_total_raw);
+    let grand_cost = cost_cell(grand_cost_raw, grand_tokens.total().value());
 
     let pricing_note = if out.missing_pricing_count > 0 {
         Some(format!(
@@ -175,8 +178,14 @@ fn breakdown_cell(
     }
 }
 
-fn total_cell(n: u64) -> String {
-    fmt_cell(n)
+fn total_breakdown_cell(tb: &TokenBreakdown) -> TotalBreakdownVM {
+    TotalBreakdownVM {
+        input: fmt_cell(tb.input.value()),
+        cache_read: fmt_cell(tb.cache_read.value()),
+        output: fmt_cell(tb.output.value()),
+        cache_write: fmt_cell(tb.cache_write.value()),
+        reasoning: fmt_cell(tb.reasoning.value()),
+    }
 }
 
 fn cost_cell(cost: f64, tokens: u64) -> String {
@@ -417,13 +426,26 @@ mod tests {
     }
 
     #[test]
-    fn row_total_sums_all_tokens_across_models() {
+    fn row_total_splits_tokens_by_category_across_models() {
         let vm = present(&output(vec![
             row_full((2026, 4, 23), "a", (100, 50, 20, 10)),
             row_full((2026, 4, 23), "b", (200, 100, 30, 20)),
         ]));
-        // 100+50+20+10 + 200+100+30+20 = 530
-        assert_eq!(vm.rows[0].total, "530");
+        let total = &vm.rows[0].total;
+        assert_eq!(total.input, "300");
+        assert_eq!(total.cache_read, "50");
+        assert_eq!(total.output, "150");
+        assert_eq!(total.cache_write, "30");
+        assert_eq!(total.reasoning, "—");
+    }
+
+    #[test]
+    fn row_total_carries_reasoning_tokens() {
+        let mut r = row_full((2026, 4, 23), "a", (100, 50, 20, 10));
+        r.tokens.reasoning = TokenCount::new(7);
+        let vm = present(&output(vec![r]));
+        assert_eq!(vm.rows[0].total.reasoning, "7");
+        assert_eq!(vm.grand_total.reasoning, "7");
     }
 
     #[test]
@@ -435,8 +457,10 @@ mod tests {
         assert_eq!(vm.column_totals.len(), 1);
         assert_eq!(vm.column_totals[0].input, "300");
         assert_eq!(vm.column_totals[0].output, "150");
-        // grand total = 300+150+50+30 = 530
-        assert_eq!(vm.grand_total, "530");
+        assert_eq!(vm.grand_total.input, "300");
+        assert_eq!(vm.grand_total.cache_read, "50");
+        assert_eq!(vm.grand_total.output, "150");
+        assert_eq!(vm.grand_total.cache_write, "30");
     }
 
     #[test]

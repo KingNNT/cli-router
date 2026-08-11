@@ -9,16 +9,16 @@ use ratatui::{
 const TITLE_HEIGHT: u16 = 1;
 const TAB_BAR_HEIGHT: u16 = 1;
 
-use crate::adapters::view_models::{DashboardViewModel, ModelBreakdownVM};
+use crate::adapters::view_models::{DashboardViewModel, ModelBreakdownVM, TotalBreakdownVM};
 
 const DATE_COL_WIDTH: u16 = 6;
 const MIN_SUB_COL_WIDTH: u16 = 5;
 const MAX_NUMERIC_WIDTH: u16 = 8;
 const MAX_NAME_WIDTH: u16 = 24;
-const TOTAL_COL_WIDTH: u16 = 8;
 const COST_COL_WIDTH: u16 = 8;
 const GROUP_SEP_WIDTH: u16 = 1;
 const SUB_LABELS: [&str; 6] = ["In", "Out", "CR", "CW", "Rsn", "$"];
+const TOTAL_SUB_LABELS: [&str; 5] = ["In", "CR", "Out", "CW", "Rsn"];
 
 pub fn draw(
     f: &mut Frame,
@@ -105,9 +105,28 @@ pub fn draw(
     // Ratatui's Table compresses all columns proportionally when the sum of
     // Constraint::Length exceeds the area, so we must cap the set here.
     // Budget = table width - borders - Date - Total - Cost - inter-column spacing.
+    // Aggregate block widths, measured over every row plus the grand total.
+    let mut total_widths = [MIN_SUB_COL_WIDTH; 5];
+    for (si, label) in TOTAL_SUB_LABELS.iter().enumerate() {
+        total_widths[si] = total_widths[si].max(label.chars().count() as u16);
+    }
+    // The first aggregate column carries the "Total" header on its top line.
+    total_widths[0] = total_widths[0].max("Total".chars().count() as u16);
+    for r in &vm.rows {
+        for (si, text) in total_texts(&r.total).iter().enumerate() {
+            total_widths[si] = total_widths[si].max(text.chars().count() as u16);
+        }
+    }
+    for (si, text) in total_texts(&vm.grand_total).iter().enumerate() {
+        total_widths[si] = total_widths[si].max(text.chars().count() as u16);
+    }
+    for w in total_widths.iter_mut() {
+        *w = (*w).clamp(MIN_SUB_COL_WIDTH, MAX_NUMERIC_WIDTH);
+    }
+
     let borders_pad: u16 = 2;
     let spacing_per_col: u16 = 1; // ratatui default column spacing
-    let fixed = DATE_COL_WIDTH + TOTAL_COL_WIDTH + COST_COL_WIDTH;
+    let fixed = DATE_COL_WIDTH + total_widths.iter().sum::<u16>() + COST_COL_WIDTH;
     // A leading separator is drawn between Date and the first model group.
     let leading_sep = GROUP_SEP_WIDTH + spacing_per_col;
     let mut budget = table_area
@@ -115,8 +134,8 @@ pub fn draw(
         .saturating_sub(borders_pad)
         .saturating_sub(fixed)
         .saturating_sub(leading_sep)
-        // spacing for Date|...|Total|Cost — 3 gaps outside model groups.
-        .saturating_sub(spacing_per_col * 3);
+        // spacing for Date|...|In|CR|Out|CW|Rsn|Cost — 7 gaps outside model groups.
+        .saturating_sub(spacing_per_col * 7);
 
     let mut visible_models: Vec<usize> = Vec::new();
     let mut sub_widths: Vec<[u16; 6]> = Vec::new();
@@ -153,8 +172,10 @@ pub fn draw(
         all_widths.push(GROUP_SEP_WIDTH);
         is_sep.push(true);
     }
-    all_widths.push(TOTAL_COL_WIDTH);
-    is_sep.push(false);
+    for &w in &total_widths {
+        all_widths.push(w);
+        is_sep.push(false);
+    }
     all_widths.push(COST_COL_WIDTH);
     is_sep.push(false);
 
@@ -182,7 +203,10 @@ pub fn draw(
         }
         header_cells.push(two_line_header_bar(sep_style));
     }
-    header_cells.push(two_line_header("", "Total"));
+    for (si, label) in TOTAL_SUB_LABELS.iter().enumerate() {
+        let top = if si == 0 { "Total" } else { "" };
+        header_cells.push(two_line_header(top, label));
+    }
     header_cells.push(two_line_header("", "Cost"));
     let header = Row::new(header_cells).height(2);
 
@@ -220,10 +244,11 @@ pub fn draw(
             }
             cells.push(bar_cell(sep_style));
         }
-        cells.push(Cell::from(Span::styled(
-            r.total.clone(),
+        push_total_cells(
+            &mut cells,
+            &r.total,
             Style::default().add_modifier(Modifier::BOLD),
-        )));
+        );
         cells.push(Cell::from(Span::styled(
             r.total_cost.clone(),
             Style::default().add_modifier(Modifier::BOLD),
@@ -250,12 +275,13 @@ pub fn draw(
         }
         total_cells.push(bar_cell(sep_style));
     }
-    total_cells.push(Cell::from(Span::styled(
-        vm.grand_total.clone(),
+    push_total_cells(
+        &mut total_cells,
+        &vm.grand_total,
         Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
-    )));
+    );
     total_cells.push(Cell::from(Span::styled(
         vm.grand_cost.clone(),
         Style::default()
@@ -324,6 +350,28 @@ fn breakdown_texts(b: &ModelBreakdownVM) -> [&str; 6] {
 fn widen_to_fit(widths: &mut [u16; 6], cell: &ModelBreakdownVM) {
     for (si, text) in breakdown_texts(cell).iter().enumerate() {
         widths[si] = widths[si].max(text.chars().count() as u16);
+    }
+}
+
+/// The five aggregate texts, in render order.
+fn total_texts(t: &TotalBreakdownVM) -> [&str; 5] {
+    [
+        &t.input,
+        &t.cache_read,
+        &t.output,
+        &t.cache_write,
+        &t.reasoning,
+    ]
+}
+
+fn push_total_cells(cells: &mut Vec<Cell<'static>>, t: &TotalBreakdownVM, style: Style) {
+    for text in total_texts(t) {
+        let cell_style = if text == "—" {
+            style.fg(Color::DarkGray)
+        } else {
+            style
+        };
+        cells.push(Cell::from(Span::styled(text.to_string(), cell_style)));
     }
 }
 
@@ -490,7 +538,7 @@ fn truncate_for_header(value: &str, budget: usize) -> String {
 mod tests {
     use super::*;
     use crate::adapters::view_models::{
-        DashboardViewModel, DayPivotRowVM, ModelBreakdownVM, ModelColumnVM,
+        DashboardViewModel, DayPivotRowVM, ModelBreakdownVM, ModelColumnVM, TotalBreakdownVM,
     };
     use ratatui::{Terminal, backend::TestBackend};
 
@@ -508,11 +556,23 @@ mod tests {
             rows: vec![DayPivotRowVM {
                 date_label: "04-23".into(),
                 model_cells: vec![cell.clone()],
-                total: "450K".into(),
+                total: TotalBreakdownVM {
+                    input: "9.9K".into(),
+                    cache_read: "8.8K".into(),
+                    output: "7.7K".into(),
+                    cache_write: "6.6K".into(),
+                    reasoning: "5.5K".into(),
+                },
                 total_cost: "$0.78".into(),
             }],
             column_totals: vec![cell],
-            grand_total: "450K".into(),
+            grand_total: TotalBreakdownVM {
+                input: "9.9K".into(),
+                cache_read: "8.8K".into(),
+                output: "7.7K".into(),
+                cache_write: "6.6K".into(),
+                reasoning: "5.5K".into(),
+            },
             grand_cost: "$0.78".into(),
             window_tabs: vec!["1d".into(), "7d".into(), "30d".into()],
             selected_window_index: 2,
@@ -586,11 +646,23 @@ mod tests {
             rows: vec![DayPivotRowVM {
                 date_label: "04-23".into(),
                 model_cells: vec![cell.clone(); names.len()],
-                total: "9.31M".into(),
+                total: TotalBreakdownVM {
+                    input: "163K".into(),
+                    cache_read: "2.40M".into(),
+                    output: "9.47M".into(),
+                    cache_write: "38.3M".into(),
+                    reasoning: "120K".into(),
+                },
                 total_cost: "$1376.87".into(),
             }],
             column_totals: vec![cell; names.len()],
-            grand_total: "9.31M".into(),
+            grand_total: TotalBreakdownVM {
+                input: "163K".into(),
+                cache_read: "2.40M".into(),
+                output: "9.47M".into(),
+                cache_write: "38.3M".into(),
+                reasoning: "120K".into(),
+            },
             grand_cost: "$1376.87".into(),
             window_tabs: vec!["1d".into(), "7d".into(), "30d".into()],
             selected_window_index: 2,
@@ -642,6 +714,29 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_block_renders_five_total_columns() {
+        let vm = sample_vm("claude-opus-4-7");
+        let rendered = render_to_string(&vm, 160, 12);
+        // "Rsn" twice: once in the model group header, once in the aggregate
+        // block header. Asserting on "Total" alone would pass on the
+        // grand-total row label even with no aggregate header at all.
+        assert_eq!(
+            rendered.matches("Rsn").count(),
+            2,
+            "expected Rsn in both the model group and the aggregate header; got:\n{}",
+            rendered
+        );
+        for value in ["9.9K", "8.8K", "7.7K", "6.6K", "5.5K"] {
+            assert!(
+                rendered.contains(value),
+                "expected aggregate value {} in output; got:\n{}",
+                value,
+                rendered
+            );
+        }
+    }
+
+    #[test]
     fn vertical_separator_drawn_between_model_groups() {
         // Two models: separator "│" should appear between their sub-col groups.
         let cell = ModelBreakdownVM {
@@ -657,18 +752,30 @@ mod tests {
             rows: vec![DayPivotRowVM {
                 date_label: "04-23".into(),
                 model_cells: vec![cell.clone(), cell.clone()],
-                total: "200".into(),
+                total: TotalBreakdownVM {
+                    input: "20".into(),
+                    cache_read: "60".into(),
+                    output: "40".into(),
+                    cache_write: "80".into(),
+                    reasoning: "100".into(),
+                },
                 total_cost: "$0.20".into(),
             }],
             column_totals: vec![cell.clone(), cell],
-            grand_total: "200".into(),
+            grand_total: TotalBreakdownVM {
+                input: "20".into(),
+                cache_read: "60".into(),
+                output: "40".into(),
+                cache_write: "80".into(),
+                reasoning: "100".into(),
+            },
             grand_cost: "$0.20".into(),
             window_tabs: vec!["1d".into(), "7d".into(), "30d".into()],
             selected_window_index: 2,
             empty: false,
             ..DashboardViewModel::default()
         };
-        let rendered = render_to_string(&vm, 120, 12);
+        let rendered = render_to_string(&vm, 160, 12);
         // Expect 3 separators on the body row: after Date, between alpha/beta,
         // between beta and Total. Count "│" occurrences excluding the outer borders.
         assert!(
