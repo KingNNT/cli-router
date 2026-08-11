@@ -106,15 +106,30 @@ way to the view model. No repository, port, or DTO changes.
 
 No new failure modes. All new values are formatted counts from data already in
 memory. Width computation uses the existing saturating arithmetic, so a terminal
-too narrow for the aggregate block degrades the same way it does today: model
-groups drop out first, and the horizontal scroll (`shift+←/→`) reaches them.
+too narrow to hold everything degrades by dropping model groups: the fitting
+loop admits a group only when its full requested width still fits the remaining
+budget, and stops at the first one that does not. Nothing is ever squeezed in.
+Forcing a group that overflows would be worse than dropping it — every column is
+a `Constraint::Length`, so ratatui compresses *all* of them proportionally and
+clips the aggregate numbers with no ellipsis (`$1376.87` renders as `$1376.`).
+The footer reports `0 of N models fit  (shift+← → to scroll)` when none are
+visible, and the horizontal scroll still reaches them.
 
 ## Trade-offs
 
-The aggregate block grows from ~9 to ~45 columns of terminal width, and each
-model group grows ~7. On an 80-column terminal roughly one fewer model fits on
-screen. This is accepted: horizontal scrolling already exists for the model
-groups, and the aggregate block is the part users read first.
+The aggregate block grows from 9 columns of terminal width (an 8-wide `Total`
+plus its 1-column gap) to 30 — five columns at the 5-column minimum plus five
+gaps — and up to 45 when every category needs the full 8-character numeric
+budget. Each model group grows by 6 (one extra 5-wide numeric column plus its
+gap), up to 9 if `Rsn` needs all 8 characters.
+
+The practical consequence: with realistic Claude Code data and a 15-character
+model name, the first model group needs 103 columns of terminal width. Below
+that — including at 80 and 100 columns — the dashboard renders `Date`, the
+five-column aggregate block, and `Cost`, with no model group at all. This is
+accepted: horizontal scrolling already exists for the model groups, and the
+aggregate block is the part users read first, so it is the part that must stay
+legible when space runs out.
 
 ## Testing
 
