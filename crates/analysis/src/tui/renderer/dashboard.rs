@@ -143,7 +143,10 @@ pub fn draw(
         let widths = compute_sub(mi);
         // 6 sub-cols + 1 group separator column = 7 gaps + separator width.
         let group_width: u16 = widths.iter().sum::<u16>() + spacing_per_col * 7 + GROUP_SEP_WIDTH;
-        if group_width > budget && !visible_models.is_empty() {
+        // A group that does not fit is dropped, never squeezed in: every column is a
+        // Constraint::Length, so overflowing the area makes ratatui compress ALL of
+        // them and silently clip the aggregate numbers without an ellipsis.
+        if group_width > budget {
             break;
         }
         budget = budget.saturating_sub(group_width);
@@ -320,12 +323,19 @@ pub fn draw(
         let total_models = vm.model_columns.len();
         let shown_count = visible_models.len();
         if total_models > 0 && (model_start > 0 || shown_count < total_models) {
-            text.push_str(&format!(
-                "  ·  Models {}-{} of {}  (shift+← → to scroll)",
-                model_start + 1,
-                model_start + shown_count,
-                total_models
-            ));
+            if shown_count == 0 {
+                text.push_str(&format!(
+                    "  ·  0 of {} models fit  (shift+← → to scroll)",
+                    total_models
+                ));
+            } else {
+                text.push_str(&format!(
+                    "  ·  Models {}-{} of {}  (shift+← → to scroll)",
+                    model_start + 1,
+                    model_start + shown_count,
+                    total_models
+                ));
+            }
         }
         text
     };
@@ -618,9 +628,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn many_models_in_narrow_terminal_still_show_full_first_model_name() {
-        // Simulate the real scenario: many Claude Code models, narrow terminal.
+    /// Ten Claude Code-shaped models with realistic, wide token counts.
+    fn many_models_vm() -> DashboardViewModel {
         let cell = ModelBreakdownVM {
             input: "16.3K".into(),
             output: "947.0K".into(),
@@ -641,34 +650,35 @@ mod tests {
             "haiku",
             "opus",
         ];
-        let vm = DashboardViewModel {
+        let totals = TotalBreakdownVM {
+            input: "163.0K".into(),
+            cache_read: "2.40M".into(),
+            output: "9.47M".into(),
+            cache_write: "38.3M".into(),
+            reasoning: "120K".into(),
+        };
+        DashboardViewModel {
             model_columns: names.iter().map(|s| model_column(s)).collect(),
             rows: vec![DayPivotRowVM {
                 date_label: "04-23".into(),
                 model_cells: vec![cell.clone(); names.len()],
-                total: TotalBreakdownVM {
-                    input: "163K".into(),
-                    cache_read: "2.40M".into(),
-                    output: "9.47M".into(),
-                    cache_write: "38.3M".into(),
-                    reasoning: "120K".into(),
-                },
+                total: totals.clone(),
                 total_cost: "$1376.87".into(),
             }],
             column_totals: vec![cell; names.len()],
-            grand_total: TotalBreakdownVM {
-                input: "163K".into(),
-                cache_read: "2.40M".into(),
-                output: "9.47M".into(),
-                cache_write: "38.3M".into(),
-                reasoning: "120K".into(),
-            },
+            grand_total: totals,
             grand_cost: "$1376.87".into(),
             window_tabs: vec!["1d".into(), "7d".into(), "30d".into()],
             selected_window_index: 2,
             empty: false,
             ..DashboardViewModel::default()
-        };
+        }
+    }
+
+    #[test]
+    fn many_models_in_narrow_terminal_still_show_full_first_model_name() {
+        // Simulate the real scenario: many Claude Code models, narrow terminal.
+        let vm = many_models_vm();
 
         // 160-col terminal: room for ~4 models of full width.
         let rendered = render_to_string(&vm, 160, 12);
@@ -733,6 +743,85 @@ mod tests {
                 value,
                 rendered
             );
+        }
+    }
+
+    #[test]
+    fn narrow_terminal_drops_model_groups_instead_of_compressing() {
+        // 80 cols: Date + the five-column aggregate block + Cost already fill the
+        // row, so no model group may be rendered. Forcing one in would make
+        // ratatui compress every Constraint::Length and clip the numbers.
+        let vm = many_models_vm();
+        let rendered = render_to_string(&vm, 80, 12);
+
+        for name in ["claude-opus-4-6", "claude-opus", "exact price"] {
+            assert!(
+                !rendered.contains(name),
+                "no model group should render at 80 cols, found {:?}; got:\n{}",
+                name,
+                rendered
+            );
+        }
+        assert!(
+            !rendered.contains("$167."),
+            "the per-model cost belongs to a dropped group; got:\n{}",
+            rendered
+        );
+    }
+
+    #[test]
+    fn narrow_terminal_renders_aggregate_values_untruncated() {
+        let vm = many_models_vm();
+        let rendered = render_to_string(&vm, 80, 12);
+
+        // Full strings, not prefixes: a compressed table would clip "$1376.87"
+        // to "$1376." and "163.0K" to "163.0" with no ellipsis to warn the user.
+        for value in ["$1376.87", "163.0K", "2.40M", "9.47M", "38.3M", "120K"] {
+            assert!(
+                rendered.contains(value),
+                "expected untruncated aggregate value {:?}; got:\n{}",
+                value,
+                rendered
+            );
+        }
+        // The aggregate header still labels all five columns.
+        for label in ["Total", "In", "CR", "Out", "CW", "Rsn"] {
+            assert!(
+                rendered.contains(label),
+                "expected aggregate header {:?}; got:\n{}",
+                label,
+                rendered
+            );
+        }
+    }
+
+    #[test]
+    fn narrow_terminal_footer_reports_zero_visible_models() {
+        let vm = many_models_vm();
+        let rendered = render_to_string(&vm, 80, 12);
+
+        assert!(
+            rendered.contains("0 of 10 models fit"),
+            "footer should say no model column fits; got:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("shift+←"),
+            "footer should still advertise horizontal scrolling; got:\n{}",
+            rendered
+        );
+        assert!(
+            !rendered.contains("Models 1-0"),
+            "footer must not print an empty inclusive range; got:\n{}",
+            rendered
+        );
+    }
+
+    #[test]
+    fn renders_without_panicking_at_every_width() {
+        let vm = many_models_vm();
+        for w in 10u16..=200 {
+            let _ = render_to_string(&vm, w, 12);
         }
     }
 
