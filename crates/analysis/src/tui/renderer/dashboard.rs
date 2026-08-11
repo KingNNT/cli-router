@@ -9,16 +9,16 @@ use ratatui::{
 const TITLE_HEIGHT: u16 = 1;
 const TAB_BAR_HEIGHT: u16 = 1;
 
-use crate::adapters::view_models::{DashboardViewModel, ModelBreakdownVM};
+use crate::adapters::view_models::{DashboardViewModel, ModelBreakdownVM, TotalBreakdownVM};
 
 const DATE_COL_WIDTH: u16 = 6;
 const MIN_SUB_COL_WIDTH: u16 = 5;
 const MAX_NUMERIC_WIDTH: u16 = 8;
 const MAX_NAME_WIDTH: u16 = 24;
-const TOTAL_COL_WIDTH: u16 = 8;
 const COST_COL_WIDTH: u16 = 8;
 const GROUP_SEP_WIDTH: u16 = 1;
-const SUB_LABELS: [&str; 5] = ["In", "Out", "CR", "CW", "$"];
+const SUB_LABELS: [&str; 6] = ["In", "Out", "CR", "CW", "Rsn", "$"];
+const TOTAL_SUB_LABELS: [&str; 5] = ["In", "CR", "Out", "CW", "Rsn"];
 
 pub fn draw(
     f: &mut Frame,
@@ -76,28 +76,20 @@ pub fn draw(
     // Compute width per sub-column (In/Out/CR/CW/$) for EVERY model from col_offset onwards.
     // First sub-col is widened to fit the full model name (up to MAX_NAME_WIDTH);
     // the rest keep a narrow numeric budget so compact tokens/costs fit snugly.
-    let compute_sub = |mi: usize| -> [u16; 5] {
+    let compute_sub = |mi: usize| -> [u16; 6] {
         let model_label = vm.model_columns[mi].model.as_str();
         let pricing_note = vm.model_columns[mi].pricing_note.as_str();
-        let mut widths = [MIN_SUB_COL_WIDTH; 5];
+        let mut widths = [MIN_SUB_COL_WIDTH; 6];
         for (si, label) in SUB_LABELS.iter().enumerate() {
             widths[si] = widths[si].max(label.chars().count() as u16);
         }
         for r in &vm.rows {
             if let Some(cell) = r.model_cells.get(mi) {
-                widths[0] = widths[0].max(cell.input.chars().count() as u16);
-                widths[1] = widths[1].max(cell.output.chars().count() as u16);
-                widths[2] = widths[2].max(cell.cache_read.chars().count() as u16);
-                widths[3] = widths[3].max(cell.cache_write.chars().count() as u16);
-                widths[4] = widths[4].max(cell.cost.chars().count() as u16);
+                widen_to_fit(&mut widths, cell);
             }
         }
         if let Some(tot) = vm.column_totals.get(mi) {
-            widths[0] = widths[0].max(tot.input.chars().count() as u16);
-            widths[1] = widths[1].max(tot.output.chars().count() as u16);
-            widths[2] = widths[2].max(tot.cache_read.chars().count() as u16);
-            widths[3] = widths[3].max(tot.cache_write.chars().count() as u16);
-            widths[4] = widths[4].max(tot.cost.chars().count() as u16);
+            widen_to_fit(&mut widths, tot);
         }
         // First sub-col doubles as model name header — widen to fit.
         widths[0] = widths[0].max(model_label.chars().count() as u16);
@@ -113,9 +105,28 @@ pub fn draw(
     // Ratatui's Table compresses all columns proportionally when the sum of
     // Constraint::Length exceeds the area, so we must cap the set here.
     // Budget = table width - borders - Date - Total - Cost - inter-column spacing.
+    // Aggregate block widths, measured over every row plus the grand total.
+    let mut total_widths = [MIN_SUB_COL_WIDTH; 5];
+    for (si, label) in TOTAL_SUB_LABELS.iter().enumerate() {
+        total_widths[si] = total_widths[si].max(label.chars().count() as u16);
+    }
+    // The first aggregate column carries the "Total" header on its top line.
+    total_widths[0] = total_widths[0].max("Total".chars().count() as u16);
+    for r in &vm.rows {
+        for (si, text) in total_texts(&r.total).iter().enumerate() {
+            total_widths[si] = total_widths[si].max(text.chars().count() as u16);
+        }
+    }
+    for (si, text) in total_texts(&vm.grand_total).iter().enumerate() {
+        total_widths[si] = total_widths[si].max(text.chars().count() as u16);
+    }
+    for w in total_widths.iter_mut() {
+        *w = (*w).clamp(MIN_SUB_COL_WIDTH, MAX_NUMERIC_WIDTH);
+    }
+
     let borders_pad: u16 = 2;
     let spacing_per_col: u16 = 1; // ratatui default column spacing
-    let fixed = DATE_COL_WIDTH + TOTAL_COL_WIDTH + COST_COL_WIDTH;
+    let fixed = DATE_COL_WIDTH + total_widths.iter().sum::<u16>() + COST_COL_WIDTH;
     // A leading separator is drawn between Date and the first model group.
     let leading_sep = GROUP_SEP_WIDTH + spacing_per_col;
     let mut budget = table_area
@@ -123,16 +134,19 @@ pub fn draw(
         .saturating_sub(borders_pad)
         .saturating_sub(fixed)
         .saturating_sub(leading_sep)
-        // spacing for Date|...|Total|Cost — 3 gaps outside model groups.
-        .saturating_sub(spacing_per_col * 3);
+        // spacing for Date|...|In|CR|Out|CW|Rsn|Cost — 7 gaps outside model groups.
+        .saturating_sub(spacing_per_col * 7);
 
     let mut visible_models: Vec<usize> = Vec::new();
-    let mut sub_widths: Vec<[u16; 5]> = Vec::new();
+    let mut sub_widths: Vec<[u16; 6]> = Vec::new();
     for mi in model_start..vm.model_columns.len() {
         let widths = compute_sub(mi);
-        // 5 sub-cols + 1 group separator column = 6 gaps + separator width.
-        let group_width: u16 = widths.iter().sum::<u16>() + spacing_per_col * 6 + GROUP_SEP_WIDTH;
-        if group_width > budget && !visible_models.is_empty() {
+        // 6 sub-cols + 1 group separator column = 7 gaps + separator width.
+        let group_width: u16 = widths.iter().sum::<u16>() + spacing_per_col * 7 + GROUP_SEP_WIDTH;
+        // A group that does not fit is dropped, never squeezed in: every column is a
+        // Constraint::Length, so overflowing the area makes ratatui compress ALL of
+        // them and silently clip the aggregate numbers without an ellipsis.
+        if group_width > budget {
             break;
         }
         budget = budget.saturating_sub(group_width);
@@ -161,8 +175,10 @@ pub fn draw(
         all_widths.push(GROUP_SEP_WIDTH);
         is_sep.push(true);
     }
-    all_widths.push(TOTAL_COL_WIDTH);
-    is_sep.push(false);
+    for &w in &total_widths {
+        all_widths.push(w);
+        is_sep.push(false);
+    }
     all_widths.push(COST_COL_WIDTH);
     is_sep.push(false);
 
@@ -190,7 +206,10 @@ pub fn draw(
         }
         header_cells.push(two_line_header_bar(sep_style));
     }
-    header_cells.push(two_line_header("", "Total"));
+    for (si, label) in TOTAL_SUB_LABELS.iter().enumerate() {
+        let top = if si == 0 { "Total" } else { "" };
+        header_cells.push(two_line_header(top, label));
+    }
     header_cells.push(two_line_header("", "Cost"));
     let header = Row::new(header_cells).height(2);
 
@@ -228,10 +247,11 @@ pub fn draw(
             }
             cells.push(bar_cell(sep_style));
         }
-        cells.push(Cell::from(Span::styled(
-            r.total.clone(),
+        push_total_cells(
+            &mut cells,
+            &r.total,
             Style::default().add_modifier(Modifier::BOLD),
-        )));
+        );
         cells.push(Cell::from(Span::styled(
             r.total_cost.clone(),
             Style::default().add_modifier(Modifier::BOLD),
@@ -258,12 +278,13 @@ pub fn draw(
         }
         total_cells.push(bar_cell(sep_style));
     }
-    total_cells.push(Cell::from(Span::styled(
-        vm.grand_total.clone(),
+    push_total_cells(
+        &mut total_cells,
+        &vm.grand_total,
         Style::default()
             .fg(Color::Yellow)
             .add_modifier(Modifier::BOLD),
-    )));
+    );
     total_cells.push(Cell::from(Span::styled(
         vm.grand_cost.clone(),
         Style::default()
@@ -302,12 +323,19 @@ pub fn draw(
         let total_models = vm.model_columns.len();
         let shown_count = visible_models.len();
         if total_models > 0 && (model_start > 0 || shown_count < total_models) {
-            text.push_str(&format!(
-                "  ·  Models {}-{} of {}  (shift+← → to scroll)",
-                model_start + 1,
-                model_start + shown_count,
-                total_models
-            ));
+            if shown_count == 0 {
+                text.push_str(&format!(
+                    "  ·  0 of {} models fit  (shift+← → to scroll)",
+                    total_models
+                ));
+            } else {
+                text.push_str(&format!(
+                    "  ·  Models {}-{} of {}  (shift+← → to scroll)",
+                    model_start + 1,
+                    model_start + shown_count,
+                    total_models
+                ));
+            }
         }
         text
     };
@@ -317,23 +345,60 @@ pub fn draw(
     tab_hits
 }
 
+/// The six sub-column texts of a model group, in render order.
+fn breakdown_texts(b: &ModelBreakdownVM) -> [&str; 6] {
+    [
+        &b.input,
+        &b.output,
+        &b.cache_read,
+        &b.cache_write,
+        &b.reasoning,
+        &b.cost,
+    ]
+}
+
+fn widen_to_fit(widths: &mut [u16; 6], cell: &ModelBreakdownVM) {
+    for (si, text) in breakdown_texts(cell).iter().enumerate() {
+        widths[si] = widths[si].max(text.chars().count() as u16);
+    }
+}
+
+/// The five aggregate texts, in render order.
+fn total_texts(t: &TotalBreakdownVM) -> [&str; 5] {
+    [
+        &t.input,
+        &t.cache_read,
+        &t.output,
+        &t.cache_write,
+        &t.reasoning,
+    ]
+}
+
+fn push_total_cells(cells: &mut Vec<Cell<'static>>, t: &TotalBreakdownVM, style: Style) {
+    for text in total_texts(t) {
+        let cell_style = if text == "—" {
+            style.fg(Color::DarkGray)
+        } else {
+            style
+        };
+        cells.push(Cell::from(Span::styled(text.to_string(), cell_style)));
+    }
+}
+
 fn push_breakdown_cells(cells: &mut Vec<Cell<'static>>, b: &ModelBreakdownVM, bold: bool) {
     let base = if bold {
         Style::default().add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
-    for (i, text) in [&b.input, &b.output, &b.cache_read, &b.cache_write, &b.cost]
-        .iter()
-        .enumerate()
-    {
-        let style = if text.as_str() == "—" {
+    for (i, text) in breakdown_texts(b).iter().enumerate() {
+        let style = if *text == "—" {
             base.fg(Color::DarkGray)
-        } else if i == 4 {
+        } else if i == 5 {
             // Cost column: keep bright, even when not bold.
             base
         } else if i >= 2 {
-            // CR / CW: dim to keep focus on In/Out.
+            // CR / CW / Rsn: dim to keep focus on In/Out.
             if bold {
                 base.fg(Color::DarkGray)
             } else {
@@ -342,7 +407,7 @@ fn push_breakdown_cells(cells: &mut Vec<Cell<'static>>, b: &ModelBreakdownVM, bo
         } else {
             base
         };
-        cells.push(Cell::from(Span::styled((*text).clone(), style)));
+        cells.push(Cell::from(Span::styled((*text).to_string(), style)));
     }
 }
 
@@ -483,7 +548,7 @@ fn truncate_for_header(value: &str, budget: usize) -> String {
 mod tests {
     use super::*;
     use crate::adapters::view_models::{
-        DashboardViewModel, DayPivotRowVM, ModelBreakdownVM, ModelColumnVM,
+        DashboardViewModel, DayPivotRowVM, ModelBreakdownVM, ModelColumnVM, TotalBreakdownVM,
     };
     use ratatui::{Terminal, backend::TestBackend};
 
@@ -493,6 +558,7 @@ mod tests {
             output: "3.0K".into(),
             cache_read: "372.0K".into(),
             cache_write: "82.9K".into(),
+            reasoning: "1.1K".into(),
             cost: "$0.78".into(),
         };
         DashboardViewModel {
@@ -500,11 +566,23 @@ mod tests {
             rows: vec![DayPivotRowVM {
                 date_label: "04-23".into(),
                 model_cells: vec![cell.clone()],
-                total: "450K".into(),
+                total: TotalBreakdownVM {
+                    input: "9.9K".into(),
+                    cache_read: "8.8K".into(),
+                    output: "7.7K".into(),
+                    cache_write: "6.6K".into(),
+                    reasoning: "5.5K".into(),
+                },
                 total_cost: "$0.78".into(),
             }],
             column_totals: vec![cell],
-            grand_total: "450K".into(),
+            grand_total: TotalBreakdownVM {
+                input: "9.9K".into(),
+                cache_read: "8.8K".into(),
+                output: "7.7K".into(),
+                cache_write: "6.6K".into(),
+                reasoning: "5.5K".into(),
+            },
             grand_cost: "$0.78".into(),
             window_tabs: vec!["1d".into(), "7d".into(), "30d".into()],
             selected_window_index: 2,
@@ -550,14 +628,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn many_models_in_narrow_terminal_still_show_full_first_model_name() {
-        // Simulate the real scenario: many Claude Code models, narrow terminal.
+    /// Ten Claude Code-shaped models with realistic, wide token counts.
+    fn many_models_vm() -> DashboardViewModel {
         let cell = ModelBreakdownVM {
             input: "16.3K".into(),
             output: "947.0K".into(),
             cache_read: "240.3K".into(),
             cache_write: "3.83M".into(),
+            reasoning: "12.0K".into(),
             cost: "$167.86".into(),
         };
         let names = [
@@ -572,22 +650,35 @@ mod tests {
             "haiku",
             "opus",
         ];
-        let vm = DashboardViewModel {
+        let totals = TotalBreakdownVM {
+            input: "163.0K".into(),
+            cache_read: "2.40M".into(),
+            output: "9.47M".into(),
+            cache_write: "38.3M".into(),
+            reasoning: "120K".into(),
+        };
+        DashboardViewModel {
             model_columns: names.iter().map(|s| model_column(s)).collect(),
             rows: vec![DayPivotRowVM {
                 date_label: "04-23".into(),
                 model_cells: vec![cell.clone(); names.len()],
-                total: "9.31M".into(),
+                total: totals.clone(),
                 total_cost: "$1376.87".into(),
             }],
             column_totals: vec![cell; names.len()],
-            grand_total: "9.31M".into(),
+            grand_total: totals,
             grand_cost: "$1376.87".into(),
             window_tabs: vec!["1d".into(), "7d".into(), "30d".into()],
             selected_window_index: 2,
             empty: false,
             ..DashboardViewModel::default()
-        };
+        }
+    }
+
+    #[test]
+    fn many_models_in_narrow_terminal_still_show_full_first_model_name() {
+        // Simulate the real scenario: many Claude Code models, narrow terminal.
+        let vm = many_models_vm();
 
         // 160-col terminal: room for ~4 models of full width.
         let rendered = render_to_string(&vm, 160, 12);
@@ -610,10 +701,128 @@ mod tests {
             row.model_cells = vec![ModelBreakdownVM::default()];
         }
 
-        let rendered = render_to_string(&vm, 80, 12);
+        let rendered = render_to_string(&vm, 120, 12);
 
         assert!(rendered.contains("priced as") || rendered.contains("↦"));
         assert!(rendered.contains("gpt5.1-codex"));
+    }
+
+    #[test]
+    fn model_group_header_includes_reasoning_column() {
+        let vm = sample_vm("claude-opus-4-7");
+        let rendered = render_to_string(&vm, 140, 12);
+        assert!(
+            rendered.contains("Rsn"),
+            "expected Rsn sub-column header; got:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("1.1K"),
+            "expected reasoning value in the model group; got:\n{}",
+            rendered
+        );
+    }
+
+    #[test]
+    fn aggregate_block_renders_five_total_columns() {
+        let vm = sample_vm("claude-opus-4-7");
+        let rendered = render_to_string(&vm, 160, 12);
+        // "Rsn" twice: once in the model group header, once in the aggregate
+        // block header. Asserting on "Total" alone would pass on the
+        // grand-total row label even with no aggregate header at all.
+        assert_eq!(
+            rendered.matches("Rsn").count(),
+            2,
+            "expected Rsn in both the model group and the aggregate header; got:\n{}",
+            rendered
+        );
+        for value in ["9.9K", "8.8K", "7.7K", "6.6K", "5.5K"] {
+            assert!(
+                rendered.contains(value),
+                "expected aggregate value {} in output; got:\n{}",
+                value,
+                rendered
+            );
+        }
+    }
+
+    #[test]
+    fn narrow_terminal_drops_model_groups_instead_of_compressing() {
+        // 80 cols: Date + the five-column aggregate block + Cost already fill the
+        // row, so no model group may be rendered. Forcing one in would make
+        // ratatui compress every Constraint::Length and clip the numbers.
+        let vm = many_models_vm();
+        let rendered = render_to_string(&vm, 80, 12);
+
+        for name in ["claude-opus-4-6", "claude-opus", "exact price"] {
+            assert!(
+                !rendered.contains(name),
+                "no model group should render at 80 cols, found {:?}; got:\n{}",
+                name,
+                rendered
+            );
+        }
+        assert!(
+            !rendered.contains("$167."),
+            "the per-model cost belongs to a dropped group; got:\n{}",
+            rendered
+        );
+    }
+
+    #[test]
+    fn narrow_terminal_renders_aggregate_values_untruncated() {
+        let vm = many_models_vm();
+        let rendered = render_to_string(&vm, 80, 12);
+
+        // Full strings, not prefixes: a compressed table would clip "$1376.87"
+        // to "$1376." and "163.0K" to "163.0" with no ellipsis to warn the user.
+        for value in ["$1376.87", "163.0K", "2.40M", "9.47M", "38.3M", "120K"] {
+            assert!(
+                rendered.contains(value),
+                "expected untruncated aggregate value {:?}; got:\n{}",
+                value,
+                rendered
+            );
+        }
+        // The aggregate header still labels all five columns.
+        for label in ["Total", "In", "CR", "Out", "CW", "Rsn"] {
+            assert!(
+                rendered.contains(label),
+                "expected aggregate header {:?}; got:\n{}",
+                label,
+                rendered
+            );
+        }
+    }
+
+    #[test]
+    fn narrow_terminal_footer_reports_zero_visible_models() {
+        let vm = many_models_vm();
+        let rendered = render_to_string(&vm, 80, 12);
+
+        assert!(
+            rendered.contains("0 of 10 models fit"),
+            "footer should say no model column fits; got:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("shift+←"),
+            "footer should still advertise horizontal scrolling; got:\n{}",
+            rendered
+        );
+        assert!(
+            !rendered.contains("Models 1-0"),
+            "footer must not print an empty inclusive range; got:\n{}",
+            rendered
+        );
+    }
+
+    #[test]
+    fn renders_without_panicking_at_every_width() {
+        let vm = many_models_vm();
+        for w in 10u16..=200 {
+            let _ = render_to_string(&vm, w, 12);
+        }
     }
 
     #[test]
@@ -624,6 +833,7 @@ mod tests {
             output: "20".into(),
             cache_read: "30".into(),
             cache_write: "40".into(),
+            reasoning: "50".into(),
             cost: "$0.10".into(),
         };
         let vm = DashboardViewModel {
@@ -631,18 +841,30 @@ mod tests {
             rows: vec![DayPivotRowVM {
                 date_label: "04-23".into(),
                 model_cells: vec![cell.clone(), cell.clone()],
-                total: "200".into(),
+                total: TotalBreakdownVM {
+                    input: "20".into(),
+                    cache_read: "60".into(),
+                    output: "40".into(),
+                    cache_write: "80".into(),
+                    reasoning: "100".into(),
+                },
                 total_cost: "$0.20".into(),
             }],
             column_totals: vec![cell.clone(), cell],
-            grand_total: "200".into(),
+            grand_total: TotalBreakdownVM {
+                input: "20".into(),
+                cache_read: "60".into(),
+                output: "40".into(),
+                cache_write: "80".into(),
+                reasoning: "100".into(),
+            },
             grand_cost: "$0.20".into(),
             window_tabs: vec!["1d".into(), "7d".into(), "30d".into()],
             selected_window_index: 2,
             empty: false,
             ..DashboardViewModel::default()
         };
-        let rendered = render_to_string(&vm, 120, 12);
+        let rendered = render_to_string(&vm, 160, 12);
         // Expect 3 separators on the body row: after Date, between alpha/beta,
         // between beta and Total. Count "│" occurrences excluding the outer borders.
         assert!(
