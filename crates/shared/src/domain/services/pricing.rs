@@ -3,11 +3,18 @@ use crate::domain::value_objects::{Cost, TokenBreakdown};
 
 /// Cost of a set of tokens priced against a model's rates.
 ///
+/// Reasoning tokens are billed at the output rate — they are a bucket disjoint
+/// from `output`, not a subset of it.
+///
 /// When `cache_read_rate` or `cache_write_rate` is `None`, cache tokens are
 /// priced at `input_rate` — the neutral assumption.
 pub fn calculate_cost(tokens: &TokenBreakdown, pricing: &ModelPricing) -> Cost {
     let input = tokens.input.value() as f64 * pricing.input_rate.value();
-    let output = tokens.output.value() as f64 * pricing.output_rate.value();
+    // Reasoning is a disjoint bucket from `output` in every source that reports
+    // it, and providers bill it as output. Pricing it at anything else — or not
+    // at all — silently undercounts thinking-heavy models.
+    let output =
+        (tokens.output.value() + tokens.reasoning.value()) as f64 * pricing.output_rate.value();
     let cache_read = tokens.cache_read.value() as f64
         * pricing
             .cache_read_rate
@@ -103,5 +110,26 @@ mod tests {
         );
         // 0.01 + 0.015 + 0.0005 + 0.00125 = 0.02675
         assert!((c.value() - 0.02675).abs() < 1e-9);
+    }
+
+    #[test]
+    fn reasoning_is_priced_at_the_output_rate() {
+        let mut t = tokens(0, 100, 0, 0);
+        t.reasoning = TokenCount::new(50);
+        let c = calculate_cost(&t, &pricing(0.00001, 0.00003, None, None));
+        // (100 + 50) * 0.00003 = 0.0045
+        assert!((c.value() - 0.0045).abs() < 1e-9);
+    }
+
+    /// Characterisation test from a real OpenCode row: model `gpt-5-codex`,
+    /// input 8872, output 236, reasoning 192, no cache, stored cost 0.01537.
+    /// Solving that cost against the published rates shows OpenCode bills
+    /// `output + reasoning` at the output rate, so our number must match it.
+    #[test]
+    fn matches_opencodes_own_cost_for_a_reasoning_heavy_row() {
+        let mut t = tokens(8872, 236, 0, 0);
+        t.reasoning = TokenCount::new(192);
+        let c = calculate_cost(&t, &pricing(1.25e-6, 1.0e-5, Some(1.25e-7), None));
+        assert!((c.value() - 0.01537).abs() < 1e-9, "got {}", c.value());
     }
 }
