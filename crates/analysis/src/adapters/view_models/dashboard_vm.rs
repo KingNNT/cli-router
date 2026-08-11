@@ -34,5 +34,6 @@ pub struct ModelBreakdownVM {
     pub output: String,
     pub cache_read: String,
     pub cache_write: String,
+    pub reasoning: String,
     pub cost: String,
 }

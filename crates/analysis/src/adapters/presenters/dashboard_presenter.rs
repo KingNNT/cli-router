@@ -170,6 +170,7 @@ fn breakdown_cell(
         output: fmt_cell(tb.output.value()),
         cache_read: fmt_cell(tb.cache_read.value()),
         cache_write: fmt_cell(tb.cache_write.value()),
+        reasoning: fmt_cell(tb.reasoning.value()),
         cost: cost_str,
     }
 }
@@ -341,6 +342,15 @@ mod tests {
         assert_eq!(cell.output, "500");
         assert_eq!(cell.cache_read, "200");
         assert_eq!(cell.cache_write, "100");
+    }
+
+    #[test]
+    fn cells_expose_reasoning_tokens() {
+        let mut r = row(2026, 4, 23, "m", 1_000, 0.0);
+        r.tokens.reasoning = TokenCount::new(250);
+        let vm = present(&output(vec![r]));
+        assert_eq!(vm.rows[0].model_cells[0].reasoning, "250");
+        assert_eq!(vm.column_totals[0].reasoning, "250");
     }
 
     #[test]

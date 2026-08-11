@@ -18,7 +18,7 @@ const MAX_NAME_WIDTH: u16 = 24;
 const TOTAL_COL_WIDTH: u16 = 8;
 const COST_COL_WIDTH: u16 = 8;
 const GROUP_SEP_WIDTH: u16 = 1;
-const SUB_LABELS: [&str; 5] = ["In", "Out", "CR", "CW", "$"];
+const SUB_LABELS: [&str; 6] = ["In", "Out", "CR", "CW", "Rsn", "$"];
 
 pub fn draw(
     f: &mut Frame,
@@ -76,28 +76,20 @@ pub fn draw(
     // Compute width per sub-column (In/Out/CR/CW/$) for EVERY model from col_offset onwards.
     // First sub-col is widened to fit the full model name (up to MAX_NAME_WIDTH);
     // the rest keep a narrow numeric budget so compact tokens/costs fit snugly.
-    let compute_sub = |mi: usize| -> [u16; 5] {
+    let compute_sub = |mi: usize| -> [u16; 6] {
         let model_label = vm.model_columns[mi].model.as_str();
         let pricing_note = vm.model_columns[mi].pricing_note.as_str();
-        let mut widths = [MIN_SUB_COL_WIDTH; 5];
+        let mut widths = [MIN_SUB_COL_WIDTH; 6];
         for (si, label) in SUB_LABELS.iter().enumerate() {
             widths[si] = widths[si].max(label.chars().count() as u16);
         }
         for r in &vm.rows {
             if let Some(cell) = r.model_cells.get(mi) {
-                widths[0] = widths[0].max(cell.input.chars().count() as u16);
-                widths[1] = widths[1].max(cell.output.chars().count() as u16);
-                widths[2] = widths[2].max(cell.cache_read.chars().count() as u16);
-                widths[3] = widths[3].max(cell.cache_write.chars().count() as u16);
-                widths[4] = widths[4].max(cell.cost.chars().count() as u16);
+                widen_to_fit(&mut widths, cell);
             }
         }
         if let Some(tot) = vm.column_totals.get(mi) {
-            widths[0] = widths[0].max(tot.input.chars().count() as u16);
-            widths[1] = widths[1].max(tot.output.chars().count() as u16);
-            widths[2] = widths[2].max(tot.cache_read.chars().count() as u16);
-            widths[3] = widths[3].max(tot.cache_write.chars().count() as u16);
-            widths[4] = widths[4].max(tot.cost.chars().count() as u16);
+            widen_to_fit(&mut widths, tot);
         }
         // First sub-col doubles as model name header — widen to fit.
         widths[0] = widths[0].max(model_label.chars().count() as u16);
@@ -127,11 +119,11 @@ pub fn draw(
         .saturating_sub(spacing_per_col * 3);
 
     let mut visible_models: Vec<usize> = Vec::new();
-    let mut sub_widths: Vec<[u16; 5]> = Vec::new();
+    let mut sub_widths: Vec<[u16; 6]> = Vec::new();
     for mi in model_start..vm.model_columns.len() {
         let widths = compute_sub(mi);
-        // 5 sub-cols + 1 group separator column = 6 gaps + separator width.
-        let group_width: u16 = widths.iter().sum::<u16>() + spacing_per_col * 6 + GROUP_SEP_WIDTH;
+        // 6 sub-cols + 1 group separator column = 7 gaps + separator width.
+        let group_width: u16 = widths.iter().sum::<u16>() + spacing_per_col * 7 + GROUP_SEP_WIDTH;
         if group_width > budget && !visible_models.is_empty() {
             break;
         }
@@ -317,23 +309,38 @@ pub fn draw(
     tab_hits
 }
 
+/// The six sub-column texts of a model group, in render order.
+fn breakdown_texts(b: &ModelBreakdownVM) -> [&str; 6] {
+    [
+        &b.input,
+        &b.output,
+        &b.cache_read,
+        &b.cache_write,
+        &b.reasoning,
+        &b.cost,
+    ]
+}
+
+fn widen_to_fit(widths: &mut [u16; 6], cell: &ModelBreakdownVM) {
+    for (si, text) in breakdown_texts(cell).iter().enumerate() {
+        widths[si] = widths[si].max(text.chars().count() as u16);
+    }
+}
+
 fn push_breakdown_cells(cells: &mut Vec<Cell<'static>>, b: &ModelBreakdownVM, bold: bool) {
     let base = if bold {
         Style::default().add_modifier(Modifier::BOLD)
     } else {
         Style::default()
     };
-    for (i, text) in [&b.input, &b.output, &b.cache_read, &b.cache_write, &b.cost]
-        .iter()
-        .enumerate()
-    {
-        let style = if text.as_str() == "—" {
+    for (i, text) in breakdown_texts(b).iter().enumerate() {
+        let style = if *text == "—" {
             base.fg(Color::DarkGray)
-        } else if i == 4 {
+        } else if i == 5 {
             // Cost column: keep bright, even when not bold.
             base
         } else if i >= 2 {
-            // CR / CW: dim to keep focus on In/Out.
+            // CR / CW / Rsn: dim to keep focus on In/Out.
             if bold {
                 base.fg(Color::DarkGray)
             } else {
@@ -342,7 +349,7 @@ fn push_breakdown_cells(cells: &mut Vec<Cell<'static>>, b: &ModelBreakdownVM, bo
         } else {
             base
         };
-        cells.push(Cell::from(Span::styled((*text).clone(), style)));
+        cells.push(Cell::from(Span::styled((*text).to_string(), style)));
     }
 }
 
@@ -493,6 +500,7 @@ mod tests {
             output: "3.0K".into(),
             cache_read: "372.0K".into(),
             cache_write: "82.9K".into(),
+            reasoning: "1.1K".into(),
             cost: "$0.78".into(),
         };
         DashboardViewModel {
@@ -558,6 +566,7 @@ mod tests {
             output: "947.0K".into(),
             cache_read: "240.3K".into(),
             cache_write: "3.83M".into(),
+            reasoning: "12.0K".into(),
             cost: "$167.86".into(),
         };
         let names = [
@@ -610,10 +619,26 @@ mod tests {
             row.model_cells = vec![ModelBreakdownVM::default()];
         }
 
-        let rendered = render_to_string(&vm, 80, 12);
+        let rendered = render_to_string(&vm, 120, 12);
 
         assert!(rendered.contains("priced as") || rendered.contains("↦"));
         assert!(rendered.contains("gpt5.1-codex"));
+    }
+
+    #[test]
+    fn model_group_header_includes_reasoning_column() {
+        let vm = sample_vm("claude-opus-4-7");
+        let rendered = render_to_string(&vm, 140, 12);
+        assert!(
+            rendered.contains("Rsn"),
+            "expected Rsn sub-column header; got:\n{}",
+            rendered
+        );
+        assert!(
+            rendered.contains("1.1K"),
+            "expected reasoning value in the model group; got:\n{}",
+            rendered
+        );
     }
 
     #[test]
@@ -624,6 +649,7 @@ mod tests {
             output: "20".into(),
             cache_read: "30".into(),
             cache_write: "40".into(),
+            reasoning: "50".into(),
             cost: "$0.10".into(),
         };
         let vm = DashboardViewModel {
