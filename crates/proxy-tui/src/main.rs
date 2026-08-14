@@ -12,9 +12,9 @@ mod views;
 use crate::app::{
     ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal,
     DisableConfirmModal, FormField, FormMode, FormState, Modal, PROVIDER_TOOLBAR,
-    PROVIDER_TOOLBAR_GAP, ProviderAction, ProviderFormModal, ProviderKind, ProviderModeInput,
-    QuotaField, QuotaFormModal, RangePreset, RoutingField, RoutingFormModal, TestProviderModal,
-    TestState, View,
+    PROVIDER_TOOLBAR_GAP, ProviderAction, ProviderFormModal, ProviderKind, QuotaField,
+    QuotaFormModal, RangePreset, RoutingField, RoutingFormModal, TestProviderModal, TestState,
+    View,
 };
 use crate::client::AdminClient;
 use chrono::{Datelike, Local, TimeZone};
@@ -364,7 +364,6 @@ fn handle_config_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
             KeyCode::Char('e') => open_edit_modal(state),
             KeyCode::Char('d') => open_delete_modal(state),
             KeyCode::Char('t') => open_test_modal(state),
-            KeyCode::Char('z') => cycle_provider_mode(client, state),
             _ => {}
         },
         ConfigSection::Routing => match k.code {
@@ -984,51 +983,50 @@ fn handle_delete_key(
     }
 }
 
-/// Cycle the selected provider's mode: enabled → monitor → disabled → enabled.
-/// Only the move to `disabled` can break routing rules that name the provider,
-/// so that step opens a confirmation modal instead of applying immediately.
-fn cycle_provider_mode(client: &AdminClient, state: &mut AppState) {
-    let cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
-        Some(c) => c,
-        None => return,
-    };
-    let provider_index = state.providers_selected;
-    let prov = match cfg.providers.get(provider_index) {
-        Some(p) => p,
-        None => return,
-    };
-    let provider_name = prov.name.clone();
-    let next = ProviderModeInput::from_payload(prov.mode.as_deref(), prov.enabled).cycle_next();
-
-    let rules = crate::validate::rules_referencing(&provider_name, &cfg);
-    if next.needs_rule_cleanup() && !rules.is_empty() {
-        state.modal = Modal::DisableConfirm(DisableConfirmModal {
-            provider_index,
-            provider_name,
-            rules,
-        });
-        return;
+/// The provider name that routing rules would reference for this form: the
+/// name it is stored under today when editing, the new name when adding.
+fn disable_target_name(m: &ProviderFormModal) -> String {
+    match &m.mode {
+        FormMode::Edit { original_name, .. } => original_name.clone(),
+        FormMode::Add => m.name.trim().to_string(),
     }
-
-    let mut cfg = cfg;
-    next.apply_to(&mut cfg.providers[provider_index]);
-    apply_toggle(client, state, cfg, &provider_name, next.label());
 }
 
-fn apply_toggle(
-    client: &AdminClient,
-    state: &mut AppState,
-    cfg: proxy_admin_api::ConfigPayload,
-    provider_name: &str,
-    action: &str,
-) {
-    match client.put_config(&cfg) {
-        Ok(updated) => {
-            state.set_config(Ok(updated));
-            state.flash(format!("{action} {provider_name}"));
+/// Drop every routing rule naming `provider_name`, as primary or as fallback.
+fn strip_referencing_rules(cfg: &mut proxy_admin_api::ConfigPayload, provider_name: &str) {
+    cfg.routing.retain(|r| {
+        r.provider != provider_name && !r.fallback.contains(&provider_name.to_string())
+    });
+}
+
+/// Save the provider form. Parking a provider at `disabled` while routing rules
+/// still name it would leave those rules pointing at nothing, so that case asks
+/// first and only saves once the user has said yes.
+fn submit_provider_form(client: &AdminClient, state: &mut AppState, m: ProviderFormModal) -> Modal {
+    if m.provider_mode.needs_rule_cleanup() && !m.disable_rules_confirmed {
+        let provider_name = disable_target_name(&m);
+        let rules = state
+            .config
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .map(|cfg| crate::validate::rules_referencing(&provider_name, cfg))
+            .unwrap_or_default();
+        if !rules.is_empty() {
+            return Modal::DisableConfirm(DisableConfirmModal {
+                provider_name,
+                rules,
+                form: Box::new(m),
+            });
         }
-        Err(e) => state.flash(format!("toggle failed: {e}")),
     }
+
+    if m.auth_kind == AuthInputKind::OAuthAnthropic || m.auth_kind == AuthInputKind::OAuthOpenAi {
+        return match m.mode {
+            FormMode::Add => submit_oauth_add(client, state, m), // Task 8
+            FormMode::Edit { .. } => submit_oauth_edit(client, state, m),
+        };
+    }
+    submit_non_oauth_save(client, state, m)
 }
 
 fn handle_disable_confirm_key(
@@ -1038,37 +1036,13 @@ fn handle_disable_confirm_key(
     m: DisableConfirmModal,
 ) -> Modal {
     match k.code {
-        KeyCode::Esc | KeyCode::Char('n') => Modal::None,
+        // Back to the form with the pending edit intact, mode still `disabled`
+        // so the user can pick another one.
+        KeyCode::Esc | KeyCode::Char('n') => Modal::ProviderForm(*m.form),
         KeyCode::Char('y') => {
-            let mut cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
-                Some(c) => c,
-                None => {
-                    state.flash("toggle failed: config not loaded");
-                    return Modal::None;
-                }
-            };
-            if m.provider_index >= cfg.providers.len() {
-                state.flash("toggle failed: provider index out of range");
-                return Modal::None;
-            }
-            ProviderModeInput::Disabled.apply_to(&mut cfg.providers[m.provider_index]);
-            cfg.routing.retain(|r| {
-                r.provider != m.provider_name && !r.fallback.contains(&m.provider_name)
-            });
-            match client.put_config(&cfg) {
-                Ok(updated) => {
-                    state.set_config(Ok(updated));
-                    state.flash(format!(
-                        "disabled {} and removed referenced rules",
-                        m.provider_name
-                    ));
-                    Modal::None
-                }
-                Err(e) => {
-                    state.flash(format!("disable failed: {e}"));
-                    Modal::None
-                }
-            }
+            let mut form = *m.form;
+            form.disable_rules_confirmed = true;
+            submit_provider_form(client, state, form)
         }
         _ => Modal::DisableConfirm(m),
     }
@@ -1110,15 +1084,7 @@ fn handle_form_key(
             Modal::ProviderForm(m)
         }
         (FormState::Editing, KeyCode::Enter) if m.focused == FormField::Save => {
-            if m.auth_kind == AuthInputKind::OAuthAnthropic
-                || m.auth_kind == AuthInputKind::OAuthOpenAi
-            {
-                return match m.mode {
-                    FormMode::Add => submit_oauth_add(client, state, m), // Task 8
-                    FormMode::Edit { .. } => submit_oauth_edit(client, state, m),
-                };
-            }
-            submit_non_oauth_save(client, state, m)
+            submit_provider_form(client, state, m)
         }
         (FormState::OAuthAwaitingCode { .. }, KeyCode::Backspace) => {
             if let FormState::OAuthAwaitingCode { code_input, .. } = &mut m.state {
@@ -1213,6 +1179,10 @@ fn submit_non_oauth_save(
             return Modal::ProviderForm(m);
         }
     };
+
+    if m.disable_rules_confirmed {
+        strip_referencing_rules(&mut cfg, &disable_target_name(&m));
+    }
 
     let auth_value = m.auth_value.clone();
     let auth = match m.auth_kind {
@@ -1419,6 +1389,10 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
             return Modal::ProviderForm(m);
         }
     };
+
+    if m.disable_rules_confirmed {
+        strip_referencing_rules(&mut cfg, &disable_target_name(&m));
+    }
 
     // Retry path: a previous Add+OAuth attempt already PUT this provider but
     // oauth_start failed. The provider is already in the daemon — skip the
@@ -1921,6 +1895,10 @@ fn submit_oauth_edit(
         }
     };
 
+    if m.disable_rules_confirmed {
+        strip_referencing_rules(&mut cfg, &disable_target_name(&m));
+    }
+
     // Preserve original auth — we run OAuth dance after PUT lands.
     let original_auth = cfg
         .providers
@@ -1954,11 +1932,16 @@ fn submit_oauth_edit(
         }
     };
 
-    // Detect whether non-auth fields changed; if so, PUT first.
+    // Detect whether non-auth fields changed; if so, PUT first. A confirmed
+    // disable also counts: the routing rules were already stripped from `cfg`
+    // above and that removal only lands with a PUT.
     let dirty = if original_index < cfg.providers.len() {
         let prev = &cfg.providers[original_index];
-        prev.name != provider.name
+        m.disable_rules_confirmed
+            || prev.name != provider.name
             || prev.kind != provider.kind
+            || prev.mode != provider.mode
+            || prev.enabled != provider.enabled
             || prev.anthropic_base_url != provider.anthropic_base_url
             || prev.openai_base_url != provider.openai_base_url
             || prev.thinking_level != provider.thinking_level
@@ -2111,6 +2094,162 @@ mod modal_key_tests {
 
         assert_eq!(state.requests.selected, 0);
         assert_eq!(state.requests.scroll_offset, 0);
+    }
+
+    /// A config holding one provider named `name` and one routing rule that
+    /// names it as primary plus one that names it as fallback.
+    fn state_with_referenced_provider(name: &str) -> AppState {
+        use proxy_admin_api::{
+            AuthPayload, MatchPayload, ProviderPayload, RoutingRulePayload, RoutingStrategyPayload,
+        };
+
+        let provider = ProviderPayload {
+            name: name.into(),
+            kind: "anthropic".into(),
+            mode: Some("enabled".into()),
+            enabled: true,
+            auth: AuthPayload::Passthrough,
+            anthropic_base_url: None,
+            openai_base_url: None,
+            thinking_mode: None,
+            thinking_level: None,
+            thinking_force: None,
+            format_mode: None,
+            max_concurrent: None,
+            sanitize_empty_tools: None,
+            model_formats: None,
+        };
+        let rule = |model: &str, primary: &str, fallback: &[&str]| RoutingRulePayload {
+            r#match: MatchPayload {
+                model: Some(model.into()),
+            },
+            provider: primary.into(),
+            fallback: fallback.iter().map(|s| s.to_string()).collect(),
+            strategy: RoutingStrategyPayload::default(),
+            priority: None,
+        };
+
+        let mut state = AppState::new();
+        state.set_config(Ok(ConfigPayload {
+            port: 3456,
+            providers: vec![provider],
+            routing: vec![
+                rule("claude-*", name, &[]),
+                rule("gpt-*", "other", &[name]),
+                rule("*", "other", &[]),
+            ],
+            quota: Vec::new(),
+            affinity: AffinityPayload::default(),
+            proxy_db: None,
+            pricing_db: None,
+        }));
+        state
+    }
+
+    fn edit_form_set_to(name: &str, mode: crate::app::ProviderModeInput) -> ProviderFormModal {
+        let mut m = ProviderFormModal::new_for_add();
+        m.mode = FormMode::Edit {
+            original_index: 0,
+            original_name: name.to_string(),
+        };
+        m.name = name.to_string();
+        m.provider_mode = mode;
+        m
+    }
+
+    #[test]
+    fn saving_a_disable_asks_before_dropping_the_rules_that_name_it() {
+        let client = client();
+        let mut state = state_with_referenced_provider("zai");
+        let form = edit_form_set_to("zai", crate::app::ProviderModeInput::Disabled);
+
+        let modal = submit_provider_form(&client, &mut state, form);
+
+        let Modal::DisableConfirm(m) = modal else {
+            panic!("expected the disable confirmation");
+        };
+        assert_eq!(m.provider_name, "zai");
+        assert_eq!(m.rules.len(), 2, "primary and fallback references");
+        assert_eq!(
+            m.form.provider_mode,
+            crate::app::ProviderModeInput::Disabled
+        );
+    }
+
+    #[test]
+    fn parking_a_provider_saves_without_asking() {
+        let client = client();
+        let mut state = state_with_referenced_provider("zai");
+        let form = edit_form_set_to("zai", crate::app::ProviderModeInput::Monitor);
+
+        let modal = submit_provider_form(&client, &mut state, form);
+
+        assert!(
+            !matches!(modal, Modal::DisableConfirm(_)),
+            "a parked provider stays legal in a routing rule"
+        );
+    }
+
+    #[test]
+    fn declining_the_disable_returns_the_form_untouched() {
+        let client = client();
+        let mut state = state_with_referenced_provider("zai");
+        let mut form = edit_form_set_to("zai", crate::app::ProviderModeInput::Disabled);
+        form.anthropic_base_url = "https://example.test".into();
+        let confirm = DisableConfirmModal {
+            provider_name: "zai".into(),
+            rules: vec!["rule 1".into()],
+            form: Box::new(form),
+        };
+
+        let modal =
+            handle_disable_confirm_key(key(KeyCode::Char('n')), &client, &mut state, confirm);
+
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected to land back on the form");
+        };
+        assert_eq!(m.provider_mode, crate::app::ProviderModeInput::Disabled);
+        assert_eq!(m.anthropic_base_url, "https://example.test");
+        assert!(!m.disable_rules_confirmed);
+    }
+
+    #[test]
+    fn confirming_the_disable_does_not_ask_a_second_time() {
+        let client = client();
+        let mut state = state_with_referenced_provider("zai");
+        let confirm = DisableConfirmModal {
+            provider_name: "zai".into(),
+            rules: vec!["rule 1".into()],
+            form: Box::new(edit_form_set_to(
+                "zai",
+                crate::app::ProviderModeInput::Disabled,
+            )),
+        };
+
+        // The PUT fails (no daemon on the test port), so the form comes back
+        // Failed — the point is that it is the form and not the question again.
+        let modal =
+            handle_disable_confirm_key(key(KeyCode::Char('y')), &client, &mut state, confirm);
+
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected the form, not the confirmation");
+        };
+        assert!(m.disable_rules_confirmed);
+    }
+
+    #[test]
+    fn stripping_rules_drops_primary_and_fallback_references_only() {
+        let mut cfg = state_with_referenced_provider("zai")
+            .config
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .cloned()
+            .expect("config");
+
+        strip_referencing_rules(&mut cfg, "zai");
+
+        assert_eq!(cfg.routing.len(), 1);
+        assert_eq!(cfg.routing[0].r#match.model.as_deref(), Some("*"));
     }
 
     #[test]

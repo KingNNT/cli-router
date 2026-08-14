@@ -423,7 +423,6 @@ fn selected_provider_footer(
         parts.push(url.to_string());
     }
     parts.push("[t] test".into());
-    parts.push("[z] cycle mode".into());
     Some(parts.join(" · "))
 }
 
@@ -892,7 +891,6 @@ fn draw_provider_toolbar(f: &mut Frame, area: Rect) {
             "[a] Add",
             "[e/Enter] Edit",
             "[d] Delete",
-            "[z] Mode",
             "[t] Test",
             "[r] Refresh",
         ],
@@ -1487,9 +1485,12 @@ fn draw_disable_confirm_modal(f: &mut Frame, m: &DisableConfirmModal) {
     lines.push(Line::from(Span::raw("Delete those rules when disabling?")));
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("[y] Yes", Style::default().fg(Color::Green)),
+        Span::styled(
+            "[y] Yes, save and delete",
+            Style::default().fg(Color::Green),
+        ),
         Span::raw("   "),
-        Span::styled("[n] No", Style::default().fg(Color::Red)),
+        Span::styled("[n] Back to form", Style::default().fg(Color::Red)),
     ]));
 
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);

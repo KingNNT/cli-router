@@ -281,10 +281,12 @@ Provider có ba mức tham gia, chọn qua field `mode`:
   tắt hẳn thì phải gỡ rule trước (TUI hỏi xác nhận và tự gỡ giúp).
 - Tên provider **không tồn tại** vẫn làm hỏng build như trước, không bị âm thầm bỏ qua.
 
-Trong `proxy-tui`: phím `z` trên tab Providers xoay vòng
-`enabled → monitor → disabled`, cột `Mode` trong bảng hiển thị trạng thái hiện
-tại, và modal Add/Edit có dòng `Mode`. Chỉ bước chuyển sang `disabled` mới hỏi
-xác nhận khi provider đang được routing rule tham chiếu.
+Trong `proxy-tui`: cột `Mode` trong bảng Providers hiển thị trạng thái hiện tại
+(chỉ để xem), và `mode` **chỉ sửa được trong modal Add/Edit** — dòng `Mode`,
+xoay vòng `enabled → monitor → disabled` bằng `←/→`. Không có phím tắt nào đổi
+mode từ ngoài bảng. Chỉ khi lưu với `disabled` mà provider đang được routing
+rule tham chiếu thì mới hiện modal xác nhận: `y` lưu và gỡ luôn các rule đó,
+`n` quay lại form với nguyên các thay đổi đang dở.
 
 **Tương thích:** field `enabled` cũ vẫn còn trên wire và trong DB. Daemon ghi nó
 ra như một giá trị dẫn xuất (`mode != disabled`) và **chỉ đọc** nó khi payload

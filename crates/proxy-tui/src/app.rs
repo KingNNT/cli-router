@@ -529,13 +529,6 @@ impl ProviderModeInput {
         }
     }
 
-    /// Write this mode onto a payload, keeping the legacy `enabled` flag in
-    /// step so a daemon that predates `mode` still reads the right thing.
-    pub fn apply_to(self, p: &mut ProviderPayload) {
-        p.mode = Some(self.label().to_string());
-        p.enabled = self == ProviderModeInput::Enabled;
-    }
-
     /// Whether moving a provider *into* this mode forces routing rules that
     /// name it to be removed. Only a fully disabled provider does: the daemon
     /// rejects a config whose rule names one, while a parked provider is legal
@@ -797,6 +790,10 @@ pub struct ProviderFormModal {
     /// Inline validation error rendered red at top of modal. Cleared on
     /// any field edit.
     pub error: Option<String>,
+    /// Set once the user has answered the disable-confirm modal with `y`.
+    /// The save then strips the routing rules naming this provider instead of
+    /// asking again.
+    pub disable_rules_confirmed: bool,
 }
 
 impl ProviderFormModal {
@@ -820,6 +817,7 @@ impl ProviderFormModal {
             max_concurrent: None,
             state: FormState::Editing,
             error: None,
+            disable_rules_confirmed: false,
         }
     }
 
@@ -851,6 +849,7 @@ impl ProviderFormModal {
             max_concurrent: p.max_concurrent,
             state: FormState::Editing,
             error: None,
+            disable_rules_confirmed: false,
         }
     }
 }
@@ -867,9 +866,12 @@ pub struct DeleteConfirmModal {
 /// one or more routing rules. `rules` is non-empty by construction.
 #[derive(Debug, Clone)]
 pub struct DisableConfirmModal {
-    pub provider_index: usize,
     pub provider_name: String,
     pub rules: Vec<String>,
+    /// The pending edit that triggered this question. Answering `n` puts it
+    /// back on screen untouched; `y` re-submits it with
+    /// `disable_rules_confirmed` set.
+    pub form: Box<ProviderFormModal>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1274,34 +1276,6 @@ mod form_field_tests {
         assert!(
             ProviderModeInput::Disabled.needs_rule_cleanup(),
             "the daemon still rejects a rule naming a disabled provider"
-        );
-    }
-
-    #[test]
-    fn applying_a_mode_writes_both_the_field_and_the_legacy_flag() {
-        let mut p = ProviderPayload {
-            name: "p".into(),
-            kind: "zai".into(),
-            mode: None,
-            enabled: true,
-            auth: AuthPayload::Passthrough,
-            anthropic_base_url: None,
-            openai_base_url: None,
-            thinking_mode: None,
-            thinking_level: None,
-            thinking_force: None,
-            format_mode: None,
-            max_concurrent: None,
-            sanitize_empty_tools: None,
-            model_formats: None,
-        };
-
-        ProviderModeInput::Monitor.apply_to(&mut p);
-
-        assert_eq!(p.mode.as_deref(), Some("monitor"));
-        assert!(
-            !p.enabled,
-            "a daemon that only reads the legacy flag must not route to a parked provider"
         );
     }
 
