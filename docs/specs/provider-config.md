@@ -61,7 +61,7 @@ Ràng buộc validate (`Config::validate`):
 | `thinking_force` | `bool?` | ❌ | `false` | mọi kind | `true` thì mức này đè lên tham số client gửi; `false` thì chỉ điền khi client bỏ trống. |
 | `thinking_mode` | `string?` | ❌ | `"split_only"` | `minimax` | Cách xử lý nội dung thinking/reasoning trong response. Xem §5. |
 | `max_concurrent` | `number?` | ❌ | `null` (dùng default của pool) | mọi kind | Số request đồng thời tối đa tới provider này. Tăng để một provider nhanh phục vụ nhiều request; giảm để tránh vượt rate limit. |
-| `model_formats` | `string?` | ❌ | `null` (không có luật nào) | mọi kind, chỉ có tác dụng với `opencode_go` | Bảng model → wire format dạng chuỗi nén. Xem §5d. |
+| `model_formats` | `string?` | ❌ | `null` (không có luật nào) | mọi kind (chỉ `opencode_go` được seed sẵn) | Bảng model → wire format dạng chuỗi nén. Xem §5d. |
 
 > **Lưu ý về `openai_base_url`:** field này chỉ được builder truyền vào cho `zai`, `minimax`,
 > `kimi` (các provider hiểu cả 2 format). `deepseek` và `openai` là OpenAI-only — endpoint của
@@ -198,12 +198,15 @@ Lưu ý theo từng kind:
 
 ---
 
-## 5d. `model_formats` — ghim wire format theo từng model (chỉ `opencode_go`)
+## 5d. `model_formats` — ghim wire format theo từng model
 
-Mọi provider khác chọn wire format theo endpoint client gọi + URL nào được cấu
-hình (§3). OpenCode Go là ngoại lệ: format phụ thuộc **model**, không phụ
-thuộc endpoint — xem §6.8. `model_formats` là bảng luật cho trường hợp đó,
-lưu dưới dạng một chuỗi nén:
+Field này chấp nhận trên **mọi kind** — builder gắn `model_formats` vào bất
+kỳ `UpstreamProvider` nào bất kể `kind`, và routing gọi
+`supported_formats_for(model)` ở cả 6 điểm chọn hướng dịch, không riêng gì
+`opencode_go`. Chỉ có `opencode_go` được **seed sẵn** một chuỗi mặc định khi
+tạo provider (§6.8), vì chỉ kind đó thật sự cần chọn format theo model thay
+vì theo endpoint client gọi (§3). Tự thêm luật cho kind khác vẫn có hiệu lực
+— xem cảnh báo ở cuối mục này. `model_formats` lưu dưới dạng một chuỗi nén:
 
 ```
 minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses
@@ -413,13 +416,34 @@ provider `opencode_go` duy nhất phục vụ cả 19 model qua namespace
 
 | Endpoint | Model |
 |---|---|
-| `/chat/completions` (fallthrough, không cần luật) | `glm-5.1`, `glm-5.2`, `glm-5.3`, `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6`, `deepseek-v4-pro`, `deepseek-v4-flash`, `mimo-v2.5`, `mimo-v2.5-pro`, `hy3` |
+| `/chat/completions` (không có luật riêng — xem caveat bên dưới) | `glm-5.1`, `glm-5.2`, `glm-5.3`, `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6`, `deepseek-v4-pro`, `deepseek-v4-flash`, `mimo-v2.5`, `mimo-v2.5-pro`, `hy3` |
 | `/messages` (luật `=anthropic`) | `minimax-m3`, `minimax-m2.7`, `minimax-m2.5`, `qwen3.8-max`, `qwen3.7-max`, `qwen3.7-plus`, `qwen3.6-plus` |
 | `/responses` (luật `=responses`) | `grok-4.5`, `gpt-5.6-luna` |
 
-Một model không khớp luật nào rơi vào `/chat/completions` — đây cũng là nhóm
-lớn nhất và ổn định nhất, nên fallthrough an toàn kể cả khi OpenCode thêm
-model mới trước khi luật được cập nhật.
+**Model không khớp luật nào (nhóm `/chat/completions` ở trên) đi qua endpoint
+mà client đang dùng, không tự động đổi sang `/chat/completions`.** Không
+khớp luật nghĩa là `supported_formats_for` trả về nguyên capability suy ra từ
+URL — cả hai URL đều được cấu hình cho `opencode_go`, nên `select_direction`
+luôn chọn passthrough theo format client gửi (§3, "Format nào đi qua endpoint
+nào"): client gọi `/v1/chat/completions` thì tới
+`https://opencode.ai/zen/go/v1/chat/completions`; client gọi `/v1/messages`
+thì tới `https://opencode.ai/zen/go/v1/messages` — kể cả khi model đó
+(ví dụ `kimi-k3`) thuộc nhóm tài liệu OpenCode liệt kê dưới
+`/chat/completions`. Đây là group **lớn nhất và ổn định nhất** nên vẫn là
+fallback hợp lý khi OpenCode thêm model mới, nhưng **liệu gateway OpenCode Go
+có chấp nhận một model thuộc nhóm `/chat/completions` khi gọi trên
+`/v1/messages` hay không là điều chưa được xác minh** (assumption #2 trong
+design spec, "Gateway strictness"). Nếu gateway từ chối (trả lỗi cho model
+"sai" endpoint), khắc phục bằng cách thêm luật tường minh cho nhóm đó thay vì
+dựa vào fallthrough, ví dụ:
+
+```
+glm-*=openai,kimi-*=openai,deepseek-v4-*=openai,mimo-*=openai,hy3=openai
+```
+
+Đây **không** phải preset đã ship — preset mặc định vẫn chỉ seed 4 luật ở
+đầu mục này; các luật `=openai` bổ sung ở trên chỉ là ví dụ khắc phục thủ
+công nếu probe xác nhận gateway strict.
 
 - Account usage và quota **không** được hỗ trợ cho kind này
   (`NoopAccountUsage`): OpenCode Go giới hạn theo đô-la ($12/5h, $30/tuần,

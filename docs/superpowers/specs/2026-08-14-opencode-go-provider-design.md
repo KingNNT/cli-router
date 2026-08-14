@@ -272,6 +272,19 @@ Each phase keeps `cargo test --workspace` green and is committed separately.
    the table is config, a stale entry is a config edit, not a release. A model
    with no rule falls through to `chat/completions`, which is the largest and
    most stable group.
-4. **Extraction blast radius** — the Responses code is Codex's hot path.
+4. **Goal 3 is not enforced for unmatched models** — Goal 3 says "an
+   Anthropic client asking for `kimi-k3` is translated A→O." In the shipped
+   implementation this only happens for models that have an explicit
+   `model_formats` rule. A model with no rule (the entire `chat/completions`
+   group, by design) reports unchanged, both-URLs-configured capability from
+   `supported_formats_for`, so `select_direction` passes it straight through
+   on whichever endpoint the client used — an Anthropic client asking for
+   `kimi-k3` reaches `/zen/go/v1/messages` with no translation, not
+   `/zen/go/v1/chat/completions`. Whether that is safe depends on the same
+   unverified gateway-strictness assumption as #2: if the gateway accepts
+   `chat/completions`-group models on `/messages`, Goal 3 holds anyway via
+   passthrough; if it rejects them, Goal 3 is broken for that group until
+   explicit `=openai` rules are added.
+5. **Extraction blast radius** — the Responses code is Codex's hot path.
    Mitigated by phase 1 being pure refactor with the existing test suite as
    the guard.
