@@ -1256,6 +1256,13 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
         "OpenAI URL:",
         show_or_placeholder(&m.openai_base_url),
     ));
+    if m.kind == crate::app::ProviderKind::OpencodeGo {
+        lines.push(row(
+            FormField::ModelFormats,
+            "Model Formats:",
+            show_or_placeholder(&m.model_formats),
+        ));
+    }
     if m.kind != crate::app::ProviderKind::Codex {
         lines.push(row(
             FormField::FormatMode,
@@ -2116,6 +2123,31 @@ mod tests {
         assert!(output.contains("https://api.anthropic.com"));
         assert!(output.contains("OpenAI URL:"));
         assert!(output.contains("https://api.openai.com/v1"));
+    }
+
+    #[test]
+    fn provider_form_shows_model_formats_field_for_opencode_go() {
+        let mut state = AppState::new();
+        let mut modal = crate::app::ProviderFormModal::new_for_add();
+        modal.kind = crate::app::ProviderKind::OpencodeGo;
+        modal.model_formats = "minimax-*=anthropic,qwen3.*=anthropic".into();
+        state.modal = Modal::ProviderForm(modal);
+
+        let output = render_state(&state, 120, 30);
+
+        assert!(output.contains("Model Formats:"));
+        assert!(output.contains("minimax-*=anthropic,qwen3.*=anthropic"));
+    }
+
+    #[test]
+    fn provider_form_hides_model_formats_field_for_other_kinds() {
+        let mut state = AppState::new();
+        let modal = crate::app::ProviderFormModal::new_for_add();
+        state.modal = Modal::ProviderForm(modal);
+
+        let output = render_state(&state, 120, 30);
+
+        assert!(!output.contains("Model Formats:"));
     }
 
     #[test]

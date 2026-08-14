@@ -12,6 +12,7 @@ pub enum FormError {
     DuplicateName,
     EmptyAuthValue,
     RenameBlockedBy(Vec<String>),
+    InvalidModelFormats(String),
 }
 
 impl std::fmt::Display for FormError {
@@ -31,6 +32,9 @@ impl std::fmt::Display for FormError {
                     rules.join("\n  - ")
                 )
             }
+            FormError::InvalidModelFormats(segment) => {
+                write!(f, "invalid model format rule: '{segment}'")
+            }
         }
     }
 }
@@ -42,6 +46,7 @@ pub struct FormInputs<'a> {
     pub kind: &'a str,
     pub anthropic_base_url: Option<&'a str>,
     pub openai_base_url: Option<&'a str>,
+    pub model_formats: Option<&'a str>,
     pub thinking_level: Option<&'a str>,
     pub thinking_force: bool,
     pub thinking_mode: Option<&'a str>,
@@ -57,6 +62,30 @@ pub struct FormInputs<'a> {
     pub editing_index: Option<usize>,
     /// `None` for Add, `Some(original_name)` for Edit.
     pub original_name: Option<&'a str>,
+}
+
+/// Mirrors `proxy::config::parse_model_formats` — `proxy-tui` cannot depend on
+/// the proxy crate, so the grammar is checked twice on purpose. The daemon
+/// remains the authority; this only keeps a typo from reaching it.
+fn check_model_formats(s: &str) -> Result<(), FormError> {
+    for segment in s.split(',') {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        let Some((glob, format)) = segment.split_once('=') else {
+            return Err(FormError::InvalidModelFormats(segment.to_string()));
+        };
+        if glob.trim().is_empty()
+            || !matches!(
+                format.trim().to_ascii_lowercase().as_str(),
+                "anthropic" | "openai" | "responses"
+            )
+        {
+            return Err(FormError::InvalidModelFormats(segment.to_string()));
+        }
+    }
+    Ok(())
 }
 
 /// Validate the form against the current config and return a freshly built
@@ -107,6 +136,11 @@ pub fn validate_provider_form(
         }
     }
 
+    let model_formats = input.model_formats.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(rules) = model_formats {
+        check_model_formats(rules)?;
+    }
+
     Ok(ProviderPayload {
         name: name.to_string(),
         kind: input.kind.to_string(),
@@ -134,7 +168,7 @@ pub fn validate_provider_form(
         } else {
             None
         },
-        model_formats: None,
+        model_formats: model_formats.map(str::to_string),
     })
 }
 
@@ -222,6 +256,7 @@ mod tests {
             kind: "anthropic",
             anthropic_base_url: None,
             openai_base_url: None,
+            model_formats: None,
             thinking_level: None,
             thinking_force: false,
             thinking_mode: None,
@@ -330,6 +365,7 @@ mod tests {
             kind: "kimi",
             anthropic_base_url: None,
             openai_base_url: None,
+            model_formats: None,
             thinking_level: None,
             thinking_force: false,
             thinking_mode: None,
@@ -355,6 +391,7 @@ mod tests {
             kind: "zai",
             anthropic_base_url: None,
             openai_base_url: None,
+            model_formats: None,
             thinking_level: None,
             thinking_force: false,
             thinking_mode: None,
@@ -380,6 +417,7 @@ mod tests {
             kind: "zai",
             anthropic_base_url: None,
             openai_base_url: None,
+            model_formats: None,
             thinking_level: Some("high"),
             thinking_force: true,
             thinking_mode: None,
@@ -422,6 +460,28 @@ mod tests {
         assert_eq!(refs.len(), 2);
         assert!(refs[0].contains("provider=a"));
         assert!(refs[1].contains("fallback=a"));
+    }
+
+    #[test]
+    fn model_formats_reaches_the_payload() {
+        let cfg = empty_cfg();
+        let auth = AuthPayload::Passthrough;
+        let mut input = inputs("foo", &auth);
+        input.model_formats = Some("glm-*=openai");
+        let payload = validate_provider_form(&input, &cfg).unwrap();
+        assert_eq!(payload.model_formats.as_deref(), Some("glm-*=openai"));
+    }
+
+    #[test]
+    fn malformed_model_formats_is_rejected_before_saving() {
+        let cfg = empty_cfg();
+        let auth = AuthPayload::Passthrough;
+        let mut input = inputs("foo", &auth);
+        input.model_formats = Some("glm-*");
+        assert!(matches!(
+            validate_provider_form(&input, &cfg),
+            Err(FormError::InvalidModelFormats(_))
+        ));
     }
 
     #[test]
