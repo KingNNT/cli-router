@@ -697,6 +697,7 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
             .map(|p| ProviderPayload {
                 name: p.name.clone(),
                 kind: kind_to_str(p.kind).into(),
+                mode: Some(p.mode.as_str().to_string()),
                 enabled: p.mode.is_routable(),
                 auth: auth_to_payload(&p.auth),
                 anthropic_base_url: p.anthropic_base_url.clone(),
@@ -808,6 +809,24 @@ fn payload_to_config(
                     )));
                 }
             };
+            // `mode` is authoritative; `enabled` is only consulted when a
+            // client that predates the field omits it, so turning a provider
+            // off from an older TUI still works.
+            let mode = match pp.mode.as_deref().map(str::trim) {
+                None | Some("") => {
+                    if pp.enabled {
+                        ProviderMode::Enabled
+                    } else {
+                        ProviderMode::Disabled
+                    }
+                }
+                Some(m) => ProviderMode::parse(m).ok_or_else(|| {
+                    ProxyError::BadRequest(format!(
+                        "invalid mode '{m}' for provider '{}' (expected 'enabled', 'monitor' or 'disabled')",
+                        pp.name
+                    ))
+                })?,
+            };
             Ok(ProviderConfig {
                 name: pp.name,
                 kind,
@@ -826,11 +845,7 @@ fn payload_to_config(
                 thinking_level,
                 max_concurrent: pp.max_concurrent,
                 sanitize_empty_tools: pp.sanitize_empty_tools.unwrap_or(false),
-                mode: if pp.enabled {
-                    ProviderMode::Enabled
-                } else {
-                    ProviderMode::Disabled
-                },
+                mode,
                 model_formats: pp.model_formats,
             })
         })
@@ -1571,6 +1586,7 @@ mod tests {
             providers: vec![ProviderPayload {
                 name: "minimax".into(),
                 kind: "minimax".into(),
+                mode: None,
                 enabled: true,
                 auth: AuthPayload::Passthrough,
                 anthropic_base_url: None,
@@ -1629,6 +1645,7 @@ mod tests {
             providers: vec![ProviderPayload {
                 name: "x".into(),
                 kind: "bogus".into(),
+                mode: None,
                 enabled: true,
                 auth: AuthPayload::Passthrough,
                 anthropic_base_url: None,
@@ -1766,6 +1783,96 @@ mod tests {
         };
         let payload = config_to_payload(&cfg);
         assert!(!payload.providers[0].enabled);
+    }
+
+    fn cfg_with_mode(mode: ProviderMode) -> Config {
+        Config {
+            port: 8787,
+            proxy_db: PathBuf::from("/tmp/proxy.db"),
+            pricing_db: PathBuf::from("/tmp/pricing.db"),
+            providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
+                name: "parked".into(),
+                kind: ProviderKind::Anthropic,
+                auth: AuthConfig::Passthrough,
+                anthropic_base_url: None,
+                openai_base_url: None,
+                thinking_mode: crate::config::ThinkingMode::SplitOnly,
+                format_mode: crate::config::FormatMode::Both,
+                max_concurrent: None,
+                sanitize_empty_tools: false,
+                mode,
+                model_formats: None,
+            }],
+            routing: vec![],
+            affinity: Default::default(),
+            quota: vec![],
+        }
+    }
+
+    #[test]
+    fn monitor_mode_survives_a_config_put_round_trip() {
+        let original = cfg_with_mode(ProviderMode::Monitor);
+        let payload = config_to_payload(&original);
+        let roundtripped = payload_to_config(
+            payload,
+            original.proxy_db.clone(),
+            original.pricing_db.clone(),
+            &original,
+        )
+        .unwrap();
+        assert_eq!(roundtripped.providers[0].mode, ProviderMode::Monitor);
+    }
+
+    #[test]
+    fn config_to_payload_reports_a_parked_provider_as_not_enabled() {
+        let payload = config_to_payload(&cfg_with_mode(ProviderMode::Monitor));
+        assert_eq!(payload.providers[0].mode.as_deref(), Some("monitor"));
+        assert!(
+            !payload.providers[0].enabled,
+            "a client that only knows the legacy flag must not think a parked \
+             provider is serving traffic"
+        );
+    }
+
+    #[test]
+    fn a_payload_without_mode_still_honours_the_legacy_enabled_flag() {
+        let original = cfg_with_mode(ProviderMode::Enabled);
+        let mut payload = config_to_payload(&original);
+        // What a client predating `mode` sends when it turns a provider off.
+        payload.providers[0].mode = None;
+        payload.providers[0].enabled = false;
+
+        let roundtripped = payload_to_config(
+            payload,
+            original.proxy_db.clone(),
+            original.pricing_db.clone(),
+            &original,
+        )
+        .unwrap();
+
+        assert_eq!(roundtripped.providers[0].mode, ProviderMode::Disabled);
+    }
+
+    #[test]
+    fn an_unknown_mode_is_rejected_instead_of_defaulting() {
+        let original = cfg_with_mode(ProviderMode::Enabled);
+        let mut payload = config_to_payload(&original);
+        payload.providers[0].mode = Some("paused".into());
+
+        let err = payload_to_config(
+            payload,
+            original.proxy_db.clone(),
+            original.pricing_db.clone(),
+            &original,
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{err:?}").contains("paused"),
+            "the error should quote the bad value, got: {err:?}"
+        );
     }
 
     // --- GetAccountUsage tests ---

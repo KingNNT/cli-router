@@ -108,8 +108,8 @@ impl ConfigRepository for DbConfigRepository {
             let mut stmt = tx
                 .prepare(
                     "INSERT INTO providers (name, kind, anthropic_base_url, openai_base_url, thinking_mode, auth_type,
-                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent, sanitize_empty_tools, enabled, format_mode, thinking_level, thinking_force, model_formats)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent, sanitize_empty_tools, enabled, format_mode, thinking_level, thinking_force, model_formats, mode)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
                 )
                 .map_err(db_err)?;
             for p in &config.providers {
@@ -141,6 +141,7 @@ impl ConfigRepository for DbConfigRepository {
                     p.thinking_level.as_str(),
                     p.thinking_force as i64,
                     p.model_formats,
+                    p.mode.as_str(),
                 ])
                 .map_err(db_err)?;
             }
@@ -217,7 +218,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
             "SELECT name, kind, anthropic_base_url, openai_base_url, thinking_mode, auth_type,
                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms,
                     max_concurrent, sanitize_empty_tools, enabled, format_mode, thinking_level, thinking_force,
-                    model_formats
+                    model_formats, mode
              FROM providers ORDER BY id",
         )
         .map_err(db_err)?;
@@ -247,11 +248,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
                 ),
                 max_concurrent: row.get::<_, Option<i64>>(11)?.map(|v| v.max(0) as usize),
                 sanitize_empty_tools: row.get::<_, i64>(12)? != 0,
-                mode: if row.get::<_, i64>(13)? != 0 {
-                    ProviderMode::Enabled
-                } else {
-                    ProviderMode::Disabled
-                },
+                mode: ProviderMode::parse(&row.get::<_, String>(18)?).unwrap_or_default(),
                 format_mode: match row.get::<_, String>(14)?.as_str() {
                     "anthropic" => FormatMode::Anthropic,
                     "openai" => FormatMode::OpenAi,
@@ -811,6 +808,31 @@ mod tests {
         let loaded = repo.load().unwrap();
         let og = loaded.providers.iter().find(|p| p.name == "og").unwrap();
         assert!(og.model_formats.is_none());
+    }
+
+    #[test]
+    fn monitor_mode_survives_save_and_load() {
+        let repo = test_repo();
+        let mut cfg = repo.load().unwrap();
+        cfg.providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
+            name: "parked".into(),
+            kind: ProviderKind::Anthropic,
+            auth: AuthConfig::Passthrough,
+            anthropic_base_url: None,
+            openai_base_url: None,
+            thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
+            max_concurrent: None,
+            sanitize_empty_tools: false,
+            mode: ProviderMode::Monitor,
+            model_formats: None,
+        });
+        repo.save(&cfg).unwrap();
+        let loaded = repo.load().unwrap();
+        let parked = loaded.providers.iter().find(|p| p.name == "parked");
+        assert_eq!(parked.map(|p| p.mode), Some(ProviderMode::Monitor));
     }
 
     #[test]

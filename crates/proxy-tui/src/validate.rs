@@ -151,6 +151,7 @@ pub fn validate_provider_form(
     Ok(ProviderPayload {
         name: name.to_string(),
         kind: input.kind.to_string(),
+        mode: None,
         enabled: input.enabled,
         auth: input.auth.clone(),
         anthropic_base_url: input
@@ -231,6 +232,7 @@ mod tests {
         ProviderPayload {
             name: name.into(),
             kind: "anthropic".into(),
+            mode: None,
             enabled: true,
             auth: AuthPayload::Passthrough,
             anthropic_base_url: None,

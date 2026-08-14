@@ -2203,6 +2203,7 @@ mod modal_key_tests {
         let payload = proxy_admin_api::ProviderPayload {
             name: "anthropic".into(),
             kind: "anthropic".into(),
+            mode: None,
             enabled: true,
             auth: proxy_admin_api::AuthPayload::Passthrough,
             anthropic_base_url: None,
@@ -2638,6 +2639,7 @@ mod modal_key_tests {
             providers: vec![proxy_admin_api::ProviderPayload {
                 name: "anthropic".into(),
                 kind: "anthropic".into(),
+                mode: None,
                 enabled: true,
                 auth: proxy_admin_api::AuthPayload::Passthrough,
                 anthropic_base_url: None,

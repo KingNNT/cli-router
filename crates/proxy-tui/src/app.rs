@@ -1597,6 +1597,7 @@ mod form_field_tests {
         let payload = ProviderPayload {
             name: "go".into(),
             kind: "opencode_go".into(),
+            mode: None,
             enabled: true,
             auth: AuthPayload::Passthrough,
             anthropic_base_url: None,

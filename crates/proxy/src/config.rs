@@ -96,6 +96,26 @@ impl ProviderMode {
     pub fn is_monitored(self) -> bool {
         matches!(self, Self::Enabled | Self::Monitor)
     }
+
+    /// Wire and storage spelling. Also the value shown in the TUI.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Enabled => "enabled",
+            Self::Monitor => "monitor",
+            Self::Disabled => "disabled",
+        }
+    }
+
+    /// Parse a stored or wire value. Unknown input yields `None` so callers can
+    /// reject it rather than silently defaulting.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "enabled" => Some(Self::Enabled),
+            "monitor" => Some(Self::Monitor),
+            "disabled" => Some(Self::Disabled),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

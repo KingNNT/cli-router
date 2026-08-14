@@ -16,6 +16,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (11, MIGRATION_V11),
     (12, MIGRATION_V12),
     (13, MIGRATION_V13),
+    (14, MIGRATION_V14),
 ];
 
 const MIGRATION_V1: &str = r#"
@@ -232,6 +233,17 @@ UPDATE providers
 // the provider keeps using `format_mode`. See `config::parse_model_formats`.
 const MIGRATION_V13: &str = r#"
 ALTER TABLE providers ADD COLUMN model_formats TEXT;
+"#;
+
+// Three-state participation replaces the `enabled` boolean: a provider can now
+// be watched for account usage without being routed to. The backfill carries
+// the old flag across; `enabled` is left in place and written as a derived
+// value so rolling back to a pre-V14 binary still sees disabled providers as
+// disabled, the same way V9 retired `base_url`.
+const MIGRATION_V14: &str = r#"
+ALTER TABLE providers ADD COLUMN mode TEXT NOT NULL DEFAULT 'enabled';
+
+UPDATE providers SET mode = 'disabled' WHERE enabled = 0;
 "#;
 
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
@@ -637,6 +649,45 @@ mod tests {
         assert_eq!(
             force, 0,
             "force defaults off so existing behaviour is preserved"
+        );
+    }
+
+    #[test]
+    fn v14_backfills_mode_from_the_enabled_flag() {
+        let conn = open_in_memory();
+
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for (target, sql) in MIGRATIONS.iter().filter(|(v, _)| *v <= 13) {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", target).unwrap();
+        }
+        conn.execute(
+            "INSERT INTO providers (name, kind, auth_type, enabled) VALUES ('on','zai','bearer',1)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO providers (name, kind, auth_type, enabled) VALUES ('off','zai','bearer',0)",
+            [],
+        )
+        .unwrap();
+
+        for (target, sql) in MIGRATIONS.iter().filter(|(v, _)| *v > 13) {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", target).unwrap();
+        }
+
+        let mode = |name: &str| -> String {
+            conn.query_row("SELECT mode FROM providers WHERE name = ?1", [name], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(mode("on"), "enabled");
+        assert_eq!(
+            mode("off"),
+            "disabled",
+            "a provider disabled before the upgrade must not come back enabled"
         );
     }
 }

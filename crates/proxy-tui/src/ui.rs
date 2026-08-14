@@ -1842,6 +1842,7 @@ mod tests {
             ProviderPayload {
                 name: "anthropic".into(),
                 kind: "anthropic".into(),
+                mode: None,
                 enabled: true,
                 auth: AuthPayload::AnthropicOAuth {
                     access_token: "access".into(),
@@ -1861,6 +1862,7 @@ mod tests {
             ProviderPayload {
                 name: "openai".into(),
                 kind: "openai".into(),
+                mode: None,
                 enabled: true,
                 auth: AuthPayload::ApiKey {
                     value: "sk-test-secret-value".into(),
