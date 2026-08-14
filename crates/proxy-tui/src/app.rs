@@ -615,8 +615,9 @@ impl FormField {
         auth_kind: AuthInputKind,
         provider_kind: ProviderKind,
         thinking_level: ThinkingLevelInput,
+        has_model_formats: bool,
     ) -> Self {
-        let order = field_order(auth_kind, provider_kind, thinking_level);
+        let order = field_order(auth_kind, provider_kind, thinking_level, has_model_formats);
         let idx = order.iter().position(|f| *f == self).unwrap_or(0);
         order[(idx + 1) % order.len()]
     }
@@ -625,8 +626,9 @@ impl FormField {
         auth_kind: AuthInputKind,
         provider_kind: ProviderKind,
         thinking_level: ThinkingLevelInput,
+        has_model_formats: bool,
     ) -> Self {
-        let order = field_order(auth_kind, provider_kind, thinking_level);
+        let order = field_order(auth_kind, provider_kind, thinking_level, has_model_formats);
         let idx = order.iter().position(|f| *f == self).unwrap_or(0);
         order[(idx + order.len() - 1) % order.len()]
     }
@@ -634,10 +636,12 @@ impl FormField {
 
 /// Field traversal order. AuthValue is omitted when the auth kind doesn't
 /// need a typed value. ThinkingForce is offered only once a level is set.
+/// ModelFormats mirrors what `ui::render` draws — see the comment there.
 fn field_order(
     auth_kind: AuthInputKind,
     provider_kind: ProviderKind,
     thinking_level: ThinkingLevelInput,
+    has_model_formats: bool,
 ) -> Vec<FormField> {
     let mut order = vec![
         FormField::Name,
@@ -645,7 +649,7 @@ fn field_order(
         FormField::AnthropicBaseUrl,
         FormField::OpenaiBaseUrl,
     ];
-    if provider_kind == ProviderKind::OpencodeGo {
+    if provider_kind == ProviderKind::OpencodeGo || has_model_formats {
         order.push(FormField::ModelFormats);
     }
     // Codex is bespoke (always the OpenAI Responses API), so a format policy
@@ -1145,7 +1149,8 @@ mod form_field_tests {
             f.next(
                 AuthInputKind::ApiKey,
                 ProviderKind::Anthropic,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::Name
         );
@@ -1158,7 +1163,8 @@ mod form_field_tests {
             f.prev(
                 AuthInputKind::ApiKey,
                 ProviderKind::Anthropic,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::Save
         );
@@ -1171,7 +1177,8 @@ mod form_field_tests {
             f.next(
                 AuthInputKind::Passthrough,
                 ProviderKind::Anthropic,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::Enabled
         );
@@ -1183,6 +1190,7 @@ mod form_field_tests {
             AuthInputKind::Passthrough,
             ProviderKind::Anthropic,
             ThinkingLevelInput::Unset,
+            false,
         );
         assert!(order.contains(&FormField::Enabled));
         assert_eq!(order.last().copied(), Some(FormField::Save));
@@ -1195,7 +1203,8 @@ mod form_field_tests {
             f.next(
                 AuthInputKind::ApiKey,
                 ProviderKind::Anthropic,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::AuthValue
         );
@@ -1208,7 +1217,8 @@ mod form_field_tests {
             f.next(
                 AuthInputKind::Passthrough,
                 ProviderKind::Codex,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::ThinkingLevel
         );
@@ -1221,7 +1231,8 @@ mod form_field_tests {
             f.next(
                 AuthInputKind::Passthrough,
                 ProviderKind::Minimax,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::FormatMode
         );
@@ -1229,9 +1240,54 @@ mod form_field_tests {
             f.next(
                 AuthInputKind::Passthrough,
                 ProviderKind::Codex,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::ThinkingLevel
+        );
+    }
+
+    /// `validate_provider_form` saves `model_formats` for every kind (the docs
+    /// say the field is valid on all of them), so the row must follow the
+    /// value, not just the kind — otherwise a string typed on `opencode_go`
+    /// and then carried through a kind change stays live at runtime while
+    /// being invisible and uneditable.
+    #[test]
+    fn model_formats_field_follows_the_kind_or_an_existing_value() {
+        // OpenCode Go: offered even when empty, so it can be typed in.
+        let order = field_order(
+            AuthInputKind::ApiKey,
+            ProviderKind::OpencodeGo,
+            ThinkingLevelInput::Unset,
+            false,
+        );
+        assert!(order.contains(&FormField::ModelFormats));
+
+        // Another kind with nothing set: kept off the form, which stays short.
+        let order = field_order(
+            AuthInputKind::ApiKey,
+            ProviderKind::Anthropic,
+            ThinkingLevelInput::Unset,
+            false,
+        );
+        assert!(!order.contains(&FormField::ModelFormats));
+
+        // Another kind with a value set: visible so it can be seen and cleared.
+        let order = field_order(
+            AuthInputKind::ApiKey,
+            ProviderKind::Anthropic,
+            ThinkingLevelInput::Unset,
+            true,
+        );
+        assert!(order.contains(&FormField::ModelFormats));
+        assert_eq!(
+            FormField::OpenaiBaseUrl.next(
+                AuthInputKind::ApiKey,
+                ProviderKind::Anthropic,
+                ThinkingLevelInput::Unset,
+                true
+            ),
+            FormField::ModelFormats
         );
     }
 
@@ -1302,6 +1358,7 @@ mod form_field_tests {
             AuthInputKind::Bearer,
             ProviderKind::DeepSeek,
             ThinkingLevelInput::Unset,
+            false,
         );
         assert!(!order.contains(&FormField::ThinkingForce));
 
@@ -1309,6 +1366,7 @@ mod form_field_tests {
             AuthInputKind::Bearer,
             ProviderKind::DeepSeek,
             ThinkingLevelInput::High,
+            false,
         );
         assert!(order.contains(&FormField::ThinkingForce));
     }
@@ -1390,6 +1448,7 @@ mod form_field_tests {
             AuthInputKind::Passthrough,
             ProviderKind::Minimax,
             ThinkingLevelInput::Unset,
+            false,
         );
         assert!(order.contains(&FormField::ThinkingMode));
         assert!(order.contains(&FormField::ThinkingLevel));
@@ -1468,6 +1527,7 @@ mod form_field_tests {
             AuthInputKind::Passthrough,
             ProviderKind::Kimi,
             ThinkingLevelInput::Unset,
+            false,
         );
         assert!(order.contains(&FormField::SanitizeEmptyTools));
     }
@@ -1479,6 +1539,7 @@ mod form_field_tests {
             AuthInputKind::Passthrough,
             ProviderKind::Zai,
             ThinkingLevelInput::Unset,
+            false,
         );
         assert!(!order.contains(&FormField::SanitizeEmptyTools));
     }

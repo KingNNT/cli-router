@@ -367,9 +367,9 @@ pub fn translate_buffered_response(responses_body: &Value) -> Result<Value, Stri
             .unwrap_or(0);
         if input_tokens == 0 {
             tracing::warn!(
-                target: "codex::usage",
+                target: "responses::usage",
                 usage = %usage,
-                "codex buffered response reported zero input tokens"
+                "Responses buffered response reported zero input tokens"
             );
         }
         result["usage"] = json!({
@@ -429,7 +429,7 @@ impl ResponsesSseTranslator {
     /// Build a base Chat Completions SSE chunk with the required envelope fields.
     fn base_chunk(&self) -> Value {
         json!({
-            "id": if self.response_id.is_empty() { "chatcmpl-codex" } else { &self.response_id },
+            "id": if self.response_id.is_empty() { "chatcmpl-responses" } else { &self.response_id },
             "object": "chat.completion.chunk",
             "created": std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -463,9 +463,9 @@ impl ResponsesSseTranslator {
             // Debug-log every non-trivial event so silent/empty responses are
             // visible in proxy logs without external packet capture.
             tracing::debug!(
-                target: "codex::sse",
+                target: "responses::sse",
                 event_type = %event_type,
-                "codex upstream SSE event"
+                "Responses upstream SSE event"
             );
 
             match event_type {
@@ -520,7 +520,7 @@ impl ResponsesSseTranslator {
                             .get("call_id")
                             .or_else(|| item.get("id"))
                             .and_then(|v| v.as_str())
-                            .unwrap_or("call_codex");
+                            .unwrap_or("call_unknown");
                         if let Some(item_id) = item.get("id").and_then(|v| v.as_str()) {
                             self.tool_call_item_to_call_id
                                 .insert(item_id.to_string(), call_id.to_string());
@@ -592,7 +592,7 @@ impl ResponsesSseTranslator {
                                 }
                                 if !collected.is_empty() {
                                     tracing::debug!(
-                                        target: "codex::sse",
+                                        target: "responses::sse",
                                         len = collected.len(),
                                         "extracted text from response.completed fallback (no deltas received)"
                                     );
@@ -610,9 +610,9 @@ impl ResponsesSseTranslator {
                             let input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                             if input_tokens == 0 {
                                 tracing::warn!(
-                                    target: "codex::usage",
+                                    target: "responses::usage",
                                     usage = %usage,
-                                    "codex completed response reported zero input tokens"
+                                    "Responses completed response reported zero input tokens"
                                 );
                             }
                             chunk["usage"] = json!({
@@ -622,7 +622,7 @@ impl ResponsesSseTranslator {
                             });
                         }
                         // Re-build with updated model.
-                        chunk["id"] = json!(if self.response_id.is_empty() { "chatcmpl-codex" } else { &self.response_id });
+                        chunk["id"] = json!(if self.response_id.is_empty() { "chatcmpl-responses" } else { &self.response_id });
                         chunk["model"] = json!(if self.model.is_empty() { "unknown" } else { &self.model });
                         self.pending.push_back(format!("data: {}\n\n", chunk));
                     } else {
@@ -756,10 +756,10 @@ impl Stream for ResponsesSseTranslator {
                     // Codex backend returns 200 OK but emits no text deltas.
                     if !self.first_content_sent {
                         tracing::warn!(
-                            target: "codex::sse",
+                            target: "responses::sse",
                             response_id = %self.response_id,
                             model = %self.model,
-                            "codex stream ended with zero content — \
+                            "Responses stream ended with zero content — \
                              upstream may have returned a degraded/empty response"
                         );
                     }

@@ -206,7 +206,10 @@ kỳ `UpstreamProvider` nào bất kể `kind`, và routing gọi
 `opencode_go`. Chỉ có `opencode_go` được **seed sẵn** một chuỗi mặc định khi
 tạo provider (§6.8), vì chỉ kind đó thật sự cần chọn format theo model thay
 vì theo endpoint client gọi (§3). Tự thêm luật cho kind khác vẫn có hiệu lực
-— xem cảnh báo ở cuối mục này. `model_formats` lưu dưới dạng một chuỗi nén:
+— xem cảnh báo ở cuối mục này. Trong `proxy-tui`, dòng nhập `Model Formats`
+hiện ra khi kind là `opencode_go` **hoặc** khi provider đang có giá trị khác
+rỗng, nên một luật tự thêm cho kind khác luôn nhìn thấy và sửa/xoá được.
+`model_formats` lưu dưới dạng một chuỗi nén:
 
 ```
 minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses
@@ -228,12 +231,16 @@ minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses
   trong 3 giá trị trên) bị Admin API **từ chối lúc lưu**, không phải lúc có
   request đi qua.
 
-**Luật chỉ được thu hẹp trong phạm vi endpoint provider đã cấu hình.** Nếu một
-luật trỏ tới format mà provider không có URL tương ứng (ví dụ đặt
-`=anthropic` cho một provider không có `base_url` Anthropic), luật đó bị bỏ
-qua cho model đấy — proxy rơi về capability suy ra từ URL, y hệt cách
-`format_mode` không bao giờ tự bịa ra endpoint (§5b). Cấu hình sai không làm
-model đó "biến mất" khỏi mọi client.
+**Luật chỉ được thu hẹp trong phạm vi provider thật sự phục vụ.** Phạm vi đó
+là kết quả của `supported_formats()`: các URL đã cấu hình, **sau khi**
+`format_mode` đã thu hẹp (§5b). Nếu một luật trỏ tới format nằm ngoài phạm vi
+đó — provider không có URL tương ứng (ví dụ đặt `=anthropic` cho một provider
+không có `base_url` Anthropic), hoặc operator đã ghim `format_mode` sang
+format khác — luật đó bị bỏ qua cho model đấy và proxy rơi về capability sẵn
+có. Hai hệ quả: cấu hình sai không làm model đó "biến mất" khỏi mọi client, và
+một luật theo model không thể lách qua `format_mode` (ví dụ luật
+`minimax-m2=openai` trên provider `minimax` đã ghim `format_mode: "anthropic"`
+vẫn đi endpoint Anthropic — đúng ý đồ của cái ghim đó).
 
 **Cảnh báo khi tự sửa luật thủ công:** một luật `=responses` viết tay trên
 provider `minimax`, `deepseek` hay `openai` sẽ âm thầm bỏ qua các quirk theo

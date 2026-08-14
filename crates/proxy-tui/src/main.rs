@@ -1091,11 +1091,21 @@ fn handle_form_key(
         (_, KeyCode::Esc) => Modal::None,
 
         (FormState::Editing, KeyCode::Down) => {
-            m.focused = m.focused.next(m.auth_kind, m.kind, m.thinking_level);
+            m.focused = m.focused.next(
+                m.auth_kind,
+                m.kind,
+                m.thinking_level,
+                !m.model_formats.is_empty(),
+            );
             Modal::ProviderForm(m)
         }
         (FormState::Editing, KeyCode::Up) => {
-            m.focused = m.focused.prev(m.auth_kind, m.kind, m.thinking_level);
+            m.focused = m.focused.prev(
+                m.auth_kind,
+                m.kind,
+                m.thinking_level,
+                !m.model_formats.is_empty(),
+            );
             Modal::ProviderForm(m)
         }
         (FormState::Editing, KeyCode::Left) => {

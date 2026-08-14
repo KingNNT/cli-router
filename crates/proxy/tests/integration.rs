@@ -1003,6 +1003,160 @@ async fn opencode_go_routes_a_responses_model_to_the_responses_endpoint() {
     assert_eq!(v["choices"][0]["message"]["content"], "hello");
 }
 
+/// The `/messages` third of the endpoint table: an `anthropic`-ruled model
+/// must land on `{base}/zen/go/v1/messages` — a different base from the other
+/// two endpoints, which is exactly the wiring most likely to be typo'd.
+#[tokio::test]
+async fn opencode_go_routes_an_anthropic_model_to_the_messages_endpoint() {
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use proxy::adapters::providers::model_formats::ModelFormatTable;
+    use proxy::application::ports::UpstreamResponse;
+
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "minimax-m2",
+            "content": [{"type": "text", "text": "hi"}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // The Anthropic base is `{server}/zen/go/v1` here so all three endpoints
+    // sit under one prefix, matching the shipped OpenCode Go preset shape.
+    let provider = UpstreamProvider::new(
+        "go".to_string(),
+        Some(format!("{}/zen/go/v1", server.uri())),
+        Some(format!("{}/zen/go/v1", server.uri())),
+        AuthHeader::ApiKey("secret".to_string()),
+        Quirks::none(),
+        reqwest::Client::new(),
+    )
+    .with_model_formats(ModelFormatTable::parse("minimax-*=anthropic").unwrap());
+
+    let body = Bytes::from(
+        r#"{"model":"minimax-m2","stream":false,"messages":[{"role":"user","content":"hi"}]}"#,
+    );
+    let resp = provider
+        .forward("/messages", &HeaderMap::new(), body, false)
+        .await
+        .unwrap();
+
+    let UpstreamResponse::Buffered { status, body, .. } = resp else {
+        panic!("expected a buffered response");
+    };
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["id"], "msg_1");
+    // `expect(1)` on the mock asserts /zen/go/v1/messages was the URL hit.
+}
+
+/// Design assumption #1: one API key authenticates all three endpoints, but
+/// with a different header on each. `auth_for_openai` converts `ApiKey` →
+/// `Bearer` for the OpenAI-shaped endpoints, including `/responses`. Get any
+/// of these wrong and 100% of requests to that endpoint fail on auth.
+#[tokio::test]
+async fn one_api_key_authenticates_all_three_endpoints() {
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use proxy::adapters::providers::model_formats::ModelFormatTable;
+    use proxy::application::ports::UpstreamResponse;
+
+    let server = MockServer::start().await;
+
+    // Anthropic endpoint: x-api-key, verbatim.
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/messages"))
+        .and(matchers::header("x-api-key", "secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg_1", "type": "message", "role": "assistant",
+            "model": "minimax-m2", "content": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // Chat Completions: Authorization: Bearer.
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/chat/completions"))
+        .and(matchers::header("authorization", "Bearer secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl_1", "object": "chat.completion", "choices": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // Responses: Authorization: Bearer, via the same ApiKey → Bearer hop.
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/responses"))
+        .and(matchers::header("authorization", "Bearer secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "resp_1", "model": "grok-4.5",
+            "output": [], "usage": {"input_tokens": 1, "output_tokens": 1}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base = format!("{}/zen/go/v1", server.uri());
+    let provider = UpstreamProvider::new(
+        "go".to_string(),
+        Some(base.clone()),
+        Some(base),
+        AuthHeader::ApiKey("secret".to_string()),
+        Quirks::none(),
+        reqwest::Client::new(),
+    )
+    .with_model_formats(ModelFormatTable::parse("minimax-*=anthropic,grok-4.5=responses").unwrap());
+
+    let anthropic_body = Bytes::from(r#"{"model":"minimax-m2","stream":false,"messages":[]}"#);
+    let status = match provider
+        .forward("/messages", &HeaderMap::new(), anthropic_body, false)
+        .await
+        .unwrap()
+    {
+        UpstreamResponse::Buffered { status, .. } => status,
+        _ => panic!("expected buffered"),
+    };
+    assert_eq!(status, 200, "/messages must send x-api-key");
+
+    let chat_body = Bytes::from(r#"{"model":"kimi-k3","stream":false,"messages":[]}"#);
+    let status = match provider
+        .forward_openai("/chat/completions", &HeaderMap::new(), chat_body, false)
+        .await
+        .unwrap()
+    {
+        UpstreamResponse::Buffered { status, .. } => status,
+        _ => panic!("expected buffered"),
+    };
+    assert_eq!(
+        status, 200,
+        "/chat/completions must send Authorization: Bearer"
+    );
+
+    let responses_body = Bytes::from(r#"{"model":"grok-4.5","stream":false,"messages":[]}"#);
+    let status = match provider
+        .forward_openai(
+            "/chat/completions",
+            &HeaderMap::new(),
+            responses_body,
+            false,
+        )
+        .await
+        .unwrap()
+    {
+        UpstreamResponse::Buffered { status, .. } => status,
+        _ => panic!("expected buffered"),
+    };
+    assert_eq!(status, 200, "/responses must send Authorization: Bearer");
+}
+
 #[tokio::test]
 async fn opencode_go_routes_an_unruled_model_to_chat_completions() {
     use axum::http::HeaderMap;

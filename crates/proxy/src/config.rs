@@ -116,11 +116,15 @@ pub enum FormatMode {
 /// The wire format used to talk to an upstream for one specific model.
 /// `Responses` is the OpenAI Responses API (`/responses`), which the proxy
 /// only ever speaks upstream — clients never send it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+///
+/// Deliberately not `Serialize`/`Deserialize`: the persisted form of a rule is
+/// the `model_formats` string, parsed by [`parse_model_formats`]. That grammar
+/// accepts exactly `anthropic`, `openai`, and `responses` — serde derives would
+/// re-admit an `open_ai` spelling this vocabulary does not have (unlike
+/// [`FormatMode`], where `open_ai` is a real stored value).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireFormat {
     Anthropic,
-    #[serde(alias = "openai")]
     OpenAi,
     Responses,
 }

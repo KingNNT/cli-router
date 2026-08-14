@@ -111,7 +111,6 @@ pub struct UpstreamProvider {
     name: String,
     anthropic_base_url: Option<String>,
     openai_base_url: Option<String>,
-    responses_base_url: Option<String>,
     auth: AuthHeader,
     quirks: Quirks,
     format_mode: FormatMode,
@@ -134,7 +133,6 @@ impl UpstreamProvider {
             name,
             anthropic_base_url,
             openai_base_url,
-            responses_base_url: None,
             auth,
             quirks,
             format_mode: FormatMode::Both,
@@ -172,14 +170,6 @@ impl UpstreamProvider {
         self
     }
 
-    /// Endpoint for models routed to the OpenAI Responses API. Defaults to
-    /// `openai_base_url`, which is where OpenCode Go serves `/responses`.
-    fn responses_base(&self) -> Option<&str> {
-        self.responses_base_url
-            .as_deref()
-            .or(self.openai_base_url.as_deref())
-    }
-
     /// OpenAI-compatible endpoints authenticate with `Authorization: Bearer`;
     /// convert `ApiKey` → `Bearer` as the individual providers do today. Shared
     /// by the Chat Completions and Responses paths so both authenticate alike.
@@ -199,18 +189,28 @@ impl UpstreamProvider {
         body: Bytes,
         streaming: bool,
     ) -> Result<UpstreamResponse, ProxyError> {
-        let base = self.responses_base().ok_or_else(|| {
+        // OpenCode Go serves `/responses` off the same base as
+        // `/chat/completions`; a provider with no OpenAI URL has no Responses
+        // endpoint either.
+        let base = self.openai_base_url.as_deref().ok_or_else(|| {
             ProxyError::BadRequest(format!(
                 "provider '{}' has no Responses endpoint",
                 self.name
             ))
         })?;
-        let chat: Value = serde_json::from_slice(&body)
-            .map_err(|e| ProxyError::BadRequest(format!("invalid JSON body: {e}")))?;
-        let translated = translate_request(&chat, &ResponsesDialect::vanilla())
-            .map_err(|e| ProxyError::BadRequest(format!("responses translation failed: {e}")))?;
+        let name = &self.name;
+        let chat: Value = serde_json::from_slice(&body).map_err(|e| {
+            ProxyError::BadRequest(format!("provider '{name}': invalid JSON body: {e}"))
+        })?;
+        let translated = translate_request(&chat, &ResponsesDialect::vanilla()).map_err(|e| {
+            ProxyError::BadRequest(format!(
+                "provider '{name}': responses translation failed: {e}"
+            ))
+        })?;
         let out = Bytes::from(serde_json::to_vec(&translated).map_err(|e| {
-            ProxyError::BadRequest(format!("failed to serialize responses body: {e}"))
+            ProxyError::BadRequest(format!(
+                "provider '{name}': failed to serialize responses body: {e}"
+            ))
         })?);
 
         let resp = messages_protocol::forward(
@@ -246,16 +246,23 @@ impl UpstreamProvider {
                 provider_id,
                 translation_direction,
             } if (200..300).contains(&status) => {
-                let value: Value = serde_json::from_slice(&body)
-                    .map_err(|e| ProxyError::BadRequest(format!("invalid Responses body: {e}")))?;
+                let value: Value = serde_json::from_slice(&body).map_err(|e| {
+                    ProxyError::BadRequest(format!(
+                        "provider '{name}': invalid Responses body: {e}"
+                    ))
+                })?;
                 let chat = translate_buffered_response(&value).map_err(|e| {
-                    ProxyError::BadRequest(format!("responses translation failed: {e}"))
+                    ProxyError::BadRequest(format!(
+                        "provider '{name}': responses translation failed: {e}"
+                    ))
                 })?;
                 UpstreamResponse::Buffered {
                     status,
                     headers,
                     body: Bytes::from(serde_json::to_vec(&chat).map_err(|e| {
-                        ProxyError::BadRequest(format!("failed to serialize chat body: {e}"))
+                        ProxyError::BadRequest(format!(
+                            "provider '{name}': failed to serialize chat body: {e}"
+                        ))
                     })?),
                     provider_id,
                     translation_direction,
@@ -502,30 +509,26 @@ impl Provider for UpstreamProvider {
     }
 
     fn supported_formats_for(&self, model: &str) -> FormatSupport {
-        let has_anthropic = self
-            .anthropic_base_url
-            .as_deref()
-            .is_some_and(|s| !s.is_empty());
-        let has_openai = self
-            .openai_base_url
-            .as_deref()
-            .is_some_and(|s| !s.is_empty());
-        // A rule may only *narrow* within the endpoints that are configured —
-        // the same invariant `supported_formats` keeps for `format_mode`. A
-        // rule naming an endpoint this provider doesn't have falls through to
-        // the URL-derived capability instead of black-holing the model.
+        // A rule may only *narrow* within what the provider already offers —
+        // which is `supported_formats()`, i.e. the configured URLs after
+        // `format_mode` has had its say. Deriving from the URLs alone would let
+        // a rule overrule an operator's `format_mode` pin (e.g. MiniMax pinned
+        // to `anthropic` because its OpenAI endpoint leaks reasoning). A rule
+        // naming an endpoint this provider doesn't offer falls through instead
+        // of black-holing the model.
+        let base = self.supported_formats();
         match self.model_formats.resolve(model) {
             // Responses is an upstream detail of the OpenAI path: routing only
             // needs to know the request goes out as OpenAI.
-            Some(WireFormat::OpenAi | WireFormat::Responses) if has_openai => FormatSupport {
+            Some(WireFormat::OpenAi | WireFormat::Responses) if base.openai => FormatSupport {
                 anthropic: false,
                 openai: true,
             },
-            Some(WireFormat::Anthropic) if has_anthropic => FormatSupport {
+            Some(WireFormat::Anthropic) if base.anthropic => FormatSupport {
                 anthropic: true,
                 openai: false,
             },
-            _ => self.supported_formats(),
+            _ => base,
         }
     }
 
@@ -742,6 +745,27 @@ mod tests {
         assert!(bar.anthropic && !bar.openai);
         let baz = anthropic_only.supported_formats_for("baz-1");
         assert!(baz.anthropic && !baz.openai);
+    }
+
+    /// `format_mode` is an operator pin, not a default. MiniMax is pinned to
+    /// `anthropic` precisely because its OpenAI endpoint loses the head of the
+    /// answer into `reasoning_content`; a per-model rule must not quietly send
+    /// a model back to the endpoint the pin exists to avoid.
+    #[test]
+    fn a_model_rule_cannot_defeat_format_mode() {
+        let pinned = dual_provider(FormatMode::Anthropic)
+            .with_model_formats(ModelFormatTable::parse("minimax-m2=openai").unwrap());
+        let s = pinned.supported_formats_for("minimax-m2");
+        assert!(
+            s.anthropic && !s.openai,
+            "a rule must narrow within format_mode, not around it"
+        );
+
+        // The mirror image: pinned to OpenAI, an `anthropic` rule is inert.
+        let pinned_openai = dual_provider(FormatMode::OpenAi)
+            .with_model_formats(ModelFormatTable::parse("minimax-m2=anthropic").unwrap());
+        let s = pinned_openai.supported_formats_for("minimax-m2");
+        assert!(!s.anthropic && s.openai);
     }
 
     #[test]

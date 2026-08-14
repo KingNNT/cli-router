@@ -776,8 +776,9 @@ mod tests {
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();
+        let og = loaded.providers.iter().find(|p| p.name == "og").unwrap();
         assert_eq!(
-            loaded.providers[0].model_formats.as_deref(),
+            og.model_formats.as_deref(),
             Some("qwen3.*=anthropic,grok-4.5=responses")
         );
     }
@@ -803,7 +804,8 @@ mod tests {
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();
-        assert!(loaded.providers[0].model_formats.is_none());
+        let og = loaded.providers.iter().find(|p| p.name == "og").unwrap();
+        assert!(og.model_formats.is_none());
     }
 
     #[test]

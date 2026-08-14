@@ -66,7 +66,7 @@ Preset (`upstream.rs::default_urls`, `quirks_for`, `builder.rs`):
 |---|---|
 | `anthropic_base_url` | `https://opencode.ai/zen/go` (+ client path `/v1/messages`) |
 | `openai_base_url` | `https://opencode.ai/zen/go/v1` (+ translated path `/chat/completions`) |
-| `responses_base_url` | defaults to `openai_base_url` (+ `/responses`) |
+| Responses endpoint | served off `openai_base_url` (+ `/responses`) — no separate field; see the note under "Provider changes" |
 | `auth` | `api_key` |
 | quirks | none |
 | account usage | `NoopAccountUsage` |
@@ -128,16 +128,21 @@ Anthropic-only; `openai` **and** `responses` rules both report OpenAI-only
 back to `supported_formats()`, which already folds `format_mode`.
 
 **Ruling during review (corrects the paragraph above):** a rule may only
-*narrow* within the endpoints the provider actually has a URL for — the same
+*narrow* within the endpoints the provider actually serves — the same
 invariant `supported_formats()` already keeps for `format_mode`. If a rule
-names a format whose base URL is empty on that provider (e.g. someone hand-writes
-an `=anthropic` rule on a provider with no `anthropic_base_url`), the rule is
-ignored for that model and capability falls back to
-`supported_formats()`/the URL-derived default, rather than the request
-failing with "no endpoint for this provider." The implementation
-(`UpstreamProvider::supported_formats_for` in `upstream.rs`) checks
-`has_anthropic`/`has_openai` before honoring a rule's format, matching this
-fallback exactly.
+names a format outside that set (e.g. someone hand-writes an `=anthropic` rule
+on a provider with no `anthropic_base_url`), the rule is ignored for that model
+and capability falls back to `supported_formats()`, rather than the request
+failing with "no endpoint for this provider."
+
+The implementation (`UpstreamProvider::supported_formats_for` in
+`upstream.rs`) narrows against `supported_formats()` itself, not against the
+raw URLs. That is strictly the right base: `supported_formats()` is the URLs
+*after* `format_mode` has had its say, so the same one check also stops a rule
+from overruling an operator's `format_mode` pin — a `minimax-m2=openai` rule on
+a MiniMax provider pinned to `anthropic` (pinned precisely because its OpenAI
+endpoint leaks the head of the answer into `reasoning_content`) stays on the
+Anthropic endpoint. Nothing in the shipped preset reaches this case.
 
 `routing.rs` swaps `provider.supported_formats()` for
 `provider.supported_formats_for(model)` at the six `select_direction` call
@@ -176,11 +181,22 @@ pub struct ResponsesDialect {
 `CodexProvider` passes its own dialect and keeps every current behavior; its
 existing tests become the regression guard for the extraction.
 
-`UpstreamProvider::forward_openai` gains one branch: if the request's model
-resolves to `responses`, translate the Chat Completions body with the Go
-dialect, POST to `{responses_base_url}/responses`, and wrap the SSE stream in
+`UpstreamProvider::forward_openai` gains one branch: **on
+`path == "/chat/completions"`**, if the request's model resolves to
+`responses`, translate the Chat Completions body with the Go dialect, POST to
+`{openai_base_url}/responses`, and wrap the SSE stream in
 `ResponsesSseTranslator` (or `translate_buffered_response` when the client did
 not ask for streaming). Otherwise the existing chat path runs untouched.
+
+The path guard is load-bearing, not defensive: `/chat/completions` is the only
+path a chat request ever arrives on (`HandleMessages` sends it verbatim for
+OpenAI clients; `RoutingProvider::translate_path` rewrites `/v1/messages` to it
+when translating A→O). Sibling endpoints reach `forward_openai` untranslated —
+notably `/v1/messages/count_tokens`, which `translate_path` has no arm for.
+Without the guard a token-count preflight on a `responses`-ruled model becomes
+a billed generation answered in the wrong shape. There is deliberately no
+separate `responses_base_url`: `/responses` and `/chat/completions` share one
+base, so a provider with no OpenAI URL has no Responses endpoint either.
 
 **Usage logging needs no change:** the translator emits
 `chat.completion.chunk` events, so the existing OpenAI usage parser reads them

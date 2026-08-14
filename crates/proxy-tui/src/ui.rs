@@ -1256,7 +1256,11 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
         "OpenAI URL:",
         show_or_placeholder(&m.openai_base_url),
     ));
-    if m.kind == crate::app::ProviderKind::OpencodeGo {
+    // Shown for the kind that needs it, and for any provider that already has
+    // a value — `validate_provider_form` saves the field on every kind, so a
+    // value set before a kind change must stay visible and editable rather
+    // than staying live behind a row that no longer renders.
+    if m.kind == crate::app::ProviderKind::OpencodeGo || !m.model_formats.is_empty() {
         lines.push(row(
             FormField::ModelFormats,
             "Model Formats:",
