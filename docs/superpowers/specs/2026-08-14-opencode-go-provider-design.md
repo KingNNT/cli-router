@@ -225,9 +225,13 @@ correctly — this is how Codex already reports usage.
 
 ## Deferred
 
-- **Account usage.** OpenCode Go exposes its dollar limits in the Zen console;
-  no documented API. `NoopAccountUsage` for now. If the probe finds an
-  endpoint under `opencode.ai/zen/`, add an adapter in a follow-up.
+- ~~**Account usage.**~~ **Shipped 2026-08-15.** The probe found an
+  undocumented `GET https://opencode.ai/zen/go/v1/usage` (Bearer only;
+  `x-api-key` → 401) returning the three windows as percentages:
+  `{"usage":{"rolling":{"status","percent","resetsAt"},"weekly":…,"monthly":…}}`.
+  No dollar amounts, so `UsageWindow` carries `used_pct` and `resets_at_ms`
+  only. Implemented as `OpencodeGoAccountUsage`; a 404 is treated as "nothing
+  to show" so the account tab degrades quietly if OpenCode retires it.
 - **Pricing.** Go model ids (`kimi-k3`, `glm-5.2`, …) are unlikely to exist in
   the LiteLLM-synced `pricing.db` under those exact keys, so logged requests
   will show cost 0. Per-model prices are published in the Go docs and could be

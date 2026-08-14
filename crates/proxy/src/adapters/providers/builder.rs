@@ -4,7 +4,7 @@
 
 use super::account_usage::{
     AnthropicAccountUsage, CodexAccountUsage, DeepSeekAccountUsage, KimiAccountUsage,
-    MinimaxAccountUsage, ZaiAccountUsage,
+    MinimaxAccountUsage, OpencodeGoAccountUsage, ZaiAccountUsage,
 };
 use super::minimax_stream;
 use super::model_formats::ModelFormatTable;
@@ -302,7 +302,15 @@ pub fn build_account_usage(
                         p.openai_base_url.clone(),
                     ))
                 }
-                ProviderKind::OpencodeGo => Arc::new(super::account_usage::noop::NoopAccountUsage),
+                ProviderKind::OpencodeGo => {
+                    let token = resolve_auth_token(&p.auth);
+                    Arc::new(OpencodeGoAccountUsage::new(
+                        p.name.clone(),
+                        token,
+                        p.anthropic_base_url.clone(),
+                        p.openai_base_url.clone(),
+                    ))
+                }
             };
             (p.name.clone(), adapter)
         })
@@ -737,6 +745,41 @@ mod tests {
         let result = adapter.fetch_usage();
 
         assert!(result.is_some(), "Codex should not use NoopAccountUsage");
+    }
+
+    #[test]
+    fn build_account_usage_maps_opencode_go_to_supported_adapter() {
+        let config = Config {
+            providers: vec![ProviderConfig {
+                thinking_level: crate::config::ThinkingLevel::Unset,
+                thinking_force: false,
+                name: "opencode_go".to_string(),
+                kind: ProviderKind::OpencodeGo,
+                anthropic_base_url: None,
+                // Unroutable port: the call fails immediately, so the adapter
+                // reports an error instead of reaching the real gateway.
+                openai_base_url: Some("http://127.0.0.1:1/v1".to_string()),
+                auth: AuthConfig::ApiKey {
+                    value: "key-123".to_string(),
+                },
+                thinking_mode: ThinkingMode::SplitOnly,
+                format_mode: crate::config::FormatMode::Both,
+                max_concurrent: None,
+                sanitize_empty_tools: false,
+                mode: ProviderMode::Enabled,
+                model_formats: None,
+            }],
+            ..empty_config()
+        };
+        let adapters = build_account_usage(Arc::new(std::sync::RwLock::new(config)));
+        let adapter = adapters.get("opencode_go").expect("adapter exists");
+
+        let result = adapter.fetch_usage();
+
+        assert!(
+            result.is_some(),
+            "OpenCode Go should not use NoopAccountUsage"
+        );
     }
 
     fn empty_config() -> Config {

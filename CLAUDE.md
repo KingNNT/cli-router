@@ -141,7 +141,8 @@ crates/
     │   │               token_refresh (background OAuth refresh)
     │   │   └── account_usage/  AnthropicAccountUsage, ZaiAccountUsage,
     │   │                        DeepSeekAccountUsage, CodexAccountUsage,
-    │   │                        MinimaxAccountUsage, NoopAccountUsage
+    │   │                        MinimaxAccountUsage, KimiAccountUsage,
+    │   │                        OpencodeGoAccountUsage, NoopAccountUsage
     │   ├── oauth/      anthropic (PKCE flow), openai (OAuth flow)
     │   ├── storage/    SqliteRequestLogRepository, DbConfigRepository
     │   │               (SQLite-backed config, single source of truth),
