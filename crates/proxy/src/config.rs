@@ -27,10 +27,9 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub name: String,
-    /// Whether this provider is active and eligible for routing. Disabled
-    /// providers are kept in config but excluded from the request path.
-    #[serde(default = "default_true")]
-    pub enabled: bool,
+    /// How far this provider participates. See [`ProviderMode`].
+    #[serde(default)]
+    pub mode: ProviderMode,
     pub kind: ProviderKind,
     #[serde(default)]
     pub auth: AuthConfig,
@@ -69,6 +68,31 @@ pub struct ProviderConfig {
     /// `/responses` under one base URL.
     #[serde(default)]
     pub model_formats: Option<String>,
+}
+
+/// How far a provider participates in the proxy.
+///
+/// `Disabled` providers are kept in config but wired to nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderMode {
+    /// Serves requests and reports account usage.
+    #[default]
+    Enabled,
+    /// Wired to nothing: no routing, no account usage.
+    Disabled,
+}
+
+impl ProviderMode {
+    /// Whether the proxy may send LLM requests to this provider.
+    pub fn is_routable(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+
+    /// Whether the proxy polls this provider's account usage.
+    pub fn is_monitored(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -418,7 +442,7 @@ impl Config {
                         r.provider
                     ))
                 })?;
-            if !primary.enabled {
+            if !primary.mode.is_routable() {
                 return Err(ConfigError::Validation(format!(
                     "routing rule {i} references disabled provider '{}'",
                     r.provider
@@ -434,7 +458,7 @@ impl Config {
                             "routing rule {i} fallback references unknown provider '{fb}'"
                         ))
                     })?;
-                if !fallback.enabled {
+                if !fallback.mode.is_routable() {
                     return Err(ConfigError::Validation(format!(
                         "routing rule {i} fallback references disabled provider '{fb}'"
                     )));
@@ -664,10 +688,10 @@ mod tests {
     }
 
     #[test]
-    fn provider_config_defaults_enabled_to_true() {
+    fn provider_config_defaults_mode_to_enabled() {
         let json = r#"{"name":"moonshot","kind":"kimi"}"#;
         let provider: ProviderConfig = serde_json::from_str(json).unwrap();
-        assert!(provider.enabled);
+        assert_eq!(provider.mode, ProviderMode::Enabled);
     }
 
     #[test]
@@ -689,7 +713,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 model_formats: None,
-                enabled: false,
+                mode: ProviderMode::Disabled,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -729,7 +753,7 @@ mod tests {
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                     model_formats: None,
-                    enabled: true,
+                    mode: ProviderMode::Enabled,
                 },
                 ProviderConfig {
                     thinking_level: ThinkingLevel::Unset,
@@ -744,7 +768,7 @@ mod tests {
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                     model_formats: None,
-                    enabled: false,
+                    mode: ProviderMode::Disabled,
                 },
             ],
             routing: vec![RoutingRule {
@@ -799,7 +823,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 model_formats: None,
-                enabled: true,
+                mode: ProviderMode::Enabled,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -837,7 +861,7 @@ mod tests {
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                     model_formats: None,
-                    enabled: true,
+                    mode: ProviderMode::Enabled,
                 },
                 ProviderConfig {
                     thinking_level: ThinkingLevel::Unset,
@@ -852,7 +876,7 @@ mod tests {
                     max_concurrent: None,
                     sanitize_empty_tools: false,
                     model_formats: None,
-                    enabled: true,
+                    mode: ProviderMode::Enabled,
                 },
             ],
             routing: vec![RoutingRule {
@@ -889,7 +913,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 model_formats: None,
-                enabled: true,
+                mode: ProviderMode::Enabled,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -1001,7 +1025,7 @@ mod tests {
             pricing_db: PathBuf::from("/tmp/pr.db"),
             providers: vec![ProviderConfig {
                 name: "p".into(),
-                enabled: true,
+                mode: ProviderMode::Enabled,
                 kind: ProviderKind::Zai,
                 auth: AuthConfig::default(),
                 anthropic_base_url: None,

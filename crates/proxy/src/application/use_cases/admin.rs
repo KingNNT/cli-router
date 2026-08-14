@@ -8,8 +8,8 @@ use crate::application::ports::{
     ConfigRepository, QuotaPort, RequestLogReadPort, UpstreamResponse,
 };
 use crate::config::{
-    AffinityConfig, AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, QuotaRule,
-    RoutingRule,
+    AffinityConfig, AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, ProviderMode,
+    QuotaRule, RoutingRule,
 };
 use crate::domain::RequestRow;
 use axum::http::HeaderMap;
@@ -697,7 +697,7 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
             .map(|p| ProviderPayload {
                 name: p.name.clone(),
                 kind: kind_to_str(p.kind).into(),
-                enabled: p.enabled,
+                enabled: p.mode.is_routable(),
                 auth: auth_to_payload(&p.auth),
                 anthropic_base_url: p.anthropic_base_url.clone(),
                 openai_base_url: p.openai_base_url.clone(),
@@ -826,7 +826,11 @@ fn payload_to_config(
                 thinking_level,
                 max_concurrent: pp.max_concurrent,
                 sanitize_empty_tools: pp.sanitize_empty_tools.unwrap_or(false),
-                enabled: pp.enabled,
+                mode: if pp.enabled {
+                    ProviderMode::Enabled
+                } else {
+                    ProviderMode::Disabled
+                },
                 model_formats: pp.model_formats,
             })
         })
@@ -1288,7 +1292,7 @@ mod tests {
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
-                enabled: true,
+                mode: ProviderMode::Enabled,
                 model_formats: None,
             }],
             routing: vec![RoutingRule {
@@ -1334,7 +1338,7 @@ mod tests {
                 thinking_mode: crate::config::ThinkingMode::SplitOnly,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
-                enabled: true,
+                mode: ProviderMode::Enabled,
                 model_formats: None,
             }],
             routing: vec![],
@@ -1494,7 +1498,7 @@ mod tests {
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
-                enabled: true,
+                mode: ProviderMode::Enabled,
                 model_formats: None,
             }],
             routing: vec![],
@@ -1539,7 +1543,7 @@ mod tests {
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: true,
-                enabled: true,
+                mode: ProviderMode::Enabled,
                 model_formats: None,
             }],
             routing: vec![],
@@ -1713,7 +1717,7 @@ mod tests {
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
-                enabled: false,
+                mode: ProviderMode::Disabled,
                 model_formats: None,
             }],
             routing: vec![],
@@ -1730,7 +1734,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            !roundtripped.providers[0].enabled,
+            roundtripped.providers[0].mode == ProviderMode::Disabled,
             "enabled=false must survive a config PUT round-trip"
         );
     }
@@ -1753,7 +1757,7 @@ mod tests {
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
-                enabled: false,
+                mode: ProviderMode::Disabled,
                 model_formats: None,
             }],
             routing: vec![],

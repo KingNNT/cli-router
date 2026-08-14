@@ -142,7 +142,7 @@ pub fn build_leaves(
 ) -> Result<HashMap<String, Arc<dyn Provider>>, BuildError> {
     providers
         .iter()
-        .filter(|p| p.enabled)
+        .filter(|p| p.mode.is_routable())
         .map(|p| Ok((p.name.clone(), build_leaf(p, http.clone())?)))
         .collect()
 }
@@ -234,7 +234,7 @@ pub fn build_account_usage(
     };
     providers
         .iter()
-        .filter(|p| p.enabled)
+        .filter(|p| p.mode.is_monitored())
         .map(|p| {
             let adapter: Arc<dyn AccountUsagePort> = match p.kind {
                 ProviderKind::Zai => {
@@ -313,15 +313,15 @@ impl LiveAccountUsage {
 
 impl AccountUsageRegistry for LiveAccountUsage {
     fn adapters(&self) -> HashMap<String, Arc<dyn AccountUsagePort>> {
-        // Key on the *enabled* provider set so toggling a provider's `enabled`
-        // flag rebuilds the map (disabled providers are excluded from the
-        // account tab).
+        // Key on the *monitored* provider set so changing a provider's `mode`
+        // rebuilds the map (disabled providers are excluded from the account
+        // tab).
         let names = {
             let cfg = self.config.read().expect("config rwlock poisoned");
             let mut n: Vec<String> = cfg
                 .providers
                 .iter()
-                .filter(|p| p.enabled)
+                .filter(|p| p.mode.is_monitored())
                 .map(|p| p.name.clone())
                 .collect();
             n.sort();
@@ -369,7 +369,7 @@ fn derive_monitor_base_url(p: &ProviderConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AuthConfig, ProviderKind, ThinkingMode};
+    use crate::config::{AuthConfig, ProviderKind, ProviderMode, ThinkingMode};
 
     fn cfg(openai: Option<&str>, base: Option<&str>) -> ProviderConfig {
         ProviderConfig {
@@ -384,7 +384,7 @@ mod tests {
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
-            enabled: true,
+            mode: ProviderMode::Enabled,
             model_formats: None,
         }
     }
@@ -397,7 +397,7 @@ mod tests {
                 thinking_force: false,
                 name: "mm".into(),
                 kind: ProviderKind::Minimax,
-                enabled: true,
+                mode: ProviderMode::Enabled,
                 auth: AuthConfig::Bearer { value: "k".into() },
                 anthropic_base_url: Some("https://api.minimax.io/anthropic".into()),
                 openai_base_url: Some("https://api.minimax.io/v1".into()),
@@ -428,7 +428,7 @@ mod tests {
             thinking_mode: ThinkingMode::SplitOnly,
             max_concurrent: None,
             sanitize_empty_tools: false,
-            enabled: true,
+            mode: ProviderMode::Enabled,
             model_formats: None,
         };
         // Building must succeed and the provider must advertise the OpenAI
@@ -445,7 +445,7 @@ mod tests {
                 thinking_force: false,
                 name: "bad".into(),
                 kind: ProviderKind::DeepSeek,
-                enabled: true,
+                mode: ProviderMode::Enabled,
                 auth: AuthConfig::Bearer { value: "k".into() },
                 anthropic_base_url: None,
                 openai_base_url: None,
@@ -469,7 +469,7 @@ mod tests {
                     thinking_force: false,
                     name: "on".into(),
                     kind: ProviderKind::Anthropic,
-                    enabled: true,
+                    mode: ProviderMode::Enabled,
                     auth: AuthConfig::Passthrough,
                     anthropic_base_url: Some("https://api.anthropic.com".into()),
                     openai_base_url: None,
@@ -484,7 +484,7 @@ mod tests {
                     thinking_force: false,
                     name: "off".into(),
                     kind: ProviderKind::Anthropic,
-                    enabled: false,
+                    mode: ProviderMode::Disabled,
                     auth: AuthConfig::Passthrough,
                     anthropic_base_url: None,
                     openai_base_url: None,
@@ -540,7 +540,7 @@ mod tests {
                     thinking_force: false,
                     name: "on".into(),
                     kind: ProviderKind::Codex,
-                    enabled: true,
+                    mode: ProviderMode::Enabled,
                     auth: AuthConfig::Bearer {
                         value: "token".into(),
                     },
@@ -557,7 +557,7 @@ mod tests {
                     thinking_force: false,
                     name: "off".into(),
                     kind: ProviderKind::Codex,
-                    enabled: false,
+                    mode: ProviderMode::Disabled,
                     auth: AuthConfig::Bearer {
                         value: "token".into(),
                     },
@@ -599,7 +599,7 @@ mod tests {
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
-            enabled: true,
+            mode: ProviderMode::Enabled,
             model_formats: None,
         });
         let live = LiveAccountUsage::new(config.clone());
@@ -610,7 +610,7 @@ mod tests {
         );
 
         // Toggle it off at runtime, as the admin API does.
-        config.write().unwrap().providers[0].enabled = false;
+        config.write().unwrap().providers[0].mode = ProviderMode::Disabled;
 
         assert!(
             !live.adapters().contains_key("claude"),
@@ -635,7 +635,7 @@ mod tests {
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
-                enabled: true,
+                mode: ProviderMode::Enabled,
                 model_formats: None,
             }],
             ..Config {
@@ -693,7 +693,7 @@ mod tests {
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
-            enabled: true,
+            mode: ProviderMode::Enabled,
             model_formats: None,
         });
 
@@ -724,7 +724,7 @@ mod tests {
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
-            enabled: true,
+            mode: ProviderMode::Enabled,
             model_formats: None,
         });
         let live = LiveAccountUsage::new(Arc::new(std::sync::RwLock::new(config)));
