@@ -114,6 +114,14 @@ pub struct ConfigPayload {
 pub struct ProviderPayload {
     pub name: String,
     pub kind: String,
+    /// How far this provider participates: `enabled` | `monitor` | `disabled`.
+    /// `monitor` keeps reporting account usage while never being routed to.
+    /// Absent means the daemon falls back to `enabled` below, so a client that
+    /// predates this field still turns providers off the way it always did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// Legacy two-state flag, kept for clients that predate `mode`. The daemon
+    /// writes it as `mode != disabled` and only reads it when `mode` is absent.
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
@@ -597,6 +605,7 @@ mod config_payload_tests {
             providers: vec![ProviderPayload {
                 name: "anthropic".into(),
                 kind: "anthropic".into(),
+                mode: None,
                 enabled: true,
                 auth: AuthPayload::Passthrough,
                 anthropic_base_url: None,
@@ -658,5 +667,19 @@ mod config_payload_tests {
         let json = r#"{"name":"anthropic","kind":"anthropic","auth":{"type":"passthrough"},"enabled":false}"#;
         let payload: ProviderPayload = serde_json::from_str(json).unwrap();
         assert!(!payload.enabled);
+    }
+
+    #[test]
+    fn provider_payload_carries_mode() {
+        let json = r#"{"name":"zai","kind":"zai","mode":"monitor"}"#;
+        let payload: ProviderPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(payload.mode.as_deref(), Some("monitor"));
+    }
+
+    #[test]
+    fn provider_payload_without_mode_leaves_it_absent() {
+        let json = r#"{"name":"zai","kind":"zai"}"#;
+        let payload: ProviderPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(payload.mode, None);
     }
 }

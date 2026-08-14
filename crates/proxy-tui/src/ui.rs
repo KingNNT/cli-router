@@ -3,8 +3,9 @@
 
 use crate::app::{
     ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal,
-    DisableConfirmModal, FormField, FormMode, FormState, Modal, ProviderFormModal, QuotaField,
-    QuotaFormModal, RoutingField, RoutingFormModal, TestProviderModal, TestState, View,
+    DisableConfirmModal, FormField, FormMode, FormState, Modal, ProviderFormModal,
+    ProviderModeInput, QuotaField, QuotaFormModal, RoutingField, RoutingFormModal,
+    TestProviderModal, TestState, View,
 };
 use chrono::{Local, TimeZone};
 use proxy_admin_api::{
@@ -422,7 +423,6 @@ fn selected_provider_footer(
         parts.push(url.to_string());
     }
     parts.push("[t] test".into());
-    parts.push("[z] toggle active".into());
     Some(parts.join(" · "))
 }
 
@@ -548,6 +548,7 @@ fn draw_providers_content(f: &mut Frame, area: Rect, state: &AppState) {
     let header = Row::new(vec![
         Cell::from("Name"),
         Cell::from("Kind"),
+        Cell::from("Mode"),
         Cell::from("Auth"),
         Cell::from("Base URL"),
     ])
@@ -558,16 +559,22 @@ fn draw_providers_content(f: &mut Frame, area: Rect, state: &AppState) {
         .iter()
         .enumerate()
         .map(|(i, p)| {
+            let mode = ProviderModeInput::from_payload(p.mode.as_deref(), p.enabled);
             let style = if i == state.providers_selected {
                 Style::default().fg(Color::Black).bg(Color::Yellow)
-            } else if !p.enabled {
-                Style::default().fg(Color::DarkGray)
             } else {
-                Style::default()
+                match mode {
+                    // Parked is dimmer than serving but not as dead as off:
+                    // its account usage is still being polled.
+                    ProviderModeInput::Enabled => Style::default(),
+                    ProviderModeInput::Monitor => Style::default().fg(Color::Cyan),
+                    ProviderModeInput::Disabled => Style::default().fg(Color::DarkGray),
+                }
             };
             Row::new(vec![
                 Cell::from(p.name.clone()),
                 Cell::from(p.kind.clone()),
+                Cell::from(mode.label()),
                 Cell::from(auth_summary(&p.auth)),
                 Cell::from(
                     p.anthropic_base_url
@@ -584,6 +591,7 @@ fn draw_providers_content(f: &mut Frame, area: Rect, state: &AppState) {
     let widths = [
         Constraint::Length(20),
         Constraint::Length(14),
+        Constraint::Length(8),
         Constraint::Length(28),
         Constraint::Min(20),
     ];
@@ -883,7 +891,6 @@ fn draw_provider_toolbar(f: &mut Frame, area: Rect) {
             "[a] Add",
             "[e/Enter] Edit",
             "[d] Delete",
-            "[z] Toggle",
             "[t] Test",
             "[r] Refresh",
         ],
@@ -1321,11 +1328,12 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
         lines.push(row(FormField::AuthValue, "Auth Value:", display));
     }
     lines.push(row(
-        FormField::Enabled,
-        "Active:",
+        FormField::Mode,
+        "Mode:",
         format!(
-            "< {} >    [←/→ to toggle]",
-            if m.enabled { "yes" } else { "no" }
+            "< {} >  ({})    [←/→ to cycle]",
+            m.provider_mode.label(),
+            m.provider_mode.description()
         ),
     ));
     lines.push(Line::from(""));
@@ -1477,9 +1485,12 @@ fn draw_disable_confirm_modal(f: &mut Frame, m: &DisableConfirmModal) {
     lines.push(Line::from(Span::raw("Delete those rules when disabling?")));
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
-        Span::styled("[y] Yes", Style::default().fg(Color::Green)),
+        Span::styled(
+            "[y] Yes, save and delete",
+            Style::default().fg(Color::Green),
+        ),
         Span::raw("   "),
-        Span::styled("[n] No", Style::default().fg(Color::Red)),
+        Span::styled("[n] Back to form", Style::default().fg(Color::Red)),
     ]));
 
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
@@ -1842,6 +1853,7 @@ mod tests {
             ProviderPayload {
                 name: "anthropic".into(),
                 kind: "anthropic".into(),
+                mode: None,
                 enabled: true,
                 auth: AuthPayload::AnthropicOAuth {
                     access_token: "access".into(),
@@ -1861,6 +1873,7 @@ mod tests {
             ProviderPayload {
                 name: "openai".into(),
                 kind: "openai".into(),
+                mode: None,
                 enabled: true,
                 auth: AuthPayload::ApiKey {
                     value: "sk-test-secret-value".into(),
@@ -1895,6 +1908,55 @@ mod tests {
         state.providers_selected = 1;
         let rendered = render_state(&state, 140, 30);
         assert!(rendered.contains("API key:"));
+    }
+
+    #[test]
+    fn config_providers_show_a_mode_column() {
+        let mut config = empty_config();
+        config.providers = vec![
+            ProviderPayload {
+                name: "parked".into(),
+                kind: "anthropic".into(),
+                mode: Some("monitor".into()),
+                enabled: false,
+                auth: AuthPayload::Passthrough,
+                anthropic_base_url: Some("https://api.anthropic.com".into()),
+                openai_base_url: None,
+                thinking_mode: None,
+                thinking_level: None,
+                thinking_force: None,
+                format_mode: None,
+                max_concurrent: None,
+                sanitize_empty_tools: None,
+                model_formats: None,
+            },
+            ProviderPayload {
+                name: "live".into(),
+                kind: "zai".into(),
+                mode: Some("enabled".into()),
+                enabled: true,
+                auth: AuthPayload::Passthrough,
+                anthropic_base_url: Some("https://api.z.ai/api/anthropic".into()),
+                openai_base_url: None,
+                thinking_mode: None,
+                thinking_level: None,
+                thinking_force: None,
+                format_mode: None,
+                max_concurrent: None,
+                sanitize_empty_tools: None,
+                model_formats: None,
+            },
+        ];
+        let mut state = config_state(config);
+        state.providers_selected = 1;
+
+        let rendered = render_state(&state, 140, 30);
+
+        assert!(rendered.contains("Mode"), "the table needs a Mode header");
+        assert!(
+            rendered.contains("monitor"),
+            "a parked provider must be distinguishable from a disabled one, got: {rendered}"
+        );
     }
 
     #[test]
@@ -2101,16 +2163,20 @@ mod tests {
     }
 
     #[test]
-    fn provider_form_shows_active_toggle() {
+    fn provider_form_shows_the_mode_cycle() {
         let mut state = AppState::new();
         let mut modal = crate::app::ProviderFormModal::new_for_add();
-        modal.enabled = false;
+        modal.provider_mode = crate::app::ProviderModeInput::Monitor;
         state.modal = Modal::ProviderForm(modal);
 
         let output = render_state(&state, 120, 30);
 
-        assert!(output.contains("Active:"));
-        assert!(output.contains("< no >"));
+        assert!(output.contains("Mode:"));
+        assert!(output.contains("< monitor >"));
+        assert!(
+            output.contains("never called"),
+            "the row must say what monitor mode does, got: {output}"
+        );
     }
 
     #[test]

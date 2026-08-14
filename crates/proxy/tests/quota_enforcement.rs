@@ -119,7 +119,8 @@ fn record_and_check_use_leaf_provider_config_name() {
 fn hot_reload_preserves_quota_enforcement() {
     use proxy::adapters::providers::{LiveProvider, build_from_config};
     use proxy::config::{
-        AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule, RoutingStrategy,
+        AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, ProviderMode, RoutingRule,
+        RoutingStrategy,
     };
 
     // One request allowed before reject.
@@ -149,7 +150,7 @@ fn hot_reload_preserves_quota_enforcement() {
             format_mode: proxy::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
-            enabled: true,
+            mode: ProviderMode::Enabled,
             model_formats: None,
         }],
         routing: vec![RoutingRule {

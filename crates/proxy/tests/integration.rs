@@ -396,7 +396,8 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
         UpdateConfig,
     };
     use proxy::config::{
-        AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, RoutingRule, RoutingStrategy,
+        AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, ProviderMode, RoutingRule,
+        RoutingStrategy,
     };
     use std::sync::RwLock;
 
@@ -451,7 +452,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             format_mode: proxy::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
-            enabled: true,
+            mode: ProviderMode::Enabled,
             model_formats: None,
         }],
         routing: vec![RoutingRule {
