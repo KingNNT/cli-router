@@ -79,6 +79,9 @@ pub enum ProviderMode {
     /// Serves requests and reports account usage.
     #[default]
     Enabled,
+    /// Reports account usage only. Never routed to, so its credentials are
+    /// never spent — use it to keep watching a subscription you have parked.
+    Monitor,
     /// Wired to nothing: no routing, no account usage.
     Disabled,
 }
@@ -91,7 +94,7 @@ impl ProviderMode {
 
     /// Whether the proxy polls this provider's account usage.
     pub fn is_monitored(self) -> bool {
-        matches!(self, Self::Enabled)
+        matches!(self, Self::Enabled | Self::Monitor)
     }
 }
 
@@ -442,7 +445,7 @@ impl Config {
                         r.provider
                     ))
                 })?;
-            if !primary.mode.is_routable() {
+            if primary.mode == ProviderMode::Disabled {
                 return Err(ConfigError::Validation(format!(
                     "routing rule {i} references disabled provider '{}'",
                     r.provider
@@ -458,7 +461,7 @@ impl Config {
                             "routing rule {i} fallback references unknown provider '{fb}'"
                         ))
                     })?;
-                if !fallback.mode.is_routable() {
+                if fallback.mode == ProviderMode::Disabled {
                     return Err(ConfigError::Validation(format!(
                         "routing rule {i} fallback references disabled provider '{fb}'"
                     )));
@@ -692,6 +695,58 @@ mod tests {
         let json = r#"{"name":"moonshot","kind":"kimi"}"#;
         let provider: ProviderConfig = serde_json::from_str(json).unwrap();
         assert_eq!(provider.mode, ProviderMode::Enabled);
+    }
+
+    #[test]
+    fn provider_config_parses_monitor_mode() {
+        let json = r#"{"name":"parked","kind":"zai","mode":"monitor"}"#;
+        let provider: ProviderConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(provider.mode, ProviderMode::Monitor);
+    }
+
+    #[test]
+    fn monitor_mode_is_watched_but_not_routed() {
+        assert!(!ProviderMode::Monitor.is_routable());
+        assert!(ProviderMode::Monitor.is_monitored());
+    }
+
+    #[test]
+    fn validate_accepts_monitor_provider_in_routing() {
+        let cfg = Config {
+            port: 8787,
+            proxy_db: PathBuf::new(),
+            pricing_db: PathBuf::new(),
+            providers: vec![ProviderConfig {
+                thinking_level: ThinkingLevel::Unset,
+                thinking_force: false,
+                name: "parked".into(),
+                kind: ProviderKind::Anthropic,
+                auth: AuthConfig::Passthrough,
+                anthropic_base_url: None,
+                openai_base_url: None,
+                thinking_mode: ThinkingMode::SplitOnly,
+                format_mode: crate::config::FormatMode::Both,
+                max_concurrent: None,
+                sanitize_empty_tools: false,
+                model_formats: None,
+                mode: ProviderMode::Monitor,
+            }],
+            routing: vec![RoutingRule {
+                match_spec: MatchSpec {
+                    model: Some("*".into()),
+                },
+                provider: "parked".into(),
+                fallback: vec![],
+                strategy: Default::default(),
+                priority: None,
+            }],
+            affinity: AffinityConfig::default(),
+            quota: Vec::new(),
+        };
+        assert!(
+            cfg.validate().is_ok(),
+            "a rule may name a monitor-only provider; the router drops it at build time"
+        );
     }
 
     #[test]

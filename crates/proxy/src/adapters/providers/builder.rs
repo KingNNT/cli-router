@@ -172,16 +172,46 @@ pub fn build_routing_provider(
         .filter_map(|p| p.max_concurrent.map(|n| (p.name.clone(), n)))
         .collect();
 
+    // Providers parked in monitor mode still exist in config — their account
+    // usage keeps being polled — but they must not appear in any rule. Drop
+    // them from the chains rather than rejecting the rule, so parking a
+    // provider never requires editing routing.
+    let parked: std::collections::HashSet<&str> = cfg
+        .providers
+        .iter()
+        .filter(|p| p.mode == crate::config::ProviderMode::Monitor)
+        .map(|p| p.name.as_str())
+        .collect();
+
     let mut builder = RoutingProvider::builder().concurrency(concurrency);
     for (_pri, rule) in indexed {
         let pattern = rule.match_spec.model.as_deref().unwrap_or("*");
+        let mut chain = std::iter::once(&rule.provider)
+            .chain(rule.fallback.iter())
+            .filter(|n| !parked.contains(n.as_str()));
+        // An all-parked rule is skipped entirely; the next rule by priority
+        // gets the model, and if none matches the client sees "no provider".
+        let Some(primary_name) = chain.next() else {
+            tracing::warn!(
+                pattern,
+                provider = %rule.provider,
+                "routing rule skipped: every provider in it is in monitor mode"
+            );
+            continue;
+        };
+        if primary_name != &rule.provider {
+            tracing::warn!(
+                pattern,
+                parked = %rule.provider,
+                promoted = %primary_name,
+                "routing rule primary is in monitor mode; using its fallback"
+            );
+        }
         let primary = leaves
-            .get(&rule.provider)
-            .ok_or_else(|| BuildError::UnknownProvider(rule.provider.clone()))?
+            .get(primary_name)
+            .ok_or_else(|| BuildError::UnknownProvider(primary_name.clone()))?
             .clone();
-        let fallback: Vec<Arc<dyn Provider>> = rule
-            .fallback
-            .iter()
+        let fallback: Vec<Arc<dyn Provider>> = chain
             .map(|n| {
                 leaves
                     .get(n)
@@ -615,6 +645,59 @@ mod tests {
         assert!(
             !live.adapters().contains_key("claude"),
             "disabling a provider must remove it from the account-usage map"
+        );
+    }
+
+    #[test]
+    fn live_account_usage_keeps_a_provider_parked_in_monitor_mode() {
+        let config = Arc::new(std::sync::RwLock::new(empty_config()));
+        config.write().unwrap().providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
+            name: "claude".to_string(),
+            kind: ProviderKind::Anthropic,
+            auth: AuthConfig::AnthropicOAuth {
+                access_token: "sk-ant-oat01-x".to_string(),
+                refresh_token: "r".to_string(),
+                expires_at_ms: 0,
+            },
+            anthropic_base_url: None,
+            openai_base_url: None,
+            thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
+            max_concurrent: None,
+            sanitize_empty_tools: false,
+            mode: ProviderMode::Enabled,
+            model_formats: None,
+        });
+        let live = LiveAccountUsage::new(config.clone());
+        assert!(live.adapters().contains_key("claude"));
+
+        config.write().unwrap().providers[0].mode = ProviderMode::Monitor;
+
+        assert!(
+            live.adapters().contains_key("claude"),
+            "monitor mode exists to keep watching the account, so the adapter must stay"
+        );
+    }
+
+    #[test]
+    fn build_leaves_excludes_monitor_provider() {
+        let providers = vec![
+            ProviderConfig {
+                mode: ProviderMode::Monitor,
+                ..cfg(None, Some("https://api.anthropic.com"))
+            },
+            ProviderConfig {
+                name: "live".into(),
+                ..cfg(None, Some("https://api.anthropic.com"))
+            },
+        ];
+        let leaves = build_leaves(&providers, reqwest::Client::new()).unwrap();
+        assert!(leaves.contains_key("live"));
+        assert!(
+            !leaves.contains_key("zai"),
+            "a monitor-mode provider must not be routable"
         );
     }
 
