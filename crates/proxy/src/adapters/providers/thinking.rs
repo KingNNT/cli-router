@@ -51,6 +51,7 @@ pub fn thinking_levels(kind: ProviderKind) -> &'static [ThinkingLevel] {
         ProviderKind::DeepSeek => &[High, Max],
         ProviderKind::Kimi => &[Low, High, Max],
         ProviderKind::Minimax => &[Off, Adaptive],
+        ProviderKind::OpencodeGo => &[],
     }
 }
 
@@ -96,6 +97,9 @@ pub fn thinking_patch(kind: ProviderKind, level: ThinkingLevel) -> Option<Thinki
             both(json!({"thinking": {"type": "disabled", "budget_tokens": null}}))
         }
         (ProviderKind::Minimax, _) => both(json!({"thinking": {"type": "adaptive"}})),
+        // OpencodeGo offers no thinking levels; the guard above already
+        // returns `None` before this match runs for it.
+        (ProviderKind::OpencodeGo, _) => unreachable!("opencode_go offers no thinking levels"),
     })
 }
 

@@ -84,6 +84,8 @@ pub enum ProviderKind {
     Minimax,
     #[serde(alias = "kimi", alias = "moonshot")]
     Kimi,
+    #[serde(alias = "opencode-go", alias = "opencode_go")]
+    OpencodeGo,
 }
 
 /// Which wire format(s) the proxy is allowed to use when talking to this
@@ -483,6 +485,7 @@ fn parse_kind(s: &str) -> Option<ProviderKind> {
         "openai" | "open_ai" => Some(ProviderKind::OpenAi),
         "codex" => Some(ProviderKind::Codex),
         "kimi" | "moonshot" => Some(ProviderKind::Kimi),
+        "opencode_go" | "opencode-go" => Some(ProviderKind::OpencodeGo),
         _ => None,
     }
 }
@@ -607,6 +610,25 @@ mod tests {
         assert_eq!(parse_kind("kimi"), Some(ProviderKind::Kimi));
         assert_eq!(parse_kind("moonshot"), Some(ProviderKind::Kimi));
         assert_eq!(parse_kind("KIMI"), Some(ProviderKind::Kimi));
+    }
+
+    #[test]
+    fn parse_kind_accepts_opencode_go_aliases() {
+        assert_eq!(parse_kind("opencode_go"), Some(ProviderKind::OpencodeGo));
+        assert_eq!(parse_kind("opencode-go"), Some(ProviderKind::OpencodeGo));
+        assert_eq!(parse_kind("OPENCODE_GO"), Some(ProviderKind::OpencodeGo));
+    }
+
+    #[test]
+    fn provider_kind_deserializes_opencode_go_aliases() {
+        assert_eq!(
+            serde_json::from_str::<ProviderKind>("\"opencode_go\"").unwrap(),
+            ProviderKind::OpencodeGo
+        );
+        assert_eq!(
+            serde_json::from_str::<ProviderKind>("\"opencode-go\"").unwrap(),
+            ProviderKind::OpencodeGo
+        );
     }
 
     #[test]

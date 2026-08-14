@@ -323,6 +323,7 @@ fn parse_kind(s: &str) -> ProviderKind {
         "codex" => ProviderKind::Codex,
         "minimax" => ProviderKind::Minimax,
         "kimi" | "moonshot" => ProviderKind::Kimi,
+        "opencode_go" | "opencode-go" => ProviderKind::OpencodeGo,
         _ => ProviderKind::Anthropic,
     }
 }
@@ -336,6 +337,7 @@ fn kind_to_str(k: ProviderKind) -> &'static str {
         ProviderKind::Codex => "codex",
         ProviderKind::Minimax => "minimax",
         ProviderKind::Kimi => "kimi",
+        ProviderKind::OpencodeGo => "opencode_go",
     }
 }
 
@@ -558,6 +560,38 @@ mod tests {
         let p = loaded.providers.iter().find(|p| p.name == "mm").unwrap();
         assert_eq!(p.anthropic_base_url.as_deref(), Some("https://a/anthropic"));
         assert_eq!(p.openai_base_url.as_deref(), Some("https://a/v1"));
+    }
+
+    #[test]
+    fn opencode_go_kind_round_trips_through_save_and_load() {
+        let repo = test_repo();
+        let mut cfg = repo.load().unwrap();
+        cfg.providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
+            name: "og".into(),
+            kind: ProviderKind::OpencodeGo,
+            enabled: true,
+            auth: AuthConfig::Bearer { value: "k".into() },
+            anthropic_base_url: Some("https://opencode.ai/zen/go".into()),
+            openai_base_url: Some("https://opencode.ai/zen/go/v1".into()),
+            thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
+            max_concurrent: None,
+            sanitize_empty_tools: false,
+            model_formats: None,
+        });
+        repo.save(&cfg).unwrap();
+        let loaded = repo.load().unwrap();
+        let p = loaded.providers.iter().find(|p| p.name == "og").unwrap();
+        assert_eq!(p.kind, ProviderKind::OpencodeGo);
+    }
+
+    #[test]
+    fn parse_kind_accepts_opencode_go_aliases() {
+        assert_eq!(parse_kind("opencode_go"), ProviderKind::OpencodeGo);
+        assert_eq!(parse_kind("opencode-go"), ProviderKind::OpencodeGo);
+        assert_eq!(kind_to_str(ProviderKind::OpencodeGo), "opencode_go");
     }
 
     #[test]

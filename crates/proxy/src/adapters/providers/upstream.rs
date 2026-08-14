@@ -56,7 +56,7 @@ pub fn quirks_for(
             rename_max_tokens: true,
             ..Quirks::none()
         },
-        ProviderKind::Anthropic | ProviderKind::Zai => Quirks::none(),
+        ProviderKind::Anthropic | ProviderKind::Zai | ProviderKind::OpencodeGo => Quirks::none(),
         // Codex is bespoke and never built as an UpstreamProvider.
         ProviderKind::Codex => Quirks::none(),
     }
@@ -81,6 +81,25 @@ pub fn default_urls(kind: ProviderKind) -> (Option<&'static str>, Option<&'stati
             Some("https://api.moonshot.ai/v1"),
         ),
         ProviderKind::Codex => (None, Some("https://chatgpt.com/backend-api/codex")),
+        ProviderKind::OpencodeGo => (
+            Some("https://opencode.ai/zen/go"),
+            Some("https://opencode.ai/zen/go/v1"),
+        ),
+    }
+}
+
+/// Seed value for `ProviderConfig::model_formats` when a provider of this kind
+/// is created. Prefill only — once stored it is plain config the user owns.
+///
+/// OpenCode Go serves MiniMax and Qwen on its Anthropic endpoint, Grok 4.5 and
+/// GPT 5.6 Luna on the Responses endpoint, and everything else (GLM, Kimi,
+/// DeepSeek, MiMo, Hy3) on Chat Completions, which is the fallthrough.
+pub fn preset_model_formats(kind: ProviderKind) -> Option<&'static str> {
+    match kind {
+        ProviderKind::OpencodeGo => {
+            Some("minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses")
+        }
+        _ => None,
     }
 }
 
@@ -708,6 +727,28 @@ mod tests {
         let (a, o) = default_urls(ProviderKind::DeepSeek);
         assert!(a.is_none());
         assert!(o.is_some());
+    }
+
+    #[test]
+    fn opencode_go_preset_serves_both_bases_and_seeds_rules() {
+        let (anthropic, openai) = default_urls(ProviderKind::OpencodeGo);
+        assert_eq!(anthropic, Some("https://opencode.ai/zen/go"));
+        assert_eq!(openai, Some("https://opencode.ai/zen/go/v1"));
+        assert_eq!(
+            preset_model_formats(ProviderKind::OpencodeGo),
+            Some("minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses")
+        );
+        assert!(preset_model_formats(ProviderKind::Zai).is_none());
+    }
+
+    #[test]
+    fn opencode_go_preset_has_no_quirks() {
+        let q = quirks_for(ProviderKind::OpencodeGo, ThinkingMode::SplitOnly, false);
+        assert!(!q.reasoning_split);
+        assert!(!q.strip_tool_choice);
+        assert!(!q.rename_max_tokens);
+        assert!(!q.sanitize_empty_tools);
+        assert!(q.strip_thinking.is_none());
     }
 
     #[test]

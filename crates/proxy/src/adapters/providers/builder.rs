@@ -261,6 +261,7 @@ pub fn build_account_usage(
                         p.openai_base_url.clone(),
                     ))
                 }
+                ProviderKind::OpencodeGo => Arc::new(super::account_usage::noop::NoopAccountUsage),
             };
             (p.name.clone(), adapter)
         })
