@@ -108,8 +108,10 @@ pub struct ResponsesDialect {
     /// Drop the client's token cap instead of mapping it to
     /// `max_output_tokens`.
     pub drop_max_output_tokens: bool,
-    /// Used when the request has no system/developer message.
-    pub default_instructions: &'static str,
+    /// Used when the request has no system/developer message. `None` omits
+    /// the `instructions` key entirely so the upstream sees exactly what the
+    /// client sent.
+    pub default_instructions: Option<&'static str>,
 }
 
 impl ResponsesDialect {
@@ -122,18 +124,21 @@ impl ResponsesDialect {
             store: Some(false),
             include_encrypted_reasoning: true,
             drop_max_output_tokens: true,
-            default_instructions: "You are a helpful assistant.",
+            default_instructions: Some("You are a helpful assistant."),
         }
     }
 
-    /// A plain OpenAI-compatible Responses endpoint (OpenCode Go).
+    /// A plain OpenAI-compatible Responses endpoint (OpenCode Go). It has no
+    /// requirement Codex's does, so a request without a system message ships
+    /// without `instructions` rather than acquiring a prompt the client never
+    /// wrote.
     pub const fn vanilla() -> Self {
         Self {
             force_stream: false,
             store: None,
             include_encrypted_reasoning: false,
             drop_max_output_tokens: false,
-            default_instructions: "You are a helpful assistant.",
+            default_instructions: None,
         }
     }
 }
@@ -147,7 +152,9 @@ pub fn translate_request(chat: &Value, dialect: &ResponsesDialect) -> Result<Val
     }
 
     // Extract instructions from system/developer messages
-    let mut instructions = Value::String(dialect.default_instructions.to_string());
+    let mut instructions = dialect
+        .default_instructions
+        .map(|s| Value::String(s.to_string()));
     let mut input_messages = Vec::new();
 
     if let Some(messages) = chat.get("messages").and_then(|m| m.as_array()) {
@@ -156,7 +163,7 @@ pub fn translate_request(chat: &Value, dialect: &ResponsesDialect) -> Result<Val
 
             if role == "system" || role == "developer" {
                 let content = text_content_to_string(msg.get("content"));
-                instructions = Value::String(content);
+                instructions = Some(Value::String(content));
                 continue;
             }
 
@@ -216,7 +223,11 @@ pub fn translate_request(chat: &Value, dialect: &ResponsesDialect) -> Result<Val
         }
     }
 
-    out.insert("instructions".into(), instructions);
+    // Only present when the client sent a system/developer message or the
+    // dialect requires a default.
+    if let Some(instructions) = instructions {
+        out.insert("instructions".into(), instructions);
+    }
     out.insert("input".into(), Value::Array(input_messages));
 
     // reasoning_effort → reasoning.effort
@@ -783,6 +794,36 @@ mod tests {
         assert_eq!(out["stream"], json!(true));
         assert!(out.get("max_output_tokens").is_none());
         assert!(out.get("max_tokens").is_none());
+    }
+
+    /// Codex needs a default because its backend requires the field; a plain
+    /// Responses gateway does not, and inventing one would put a prompt the
+    /// client never wrote in front of the model — visible nowhere in config,
+    /// and applied only to the models a `model_formats` rule happens to send
+    /// down this path.
+    #[test]
+    fn vanilla_dialect_omits_instructions_without_a_system_message() {
+        let out = translate_request(&chat(), &ResponsesDialect::vanilla()).unwrap();
+        assert!(
+            out.get("instructions").is_none(),
+            "vanilla must not invent instructions, got: {out}"
+        );
+
+        let codex = translate_request(&chat(), &ResponsesDialect::codex()).unwrap();
+        assert_eq!(codex["instructions"], "You are a helpful assistant.");
+    }
+
+    /// A system message is still extracted on the vanilla dialect — only the
+    /// invented default is gone.
+    #[test]
+    fn vanilla_dialect_still_extracts_a_system_message() {
+        let mut with_system = chat();
+        with_system["messages"] = json!([
+            {"role": "system", "content": "Be terse."},
+            {"role": "user", "content": "hi"}
+        ]);
+        let out = translate_request(&with_system, &ResponsesDialect::vanilla()).unwrap();
+        assert_eq!(out["instructions"], "Be terse.");
     }
 
     #[test]
