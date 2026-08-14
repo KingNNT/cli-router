@@ -134,6 +134,7 @@ pub fn validate_provider_form(
         } else {
             None
         },
+        model_formats: None,
     })
 }
 
@@ -199,6 +200,7 @@ mod tests {
             format_mode: None,
             max_concurrent: None,
             sanitize_empty_tools: None,
+            model_formats: None,
         }
     }
 

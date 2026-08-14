@@ -2191,6 +2191,7 @@ mod modal_key_tests {
             format_mode: None,
             max_concurrent: None,
             sanitize_empty_tools: None,
+            model_formats: None,
         };
         let mut m = ProviderFormModal::from_provider(0, &payload);
         m.focused = FormField::Kind;
@@ -2573,6 +2574,7 @@ mod modal_key_tests {
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
+                model_formats: None,
             }],
             routing: vec![rule],
             quota: vec![],

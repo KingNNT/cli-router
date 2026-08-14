@@ -714,6 +714,7 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                 }),
                 max_concurrent: p.max_concurrent,
                 sanitize_empty_tools: Some(p.sanitize_empty_tools),
+                model_formats: p.model_formats.clone(),
             })
             .collect(),
         routing: c
@@ -826,7 +827,7 @@ fn payload_to_config(
                 max_concurrent: pp.max_concurrent,
                 sanitize_empty_tools: pp.sanitize_empty_tools.unwrap_or(false),
                 enabled: pp.enabled,
-                model_formats: None,
+                model_formats: pp.model_formats,
             })
         })
         .collect::<Result<Vec<_>, ProxyError>>()?;
@@ -1365,6 +1366,34 @@ mod tests {
     }
 
     #[test]
+    fn config_payload_carries_model_formats_both_ways() {
+        let mut cfg = config_with_thinking(
+            ProviderKind::Zai,
+            crate::config::ThinkingLevel::Unset,
+            false,
+        );
+        cfg.providers[0].model_formats = Some("glm-*=openai".into());
+
+        let payload = config_to_payload(&cfg);
+        assert_eq!(
+            payload.providers[0].model_formats.as_deref(),
+            Some("glm-*=openai")
+        );
+
+        let restored = payload_to_config(
+            payload,
+            PathBuf::from("/tmp/p.db"),
+            PathBuf::from("/tmp/pr.db"),
+            &cfg,
+        )
+        .unwrap();
+        assert_eq!(
+            restored.providers[0].model_formats.as_deref(),
+            Some("glm-*=openai")
+        );
+    }
+
+    #[test]
     fn payload_to_config_forces_thinking_force_false_when_level_is_unset() {
         // A stale `thinking_force: true` saved alongside `Unset` (e.g. from
         // before the level was cleared) must not survive a round trip: the
@@ -1548,6 +1577,7 @@ mod tests {
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
+                model_formats: None,
             }],
             routing: vec![],
             quota: vec![],
@@ -1605,6 +1635,7 @@ mod tests {
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
+                model_formats: None,
             }],
             routing: vec![],
             quota: vec![],

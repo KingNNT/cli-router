@@ -1845,6 +1845,7 @@ mod tests {
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
+                model_formats: None,
             },
             ProviderPayload {
                 name: "openai".into(),
@@ -1861,6 +1862,7 @@ mod tests {
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
+                model_formats: None,
             },
         ];
         let mut state = config_state(config);

@@ -15,6 +15,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (10, MIGRATION_V10),
     (11, MIGRATION_V11),
     (12, MIGRATION_V12),
+    (13, MIGRATION_V13),
 ];
 
 const MIGRATION_V1: &str = r#"
@@ -227,6 +228,12 @@ UPDATE providers
    AND COALESCE(reasoning_effort, '') <> '';
 "#;
 
+// Per-model wire-format overrides. NULL means "no rules" — every model on
+// the provider keeps using `format_mode`. See `config::parse_model_formats`.
+const MIGRATION_V13: &str = r#"
+ALTER TABLE providers ADD COLUMN model_formats TEXT;
+"#;
+
 pub fn ensure_current(conn: &Connection) -> Result<(), Error> {
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
@@ -400,6 +407,37 @@ mod tests {
             )
             .unwrap();
         assert_eq!(mode, "both");
+    }
+
+    #[test]
+    fn v13_adds_provider_model_formats_column_defaulting_to_null() {
+        let conn = open_in_memory();
+
+        // Bring the schema up to V12 only, then seed a row the way a
+        // pre-existing database would have it: no `model_formats` column at
+        // all.
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        for (target, sql) in MIGRATIONS.iter().filter(|(v, _)| *v <= 12) {
+            conn.execute_batch(sql).unwrap();
+            conn.pragma_update(None, "user_version", target).unwrap();
+        }
+        conn.execute(
+            "INSERT INTO providers (name, kind, base_url, auth_type) VALUES ('og', 'opencode_go', '', 'bearer')",
+            [],
+        )
+        .unwrap();
+
+        // Now apply V13 against the pre-existing row.
+        conn.execute_batch(MIGRATION_V13).unwrap();
+
+        let model_formats: Option<String> = conn
+            .query_row(
+                "SELECT model_formats FROM providers WHERE name = 'og'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(model_formats, None, "pre-existing rows stay NULL");
     }
 
     #[test]
