@@ -373,6 +373,7 @@ mod tests {
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
+            model_formats: None,
         }
     }
 
@@ -392,6 +393,7 @@ mod tests {
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
+                model_formats: None,
             },
             reqwest::Client::new(),
         )
@@ -415,6 +417,7 @@ mod tests {
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
+            model_formats: None,
         };
         // Building must succeed and the provider must advertise the OpenAI
         // endpoint; the patch itself is covered by the UpstreamProvider tests.
@@ -438,6 +441,7 @@ mod tests {
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
+                model_formats: None,
             },
             reqwest::Client::new(),
         );
@@ -461,6 +465,7 @@ mod tests {
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
+                    model_formats: None,
                 },
                 ProviderConfig {
                     thinking_level: crate::config::ThinkingLevel::Unset,
@@ -475,6 +480,7 @@ mod tests {
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
+                    model_formats: None,
                 },
             ],
             port: 0,
@@ -532,6 +538,7 @@ mod tests {
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
+                    model_formats: None,
                 },
                 ProviderConfig {
                     thinking_level: crate::config::ThinkingLevel::Unset,
@@ -548,6 +555,7 @@ mod tests {
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
+                    model_formats: None,
                 },
             ],
             ..empty_config()
@@ -580,6 +588,7 @@ mod tests {
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
+            model_formats: None,
         });
         let live = LiveAccountUsage::new(config.clone());
 
@@ -615,6 +624,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
+                model_formats: None,
             }],
             ..Config {
                 port: 0,
@@ -672,6 +682,7 @@ mod tests {
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
+            model_formats: None,
         });
 
         // The registry must surface the newly added provider without a restart.
@@ -702,6 +713,7 @@ mod tests {
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
+            model_formats: None,
         });
         let live = LiveAccountUsage::new(Arc::new(std::sync::RwLock::new(config)));
 

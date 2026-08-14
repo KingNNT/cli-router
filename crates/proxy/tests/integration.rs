@@ -452,6 +452,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
+            model_formats: None,
         }],
         routing: vec![RoutingRule {
             match_spec: MatchSpec {

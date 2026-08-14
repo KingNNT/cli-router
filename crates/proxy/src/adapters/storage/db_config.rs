@@ -253,6 +253,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
                 thinking_level: ThinkingLevel::parse(&row.get::<_, String>(15)?)
                     .unwrap_or_default(),
                 thinking_force: row.get::<_, i64>(16)? != 0,
+                model_formats: None,
             })
         })
         .map_err(db_err)?;
@@ -490,6 +491,7 @@ mod tests {
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
+            model_formats: None,
         });
         cfg.routing.push(RoutingRule {
             match_spec: MatchSpec {
@@ -549,6 +551,7 @@ mod tests {
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
+            model_formats: None,
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();
@@ -574,6 +577,7 @@ mod tests {
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
+            model_formats: None,
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();
@@ -639,6 +643,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
+                model_formats: None,
             });
             repo.save(&cfg).unwrap();
             let loaded = repo.load().unwrap();
@@ -702,6 +707,7 @@ mod tests {
             max_concurrent: None,
             sanitize_empty_tools: true,
             enabled: true,
+            model_formats: None,
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();
@@ -730,6 +736,7 @@ mod tests {
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: false,
+            model_formats: None,
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();

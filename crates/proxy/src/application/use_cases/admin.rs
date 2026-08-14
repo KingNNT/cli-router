@@ -826,6 +826,7 @@ fn payload_to_config(
                 max_concurrent: pp.max_concurrent,
                 sanitize_empty_tools: pp.sanitize_empty_tools.unwrap_or(false),
                 enabled: pp.enabled,
+                model_formats: None,
             })
         })
         .collect::<Result<Vec<_>, ProxyError>>()?;
@@ -1285,6 +1286,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
+                model_formats: None,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -1330,6 +1332,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
+                model_formats: None,
             }],
             routing: vec![],
             affinity: Default::default(),
@@ -1461,6 +1464,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
+                model_formats: None,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -1505,6 +1509,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: true,
                 enabled: true,
+                model_formats: None,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -1676,6 +1681,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: false,
+                model_formats: None,
             }],
             routing: vec![],
             affinity: Default::default(),
@@ -1715,6 +1721,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: false,
+                model_formats: None,
             }],
             routing: vec![],
             affinity: Default::default(),

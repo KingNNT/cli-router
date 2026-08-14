@@ -61,6 +61,14 @@ pub struct ProviderConfig {
     /// the Kimi provider on the Anthropic path.
     #[serde(default)]
     pub sanitize_empty_tools: bool,
+    /// Per-model wire-format overrides as `glob=format` pairs joined by
+    /// commas, e.g. `minimax-*=anthropic,grok-4.5=responses`. First match
+    /// wins. Empty or absent means the provider's format is decided by its
+    /// configured URLs alone, as before. OpenCode Go is the motivating case:
+    /// it serves different models on `/chat/completions`, `/messages` and
+    /// `/responses` under one base URL.
+    #[serde(default)]
+    pub model_formats: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,6 +109,18 @@ pub enum FormatMode {
     /// Always talk OpenAI upstream; translate Anthropic clients.
     #[serde(alias = "openai")]
     OpenAi,
+}
+
+/// The wire format used to talk to an upstream for one specific model.
+/// `Responses` is the OpenAI Responses API (`/responses`), which the proxy
+/// only ever speaks upstream — clients never send it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WireFormat {
+    Anthropic,
+    #[serde(alias = "openai")]
+    OpenAi,
+    Responses,
 }
 
 /// How hard the upstream model should think, chosen per provider from the
@@ -372,6 +392,9 @@ impl Config {
                     p.name
                 )));
             }
+            if let Some(rules) = &p.model_formats {
+                parse_model_formats(rules)?;
+            }
         }
         if self.routing.is_empty() {
             return Err(ConfigError::Validation(
@@ -414,6 +437,41 @@ impl Config {
         }
         Ok(())
     }
+}
+
+/// Parse the compact `glob=format[,glob=format]*` rule string. Blank segments
+/// are skipped so a trailing comma is harmless. Globs are compiled here purely
+/// to reject bad patterns at save time; the compiled matchers are rebuilt by
+/// the provider builder.
+pub fn parse_model_formats(s: &str) -> Result<Vec<(String, WireFormat)>, ConfigError> {
+    let mut out = Vec::new();
+    for segment in s.split(',') {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        let invalid = || {
+            ConfigError::Validation(format!(
+                "invalid model_formats entry '{segment}': expected <glob>=anthropic|openai|responses"
+            ))
+        };
+        let (glob, format) = segment.split_once('=').ok_or_else(invalid)?;
+        let glob = glob.trim();
+        if glob.is_empty() {
+            return Err(invalid());
+        }
+        let format = match format.trim().to_ascii_lowercase().as_str() {
+            "anthropic" => WireFormat::Anthropic,
+            "openai" | "open_ai" => WireFormat::OpenAi,
+            "responses" => WireFormat::Responses,
+            _ => return Err(invalid()),
+        };
+        globset::Glob::new(glob).map_err(|e| {
+            ConfigError::Validation(format!("invalid model_formats glob '{glob}': {e}"))
+        })?;
+        out.push((glob.to_string(), format));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -604,6 +662,7 @@ mod tests {
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
+                model_formats: None,
                 enabled: false,
             }],
             routing: vec![RoutingRule {
@@ -643,6 +702,7 @@ mod tests {
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
+                    model_formats: None,
                     enabled: true,
                 },
                 ProviderConfig {
@@ -657,6 +717,7 @@ mod tests {
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
+                    model_formats: None,
                     enabled: false,
                 },
             ],
@@ -711,6 +772,7 @@ mod tests {
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
+                model_formats: None,
                 enabled: true,
             }],
             routing: vec![RoutingRule {
@@ -748,6 +810,7 @@ mod tests {
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
+                    model_formats: None,
                     enabled: true,
                 },
                 ProviderConfig {
@@ -762,6 +825,7 @@ mod tests {
                     format_mode: crate::config::FormatMode::Both,
                     max_concurrent: None,
                     sanitize_empty_tools: false,
+                    model_formats: None,
                     enabled: true,
                 },
             ],
@@ -798,6 +862,7 @@ mod tests {
                 format_mode: crate::config::FormatMode::Both,
                 max_concurrent: None,
                 sanitize_empty_tools: false,
+                model_formats: None,
                 enabled: true,
             }],
             routing: vec![RoutingRule {
@@ -848,5 +913,82 @@ mod tests {
         let auth = AuthConfig::CodexAuto;
         let s = format!("{auth:?}");
         assert_eq!(s, "CodexAuto");
+    }
+
+    #[test]
+    fn parse_model_formats_reads_all_three_formats() {
+        let rules =
+            parse_model_formats("minimax-*=anthropic, glm-*=openai ,grok-4.5=responses").unwrap();
+        assert_eq!(
+            rules,
+            vec![
+                ("minimax-*".to_string(), WireFormat::Anthropic),
+                ("glm-*".to_string(), WireFormat::OpenAi),
+                ("grok-4.5".to_string(), WireFormat::Responses),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_model_formats_accepts_empty_and_trailing_commas() {
+        assert!(parse_model_formats("").unwrap().is_empty());
+        assert_eq!(parse_model_formats("glm-*=openai,").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn parse_model_formats_rejects_unknown_format() {
+        let err = parse_model_formats("glm-*=grpc").unwrap_err().to_string();
+        assert!(err.contains("glm-*=grpc"), "{err}");
+    }
+
+    #[test]
+    fn parse_model_formats_rejects_missing_equals() {
+        assert!(parse_model_formats("glm-*").is_err());
+    }
+
+    #[test]
+    fn parse_model_formats_rejects_empty_glob() {
+        assert!(parse_model_formats("=openai").is_err());
+    }
+
+    #[test]
+    fn parse_model_formats_rejects_invalid_glob() {
+        assert!(parse_model_formats("gl[m-*=openai").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_provider_with_bad_model_formats() {
+        let mut cfg = Config {
+            port: 8787,
+            proxy_db: PathBuf::from("/tmp/p.db"),
+            pricing_db: PathBuf::from("/tmp/pr.db"),
+            providers: vec![ProviderConfig {
+                name: "p".into(),
+                enabled: true,
+                kind: ProviderKind::Zai,
+                auth: AuthConfig::default(),
+                anthropic_base_url: None,
+                openai_base_url: Some("https://example.test/v1".into()),
+                format_mode: FormatMode::Both,
+                thinking_level: ThinkingLevel::default(),
+                thinking_force: false,
+                thinking_mode: ThinkingMode::default(),
+                max_concurrent: None,
+                sanitize_empty_tools: false,
+                model_formats: None,
+            }],
+            routing: vec![RoutingRule {
+                match_spec: MatchSpec { model: None },
+                provider: "p".into(),
+                fallback: vec![],
+                strategy: RoutingStrategy::default(),
+                priority: None,
+            }],
+            affinity: AffinityConfig::default(),
+            quota: vec![],
+        };
+        assert!(cfg.validate().is_ok());
+        cfg.providers[0].model_formats = Some("glm-*=nope".into());
+        assert!(cfg.validate().is_err());
     }
 }
