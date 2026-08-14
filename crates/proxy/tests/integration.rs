@@ -1100,6 +1100,89 @@ async fn anthropic_client_reaches_a_responses_model() {
     assert_eq!(v["content"][0]["text"], "hello");
 }
 
+/// `/v1/messages/count_tokens` is a preflight, not a generation. Routing
+/// translates the client A→O because `grok-4.5` is OpenAI-only here, but
+/// `translate_path` leaves the count_tokens path alone — so it lands in
+/// `forward_openai` on a non-chat path. It must never be re-pointed at
+/// `/responses`, which would bill a full generation and answer with a
+/// translated `chat.completion` where the client expects `{"input_tokens": N}`.
+#[tokio::test]
+async fn count_tokens_for_a_responses_model_never_reaches_the_responses_endpoint() {
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use proxy::adapters::providers::RoutingProvider;
+    use proxy::application::use_cases::CountTokensInput;
+
+    let server = MockServer::start().await;
+    // Present but forbidden: any hit here is the bug.
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "resp_billed",
+            "model": "grok-4.5",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "billed!"}]
+            }],
+            "usage": {"input_tokens": 3, "output_tokens": 2}
+        })))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let leaf: Arc<dyn Provider> = Arc::new(opencode_go_leaf(&server));
+    let router: Arc<dyn Provider> = Arc::new(
+        RoutingProvider::builder()
+            .rule(
+                "*",
+                proxy::config::RoutingStrategy::Failover,
+                leaf,
+                Vec::new(),
+            )
+            .unwrap()
+            .build(),
+    );
+
+    let conn = Connection::open_in_memory().unwrap();
+    ensure_current(&conn).unwrap();
+    let conn = Arc::new(Mutex::new(conn));
+    let request_log: Arc<dyn RequestLogPort> = Arc::new(SqliteRequestLogRepository::new(conn));
+    let use_case = HandleMessages::new(
+        router,
+        request_log,
+        Arc::new(NullPricing),
+        Arc::new(SystemClock),
+        1,
+        Arc::new(proxy::adapters::quota::InMemoryQuota::new(vec![])),
+    );
+
+    let body = Bytes::from(r#"{"model":"grok-4.5","messages":[{"role":"user","content":"hi"}]}"#);
+    let out = use_case
+        .count_tokens(CountTokensInput {
+            headers: HeaderMap::new(),
+            body,
+        })
+        .await
+        .unwrap();
+
+    // The provider has no count_tokens endpoint, so the upstream fails and
+    // `HandleMessages` falls back to local estimation — the pre-existing
+    // behavior for every OpenAI-only provider.
+    let v: serde_json::Value = serde_json::from_slice(&out.body).unwrap();
+    assert!(
+        v.get("input_tokens").and_then(|t| t.as_u64()).is_some(),
+        "client must get a token count, got: {v}"
+    );
+
+    let hits = server.received_requests().await.unwrap();
+    assert!(
+        !hits.iter().any(|r| r.url.path().ends_with("/responses")),
+        "count_tokens must never POST /responses, got: {:?}",
+        hits.iter().map(|r| r.url.path()).collect::<Vec<_>>()
+    );
+}
+
 /// The streaming half of the same branch: the Responses SSE stream is wrapped
 /// in the translator, so clients (and the usage parser) see
 /// `chat.completion.chunk` events.

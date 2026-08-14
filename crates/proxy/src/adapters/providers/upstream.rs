@@ -582,7 +582,15 @@ impl Provider for UpstreamProvider {
         // A model ruled to the Responses API leaves the Chat Completions path
         // here; every other model is byte-identical to before. The emptiness
         // check keeps rule-less providers off the extra body parse.
-        if !self.model_formats.is_empty() {
+        //
+        // The path guard matters: `/chat/completions` is the only path a chat
+        // request ever arrives on (`HandleMessages` sends it verbatim for
+        // OpenAI clients, and `RoutingProvider::translate_path` rewrites
+        // `/v1/messages` to it when translating A→O). Sibling endpoints —
+        // notably `/v1/messages/count_tokens`, which passes through
+        // untranslated — must not be turned into a billed `/responses`
+        // generation.
+        if path == "/chat/completions" && !self.model_formats.is_empty() {
             let model = messages_protocol::parse_model(&body).unwrap_or_default();
             if self.model_formats.resolve(&model) == Some(WireFormat::Responses) {
                 return self.forward_responses(headers, body, streaming).await;
