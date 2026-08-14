@@ -403,18 +403,30 @@ impl Provider for UpstreamProvider {
     }
 
     fn supported_formats_for(&self, model: &str) -> FormatSupport {
+        let has_anthropic = self
+            .anthropic_base_url
+            .as_deref()
+            .is_some_and(|s| !s.is_empty());
+        let has_openai = self
+            .openai_base_url
+            .as_deref()
+            .is_some_and(|s| !s.is_empty());
+        // A rule may only *narrow* within the endpoints that are configured —
+        // the same invariant `supported_formats` keeps for `format_mode`. A
+        // rule naming an endpoint this provider doesn't have falls through to
+        // the URL-derived capability instead of black-holing the model.
         match self.model_formats.resolve(model) {
             // Responses is an upstream detail of the OpenAI path: routing only
             // needs to know the request goes out as OpenAI.
-            Some(WireFormat::OpenAi) | Some(WireFormat::Responses) => FormatSupport {
+            Some(WireFormat::OpenAi | WireFormat::Responses) if has_openai => FormatSupport {
                 anthropic: false,
                 openai: true,
             },
-            Some(WireFormat::Anthropic) => FormatSupport {
+            Some(WireFormat::Anthropic) if has_anthropic => FormatSupport {
                 anthropic: true,
                 openai: false,
             },
-            None => self.supported_formats(),
+            _ => self.supported_formats(),
         }
     }
 
@@ -586,6 +598,38 @@ mod tests {
         // No rule → unchanged capability (both URLs configured).
         let kimi = p.supported_formats_for("kimi-k3");
         assert!(kimi.anthropic && kimi.openai);
+    }
+
+    /// A rule may only narrow within the endpoints that exist. Naming one the
+    /// provider has no URL for must not black-hole the model — same invariant
+    /// `supported_formats` keeps for `format_mode`.
+    #[test]
+    fn model_format_rule_for_an_unconfigured_endpoint_falls_back() {
+        let openai_only = UpstreamProvider::new(
+            "openai-only".to_string(),
+            None,
+            Some("https://api.example.com/v1".to_string()),
+            AuthHeader::ApiKey("k".to_string()),
+            Quirks::none(),
+            reqwest::Client::new(),
+        )
+        .with_model_formats(ModelFormatTable::parse("foo-*=anthropic").unwrap());
+        let foo = openai_only.supported_formats_for("foo-1");
+        assert!(!foo.anthropic && foo.openai);
+
+        let anthropic_only = UpstreamProvider::new(
+            "anthropic-only".to_string(),
+            Some("https://api.example.com".to_string()),
+            None,
+            AuthHeader::ApiKey("k".to_string()),
+            Quirks::none(),
+            reqwest::Client::new(),
+        )
+        .with_model_formats(ModelFormatTable::parse("bar-*=responses,baz-*=openai").unwrap());
+        let bar = anthropic_only.supported_formats_for("bar-1");
+        assert!(bar.anthropic && !bar.openai);
+        let baz = anthropic_only.supported_formats_for("baz-1");
+        assert!(baz.anthropic && !baz.openai);
     }
 
     #[test]

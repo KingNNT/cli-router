@@ -1439,12 +1439,19 @@ mod tests {
     struct RecordingProvider {
         formats: FormatSupport,
         anthropic_only_model: Option<String>,
+        openai_only_model: Option<String>,
         calls: Arc<std::sync::Mutex<Vec<&'static str>>>,
     }
 
     impl RecordingProvider {
         fn with_anthropic_only_model(mut self, model: &str) -> Self {
             self.anthropic_only_model = Some(model.to_string());
+            self
+        }
+
+        /// The `responses` shape: routing sees OpenAI-only.
+        fn with_openai_only_model(mut self, model: &str) -> Self {
+            self.openai_only_model = Some(model.to_string());
             self
         }
 
@@ -1466,6 +1473,12 @@ mod tests {
                 return FormatSupport {
                     anthropic: true,
                     openai: false,
+                };
+            }
+            if self.openai_only_model.as_deref() == Some(model) {
+                return FormatSupport {
+                    anthropic: false,
+                    openai: true,
                 };
             }
             self.supported_formats()
@@ -1521,6 +1534,7 @@ mod tests {
         RecordingProvider {
             formats: FormatSupport::both(),
             anthropic_only_model: None,
+            openai_only_model: None,
             calls: Arc::new(std::sync::Mutex::new(Vec::new())),
         }
     }
@@ -1529,6 +1543,18 @@ mod tests {
         RoutingProvider::builder()
             .rule(pattern, RoutingStrategy::Failover, Arc::new(leaf), vec![])
             .unwrap()
+            .build()
+    }
+
+    /// Register the leaf under a namespace so `provider/model` resolves to it.
+    fn router_with_namespaced_leaf(namespace: &str, leaf: RecordingProvider) -> RoutingProvider {
+        let mut leaves: std::collections::HashMap<String, Arc<dyn Provider>> =
+            std::collections::HashMap::new();
+        leaves.insert(namespace.to_string(), Arc::new(leaf));
+        RoutingProvider::builder()
+            .rule("*", RoutingStrategy::Failover, dummy(), vec![])
+            .unwrap()
+            .leaves(leaves)
             .build()
     }
 
@@ -1559,6 +1585,42 @@ mod tests {
         let body = Bytes::from(r#"{"model":"kimi-k3","messages":[]}"#);
         router
             .forward_openai("/chat/completions", &HeaderMap::new(), body, false)
+            .await
+            .unwrap();
+
+        assert_eq!(calls.lock().unwrap().as_slice(), &["forward_openai"]);
+    }
+
+    /// Namespace path, OpenAI client. The rule must be looked up with the
+    /// **bare** model — `go/qwen3.7-max` matches nothing, so passing the
+    /// namespaced string would leave the request untranslated.
+    #[tokio::test]
+    async fn namespaced_openai_client_looks_the_rule_up_by_bare_model() {
+        let leaf = fake_provider_supporting_both().with_anthropic_only_model("qwen3.7-max");
+        let calls = leaf.calls();
+        let router = router_with_namespaced_leaf("go", leaf);
+
+        let body = Bytes::from(r#"{"model":"go/qwen3.7-max","messages":[]}"#);
+        router
+            .forward_openai("/chat/completions", &HeaderMap::new(), body, false)
+            .await
+            .unwrap();
+
+        assert_eq!(calls.lock().unwrap().as_slice(), &["forward"]);
+    }
+
+    /// Namespace path, Anthropic client — the mirror of the test above, with
+    /// an OpenAI-only (i.e. `responses`) model so a namespaced lookup would
+    /// fall back to "both" and pass through to `forward` instead.
+    #[tokio::test]
+    async fn namespaced_anthropic_client_looks_the_rule_up_by_bare_model() {
+        let leaf = fake_provider_supporting_both().with_openai_only_model("grok-4.5");
+        let calls = leaf.calls();
+        let router = router_with_namespaced_leaf("go", leaf);
+
+        let body = Bytes::from(r#"{"model":"go/grok-4.5","messages":[]}"#);
+        router
+            .forward("/v1/messages", &HeaderMap::new(), body, false)
             .await
             .unwrap();
 
