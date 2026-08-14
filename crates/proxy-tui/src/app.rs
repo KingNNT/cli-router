@@ -487,6 +487,80 @@ impl ThinkingLevelInput {
     }
 }
 
+/// Cycle widget state for how far a provider participates. Mirrors
+/// `proxy::config::ProviderMode` — kept in sync manually, as `proxy-tui`
+/// does not depend on the proxy crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProviderModeInput {
+    #[default]
+    Enabled,
+    Monitor,
+    Disabled,
+}
+
+impl ProviderModeInput {
+    pub fn label(self) -> &'static str {
+        match self {
+            ProviderModeInput::Enabled => "enabled",
+            ProviderModeInput::Monitor => "monitor",
+            ProviderModeInput::Disabled => "disabled",
+        }
+    }
+
+    /// Longer text for the form row, where the short label alone doesn't say
+    /// what the middle state does.
+    pub fn description(self) -> &'static str {
+        match self {
+            ProviderModeInput::Enabled => "serves requests",
+            ProviderModeInput::Monitor => "usage only, never called",
+            ProviderModeInput::Disabled => "off",
+        }
+    }
+
+    /// Read the payload's `mode`, falling back to the legacy `enabled` flag
+    /// when talking to a daemon that predates the field.
+    pub fn from_payload(mode: Option<&str>, enabled: bool) -> Self {
+        match mode {
+            Some("monitor") => ProviderModeInput::Monitor,
+            Some("disabled") => ProviderModeInput::Disabled,
+            Some("enabled") => ProviderModeInput::Enabled,
+            _ if enabled => ProviderModeInput::Enabled,
+            _ => ProviderModeInput::Disabled,
+        }
+    }
+
+    /// Write this mode onto a payload, keeping the legacy `enabled` flag in
+    /// step so a daemon that predates `mode` still reads the right thing.
+    pub fn apply_to(self, p: &mut ProviderPayload) {
+        p.mode = Some(self.label().to_string());
+        p.enabled = self == ProviderModeInput::Enabled;
+    }
+
+    /// Whether moving a provider *into* this mode forces routing rules that
+    /// name it to be removed. Only a fully disabled provider does: the daemon
+    /// rejects a config whose rule names one, while a parked provider is legal
+    /// in a rule and simply gets skipped when the router is built.
+    pub fn needs_rule_cleanup(self) -> bool {
+        self == ProviderModeInput::Disabled
+    }
+
+    pub fn cycle_next(self) -> Self {
+        match self {
+            ProviderModeInput::Enabled => ProviderModeInput::Monitor,
+            ProviderModeInput::Monitor => ProviderModeInput::Disabled,
+            ProviderModeInput::Disabled => ProviderModeInput::Enabled,
+        }
+    }
+
+    pub fn cycle_prev(self) -> Self {
+        match self {
+            ProviderModeInput::Enabled => ProviderModeInput::Disabled,
+            ProviderModeInput::Monitor => ProviderModeInput::Enabled,
+            ProviderModeInput::Disabled => ProviderModeInput::Monitor,
+        }
+    }
+}
+
 /// Cycle widget state for MiniMax thinking_mode. Mirrors ThinkingLevelInput.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ThinkingModeInput {
@@ -605,7 +679,7 @@ pub enum FormField {
     SanitizeEmptyTools,
     AuthKind,
     AuthValue,
-    Enabled,
+    Mode,
     Save,
 }
 
@@ -671,7 +745,7 @@ fn field_order(
     if matches!(auth_kind, AuthInputKind::ApiKey | AuthInputKind::Bearer) {
         order.push(FormField::AuthValue);
     }
-    order.push(FormField::Enabled);
+    order.push(FormField::Mode);
     order.push(FormField::Save);
     order
 }
@@ -712,8 +786,8 @@ pub struct ProviderFormModal {
     pub thinking_force: bool,
     pub thinking_mode: ThinkingModeInput,
     pub sanitize_empty_tools: bool,
-    /// Whether this provider is active and eligible for routing.
-    pub enabled: bool,
+    /// How far this provider participates: serving, watched-only, or off.
+    pub provider_mode: ProviderModeInput,
     pub auth_kind: AuthInputKind,
     pub auth_value: String,
     /// Preserved across edits (not yet editable in the form UI). Carries the
@@ -740,7 +814,7 @@ impl ProviderFormModal {
             thinking_force: false,
             thinking_mode: ThinkingModeInput::Unset,
             sanitize_empty_tools: false,
-            enabled: true,
+            provider_mode: ProviderModeInput::Enabled,
             auth_kind: AuthInputKind::Passthrough,
             auth_value: String::new(),
             max_concurrent: None,
@@ -771,7 +845,7 @@ impl ProviderFormModal {
             format_mode: FormatModeInput::from_option(p.format_mode.as_deref()),
             thinking_mode: ThinkingModeInput::from_option(p.thinking_mode.as_deref()),
             sanitize_empty_tools: p.sanitize_empty_tools.unwrap_or(false),
-            enabled: p.enabled,
+            provider_mode: ProviderModeInput::from_payload(p.mode.as_deref(), p.enabled),
             auth_kind,
             auth_value,
             max_concurrent: p.max_concurrent,
@@ -1180,19 +1254,83 @@ mod form_field_tests {
                 ThinkingLevelInput::Unset,
                 false
             ),
-            FormField::Enabled
+            FormField::Mode
         );
     }
 
     #[test]
-    fn field_order_includes_enabled() {
+    fn provider_mode_cycles_through_all_three_states() {
+        let m = ProviderModeInput::Enabled;
+        assert_eq!(m.cycle_next(), ProviderModeInput::Monitor);
+        assert_eq!(m.cycle_next().cycle_next(), ProviderModeInput::Disabled);
+        assert_eq!(m.cycle_next().cycle_next().cycle_next(), m);
+        assert_eq!(m.cycle_prev(), ProviderModeInput::Disabled);
+    }
+
+    #[test]
+    fn parking_a_provider_does_not_need_its_rules_removed() {
+        assert!(!ProviderModeInput::Monitor.needs_rule_cleanup());
+        assert!(!ProviderModeInput::Enabled.needs_rule_cleanup());
+        assert!(
+            ProviderModeInput::Disabled.needs_rule_cleanup(),
+            "the daemon still rejects a rule naming a disabled provider"
+        );
+    }
+
+    #[test]
+    fn applying_a_mode_writes_both_the_field_and_the_legacy_flag() {
+        let mut p = ProviderPayload {
+            name: "p".into(),
+            kind: "zai".into(),
+            mode: None,
+            enabled: true,
+            auth: AuthPayload::Passthrough,
+            anthropic_base_url: None,
+            openai_base_url: None,
+            thinking_mode: None,
+            thinking_level: None,
+            thinking_force: None,
+            format_mode: None,
+            max_concurrent: None,
+            sanitize_empty_tools: None,
+            model_formats: None,
+        };
+
+        ProviderModeInput::Monitor.apply_to(&mut p);
+
+        assert_eq!(p.mode.as_deref(), Some("monitor"));
+        assert!(
+            !p.enabled,
+            "a daemon that only reads the legacy flag must not route to a parked provider"
+        );
+    }
+
+    #[test]
+    fn provider_mode_falls_back_to_the_legacy_enabled_flag() {
+        assert_eq!(
+            ProviderModeInput::from_payload(None, false),
+            ProviderModeInput::Disabled
+        );
+        assert_eq!(
+            ProviderModeInput::from_payload(None, true),
+            ProviderModeInput::Enabled
+        );
+        assert_eq!(
+            ProviderModeInput::from_payload(Some("monitor"), true),
+            ProviderModeInput::Monitor,
+            "an explicit mode wins over the legacy flag"
+        );
+    }
+
+    #[test]
+    fn field_order_includes_mode() {
         let order = field_order(
             AuthInputKind::Passthrough,
             ProviderKind::Anthropic,
             ThinkingLevelInput::Unset,
             false,
         );
-        assert!(order.contains(&FormField::Enabled));
+        assert!(order.contains(&FormField::Mode));
         assert_eq!(order.last().copied(), Some(FormField::Save));
     }
 

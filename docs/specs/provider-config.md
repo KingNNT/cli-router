@@ -44,6 +44,8 @@ Ràng buộc validate (`Config::validate`):
 - `name` của provider phải **duy nhất**.
 - Phải có **ít nhất 1 routing rule**.
 - Mọi `provider` / `fallback` trong routing phải trỏ tới một `name` provider tồn tại.
+- Routing rule **không được** trỏ tới provider `disabled`; trỏ tới provider `monitor` thì hợp lệ
+  (router bỏ qua tên đó lúc build — xem §5e).
 
 ---
 
@@ -53,6 +55,8 @@ Ràng buộc validate (`Config::validate`):
 |-------|------|:---:|---------|------------------|---------|
 | `name` | `string` | ✅ | — | mọi kind | Định danh duy nhất. Dùng trong routing (`provider`/`fallback`) và namespace routing (`<name>/<model>`). |
 | `kind` | `string` | ✅ | — | — | Loại provider, quyết định endpoint mặc định + cách xử lý format/auth. Xem §3. |
+| `mode` | `string?` | ❌ | `"enabled"` | mọi kind | Mức tham gia của provider: `enabled`, `monitor`, `disabled`. Xem §5e. |
+| `enabled` | `bool?` | ❌ | `true` | mọi kind | **Legacy.** Chỉ được đọc khi `mode` vắng mặt (client cũ). Daemon luôn ghi ra `mode != disabled`. |
 | `auth` | `AuthPayload` | ❌ | `{"type":"passthrough"}` | mọi kind | Cách proxy xác thực **tới** upstream. Xem §4. |
 | `base_url` | `string?` | ❌ | theo kind | mọi kind | Ghi đè endpoint chính. Với provider dual-format đây là endpoint **Anthropic-compatible**; với provider OpenAI-only đây là endpoint OpenAI-compatible. |
 | `openai_base_url` | `string?` | ❌ | theo kind | `zai`, `minimax`, `kimi` | Ghi đè endpoint **OpenAI-compatible** cho provider dual-format. Bị bỏ qua với các kind khác. |
@@ -249,6 +253,44 @@ kind đó (`reasoning_split`, `strip_tool_choice`) và mọi phép chèn
 cả. Bản preset không bao giờ tạo ra tình huống này (chỉ OpenCode Go seed luật
 `responses`), nhưng nếu bạn tự thêm luật đó cho provider khác thì các quirk
 sẽ mất mà không có cảnh báo nào ở tầng request.
+
+---
+
+## 5e. `mode` — mức tham gia của provider
+
+Provider có ba mức tham gia, chọn qua field `mode`:
+
+| `mode` | Nhận request | Poll account usage | Dùng khi |
+|---|:---:|:---:|---|
+| `enabled` (default) | ✅ | ✅ | Bình thường. |
+| `monitor` | ❌ | ✅ | Bạn muốn tiếp tục theo dõi số dư / quota của một subscription đang **park**, mà không tiêu credential của nó. |
+| `disabled` | ❌ | ❌ | Tắt hẳn, giữ lại entry trong config. |
+
+Điều quan trọng về `monitor`:
+
+- **Không cần sửa routing khi park.** Rule vẫn được phép trỏ tới provider
+  `monitor` (`Config::validate()` chấp nhận). Lúc dựng router, tên đó bị **loại
+  khỏi chuỗi của rule**: nếu nó là primary thì fallback đầu tiên được đôn lên;
+  nếu cả rule chỉ toàn provider `monitor` thì rule bị bỏ qua và rule ưu tiên kế
+  tiếp lo model đó. Mỗi lần loại đều có một dòng `warn!` trong log.
+- **Không còn model nào phủ** thì client nhận lỗi `no provider matched` chứ
+  không phải lỗi cấu hình — hãy chắc chắn còn rule khác phủ model đó.
+- **Namespace override cũng không tới được:** `parked/claude-...` trả lỗi, vì
+  provider `monitor` không nằm trong bảng leaf.
+- Ngược lại, rule trỏ tới provider `disabled` vẫn **bị từ chối lúc lưu** — muốn
+  tắt hẳn thì phải gỡ rule trước (TUI hỏi xác nhận và tự gỡ giúp).
+- Tên provider **không tồn tại** vẫn làm hỏng build như trước, không bị âm thầm bỏ qua.
+
+Trong `proxy-tui`: phím `z` trên tab Providers xoay vòng
+`enabled → monitor → disabled`, cột `Mode` trong bảng hiển thị trạng thái hiện
+tại, và modal Add/Edit có dòng `Mode`. Chỉ bước chuyển sang `disabled` mới hỏi
+xác nhận khi provider đang được routing rule tham chiếu.
+
+**Tương thích:** field `enabled` cũ vẫn còn trên wire và trong DB. Daemon ghi nó
+ra như một giá trị dẫn xuất (`mode != disabled`) và **chỉ đọc** nó khi payload
+không có `mode` — nên một TUI cũ vẫn tắt/bật provider được như trước. Migration
+v14 backfill `mode` từ cột `enabled`, và cột `enabled` được giữ lại để rollback
+về binary cũ vẫn thấy provider disabled là disabled.
 
 ---
 

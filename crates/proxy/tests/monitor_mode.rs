@@ -7,7 +7,7 @@ use bytes::Bytes;
 use http::HeaderMap;
 use proxy::adapters::providers::build_from_config;
 use proxy::adapters::quota::InMemoryQuota;
-use proxy::application::ports::{Provider, QuotaPort};
+use proxy::application::ports::QuotaPort;
 use proxy::config::{
     AuthConfig, Config, MatchSpec, ProviderConfig, ProviderKind, ProviderMode, RoutingRule,
     RoutingStrategy,

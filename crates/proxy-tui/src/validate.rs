@@ -3,6 +3,7 @@
 //! No I/O, no ratatui, no async — just functions on `ConfigPayload` /
 //! `ProviderPayload` shapes. Easy to unit-test.
 
+use crate::app::ProviderModeInput;
 use proxy_admin_api::{AuthPayload, ConfigPayload, ProviderPayload};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,8 +57,8 @@ pub struct FormInputs<'a> {
     /// Which endpoint(s) the proxy may use: `both`, `anthropic`, `openai`.
     pub format_mode: Option<&'a str>,
     pub sanitize_empty_tools: bool,
-    /// Whether the provider is active and eligible for routing.
-    pub enabled: bool,
+    /// How far the provider participates: serving, watched-only, or off.
+    pub mode: ProviderModeInput,
     /// Preserved per-provider concurrency cap (not yet editable in the form).
     pub max_concurrent: Option<usize>,
     pub auth: &'a AuthPayload,
@@ -151,8 +152,8 @@ pub fn validate_provider_form(
     Ok(ProviderPayload {
         name: name.to_string(),
         kind: input.kind.to_string(),
-        mode: None,
-        enabled: input.enabled,
+        mode: Some(input.mode.label().to_string()),
+        enabled: input.mode == ProviderModeInput::Enabled,
         auth: input.auth.clone(),
         anthropic_base_url: input
             .anthropic_base_url
@@ -275,8 +276,33 @@ mod tests {
             editing_index: None,
             original_name: None,
             sanitize_empty_tools: false,
-            enabled: true,
+            mode: ProviderModeInput::Enabled,
         }
+    }
+
+    #[test]
+    fn a_parked_provider_is_sent_as_monitor_and_not_enabled() {
+        let cfg = empty_cfg();
+        let auth = AuthPayload::Passthrough;
+        let mut input = inputs("parked", &auth);
+        input.mode = ProviderModeInput::Monitor;
+
+        let payload = validate_provider_form(&input, &cfg).unwrap();
+
+        assert_eq!(payload.mode.as_deref(), Some("monitor"));
+        assert!(
+            !payload.enabled,
+            "the legacy flag must not advertise a parked provider as serving"
+        );
+    }
+
+    #[test]
+    fn an_active_provider_is_sent_as_enabled() {
+        let cfg = empty_cfg();
+        let auth = AuthPayload::Passthrough;
+        let payload = validate_provider_form(&inputs("live", &auth), &cfg).unwrap();
+        assert_eq!(payload.mode.as_deref(), Some("enabled"));
+        assert!(payload.enabled);
     }
 
     #[test]
@@ -384,7 +410,7 @@ mod tests {
             editing_index: None,
             original_name: None,
             sanitize_empty_tools: true,
-            enabled: true,
+            mode: ProviderModeInput::Enabled,
         };
 
         let provider = validate_provider_form(&input, &cfg).unwrap();
@@ -410,7 +436,7 @@ mod tests {
             editing_index: None,
             original_name: None,
             sanitize_empty_tools: true,
-            enabled: true,
+            mode: ProviderModeInput::Enabled,
         };
 
         let provider = validate_provider_form(&input, &cfg).unwrap();
@@ -436,7 +462,7 @@ mod tests {
             editing_index: None,
             original_name: None,
             sanitize_empty_tools: false,
-            enabled: true,
+            mode: ProviderModeInput::Enabled,
         };
 
         let provider = validate_provider_form(&input, &cfg).unwrap();

@@ -12,7 +12,8 @@ mod views;
 use crate::app::{
     ALL_VIEWS, AppMode, AppState, AuthInputKind, ConfigSection, DeleteConfirmModal,
     DisableConfirmModal, FormField, FormMode, FormState, Modal, PROVIDER_TOOLBAR,
-    PROVIDER_TOOLBAR_GAP, ProviderAction, ProviderFormModal, ProviderKind, QuotaField,
+    PROVIDER_TOOLBAR_GAP, ProviderAction, ProviderFormModal, ProviderKind, ProviderModeInput,
+    QuotaField,
     QuotaFormModal, RangePreset, RoutingField, RoutingFormModal, TestProviderModal, TestState,
     View,
 };
@@ -364,7 +365,7 @@ fn handle_config_key(k: KeyEvent, client: &AdminClient, state: &mut AppState) {
             KeyCode::Char('e') => open_edit_modal(state),
             KeyCode::Char('d') => open_delete_modal(state),
             KeyCode::Char('t') => open_test_modal(state),
-            KeyCode::Char('z') => toggle_provider_enabled(client, state),
+            KeyCode::Char('z') => cycle_provider_mode(client, state),
             _ => {}
         },
         ConfigSection::Routing => match k.code {
@@ -984,9 +985,10 @@ fn handle_delete_key(
     }
 }
 
-/// Toggle the selected provider's `enabled` flag. If disabling would affect
-/// routing rules, open a confirmation modal instead of toggling immediately.
-fn toggle_provider_enabled(client: &AdminClient, state: &mut AppState) {
+/// Cycle the selected provider's mode: enabled → monitor → disabled → enabled.
+/// Only the move to `disabled` can break routing rules that name the provider,
+/// so that step opens a confirmation modal instead of applying immediately.
+fn cycle_provider_mode(client: &AdminClient, state: &mut AppState) {
     let cfg = match state.config.as_ref().and_then(|r| r.as_ref().ok()).cloned() {
         Some(c) => c,
         None => return,
@@ -997,29 +999,21 @@ fn toggle_provider_enabled(client: &AdminClient, state: &mut AppState) {
         None => return,
     };
     let provider_name = prov.name.clone();
-    let currently_enabled = prov.enabled;
-
-    // Disabling a referenced provider needs confirmation; enabling or
-    // disabling an unreferenced one can be applied immediately.
-    if !currently_enabled {
-        let mut cfg = cfg;
-        cfg.providers[provider_index].enabled = true;
-        apply_toggle(client, state, cfg, &provider_name, "enabled");
-        return;
-    }
+    let next = ProviderModeInput::from_payload(prov.mode.as_deref(), prov.enabled).cycle_next();
 
     let rules = crate::validate::rules_referencing(&provider_name, &cfg);
-    if rules.is_empty() {
-        let mut cfg = cfg;
-        cfg.providers[provider_index].enabled = false;
-        apply_toggle(client, state, cfg, &provider_name, "disabled");
-    } else {
+    if next.needs_rule_cleanup() && !rules.is_empty() {
         state.modal = Modal::DisableConfirm(DisableConfirmModal {
             provider_index,
             provider_name,
             rules,
         });
+        return;
     }
+
+    let mut cfg = cfg;
+    next.apply_to(&mut cfg.providers[provider_index]);
+    apply_toggle(client, state, cfg, &provider_name, next.label());
 }
 
 fn apply_toggle(
@@ -1058,7 +1052,7 @@ fn handle_disable_confirm_key(
                 state.flash("toggle failed: provider index out of range");
                 return Modal::None;
             }
-            cfg.providers[m.provider_index].enabled = false;
+            ProviderModeInput::Disabled.apply_to(&mut cfg.providers[m.provider_index]);
             cfg.routing.retain(|r| {
                 r.provider != m.provider_name && !r.fallback.contains(&m.provider_name)
             });
@@ -1250,7 +1244,7 @@ fn submit_non_oauth_save(
         thinking_mode: m.thinking_mode.as_option(),
         format_mode: m.format_mode.as_option(),
         sanitize_empty_tools: m.sanitize_empty_tools,
-        enabled: m.enabled,
+        mode: m.provider_mode,
 
         max_concurrent: m.max_concurrent,
         auth: &auth,
@@ -1370,8 +1364,12 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
         FormField::SanitizeEmptyTools => {
             m.sanitize_empty_tools = !m.sanitize_empty_tools;
         }
-        FormField::Enabled => {
-            m.enabled = !m.enabled;
+        FormField::Mode => {
+            m.provider_mode = if forward {
+                m.provider_mode.cycle_next()
+            } else {
+                m.provider_mode.cycle_prev()
+            };
         }
         FormField::AuthKind => {
             // AuthInputKind only has cycle(); use it for both directions
@@ -1443,7 +1441,7 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
             thinking_mode: m.thinking_mode.as_option(),
             format_mode: m.format_mode.as_option(),
             sanitize_empty_tools: m.sanitize_empty_tools,
-            enabled: m.enabled,
+            mode: m.provider_mode,
 
             max_concurrent: m.max_concurrent,
             auth: &placeholder_auth,
@@ -1942,7 +1940,7 @@ fn submit_oauth_edit(
         thinking_mode: m.thinking_mode.as_option(),
         format_mode: m.format_mode.as_option(),
         sanitize_empty_tools: m.sanitize_empty_tools,
-        enabled: m.enabled,
+        mode: m.provider_mode,
 
         max_concurrent: m.max_concurrent,
         auth: &original_auth,
