@@ -33,7 +33,10 @@ impl std::fmt::Display for FormError {
                 )
             }
             FormError::InvalidModelFormats(segment) => {
-                write!(f, "invalid model format rule: '{segment}'")
+                write!(
+                    f,
+                    "invalid model_formats entry '{segment}': expected <glob>=anthropic|openai|responses"
+                )
             }
         }
     }
@@ -64,9 +67,13 @@ pub struct FormInputs<'a> {
     pub original_name: Option<&'a str>,
 }
 
-/// Mirrors `proxy::config::parse_model_formats` — `proxy-tui` cannot depend on
-/// the proxy crate, so the grammar is checked twice on purpose. The daemon
-/// remains the authority; this only keeps a typo from reaching it.
+/// A shape pre-check, not a re-implementation of
+/// `proxy::config::parse_model_formats`. `proxy-tui` cannot depend on the
+/// proxy crate (and deliberately doesn't pull in `globset` just for this),
+/// so this only catches the common typos — a missing `=`, an empty glob, an
+/// unknown format keyword — before a save round-trip. It does not validate
+/// glob syntax; the daemon remains the authority there and is the one that
+/// will reject a malformed glob.
 fn check_model_formats(s: &str) -> Result<(), FormError> {
     for segment in s.split(',') {
         let segment = segment.trim();

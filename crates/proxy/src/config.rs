@@ -464,7 +464,7 @@ pub fn parse_model_formats(s: &str) -> Result<Vec<(String, WireFormat)>, ConfigE
         }
         let format = match format.trim().to_ascii_lowercase().as_str() {
             "anthropic" => WireFormat::Anthropic,
-            "openai" | "open_ai" => WireFormat::OpenAi,
+            "openai" => WireFormat::OpenAi,
             "responses" => WireFormat::Responses,
             _ => return Err(invalid()),
         };
@@ -961,6 +961,17 @@ mod tests {
     fn parse_model_formats_rejects_unknown_format() {
         let err = parse_model_formats("glm-*=grpc").unwrap_err().to_string();
         assert!(err.contains("glm-*=grpc"), "{err}");
+    }
+
+    #[test]
+    fn parse_model_formats_rejects_open_ai_underscore_alias() {
+        // Unlike `parse_kind`'s provider-kind vocabulary, the `model_formats`
+        // format token only accepts the documented grammar
+        // (anthropic | openai | responses) — no `open_ai` alias.
+        let err = parse_model_formats("glm-*=open_ai")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("glm-*=open_ai"), "{err}");
     }
 
     #[test]
