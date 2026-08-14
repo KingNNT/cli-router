@@ -97,9 +97,12 @@ pub fn thinking_patch(kind: ProviderKind, level: ThinkingLevel) -> Option<Thinki
             both(json!({"thinking": {"type": "disabled", "budget_tokens": null}}))
         }
         (ProviderKind::Minimax, _) => both(json!({"thinking": {"type": "adaptive"}})),
-        // OpencodeGo offers no thinking levels; the guard above already
-        // returns `None` before this match runs for it.
-        (ProviderKind::OpencodeGo, _) => unreachable!("opencode_go offers no thinking levels"),
+        // OpencodeGo offers no thinking levels, so this arm never actually
+        // runs — the guard above already returns `None` first. Expressed as
+        // a plain `None` return (not `unreachable!()`) so a future change
+        // that adds a level here without updating this arm degrades to no
+        // patch instead of panicking in the request hot path.
+        (ProviderKind::OpencodeGo, _) => return None,
     })
 }
 
@@ -279,6 +282,8 @@ mod tests {
         // Kimi K3 has no `max`-less floor below `low` and no `off`.
         assert!(thinking_patch(ProviderKind::Kimi, ThinkingLevel::Off).is_none());
         assert!(thinking_patch(ProviderKind::Minimax, ThinkingLevel::High).is_none());
+        // OpencodeGo offers no thinking levels at all.
+        assert!(thinking_patch(ProviderKind::OpencodeGo, ThinkingLevel::Off).is_none());
     }
 
     #[test]
