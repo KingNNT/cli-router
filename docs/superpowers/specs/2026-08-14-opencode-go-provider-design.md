@@ -91,7 +91,10 @@ minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses
 ```
 
 - Grammar: comma-separated `glob=format`; `format` ∈ `anthropic | openai |
-  responses`; whitespace around tokens ignored.
+  responses`; whitespace around tokens ignored. **Divergence during review:**
+  unlike the provider `kind` vocabulary (§1), there is no `open_ai` alias for
+  the `openai` format — `parse_model_formats` rejects it. Removed on purpose
+  so the two vocabularies don't silently drift.
 - Matching is **first-match-wins**, in written order. No match → the provider's
   normal capability rules (unchanged behavior).
 - Empty / absent → today's behavior exactly, so no existing provider is
@@ -123,6 +126,18 @@ fn supported_formats_for(&self, model: &str) -> FormatSupport {
 Anthropic-only; `openai` **and** `responses` rules both report OpenAI-only
 (the Responses split happens later, inside `forward_openai`); no match falls
 back to `supported_formats()`, which already folds `format_mode`.
+
+**Ruling during review (corrects the paragraph above):** a rule may only
+*narrow* within the endpoints the provider actually has a URL for — the same
+invariant `supported_formats()` already keeps for `format_mode`. If a rule
+names a format whose base URL is empty on that provider (e.g. someone hand-writes
+an `=anthropic` rule on a provider with no `anthropic_base_url`), the rule is
+ignored for that model and capability falls back to
+`supported_formats()`/the URL-derived default, rather than the request
+failing with "no endpoint for this provider." The implementation
+(`UpstreamProvider::supported_formats_for` in `upstream.rs`) checks
+`has_anthropic`/`has_openai` before honoring a rule's format, matching this
+fallback exactly.
 
 `routing.rs` swaps `provider.supported_formats()` for
 `provider.supported_formats_for(model)` at the six `select_direction` call

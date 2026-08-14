@@ -263,5 +263,6 @@ Detailed conventions live in `.claude/rules/`:
 - **MiniMax thinking cleanup** — plan `docs/superpowers/plans/2026-06-05-minimax-thinking-cleanup.md`.
 - **MiniMax thinking mode config** — plan `docs/superpowers/plans/2026-06-05-minimax-thinking-mode-config.md`.
 - **Codex usage source** — spec `docs/superpowers/specs/2026-08-08-codex-usage-source-design.md`, plan `docs/superpowers/plans/2026-08-08-codex-usage-source.md`.
+- **OpenCode Go provider** — spec `docs/superpowers/specs/2026-08-14-opencode-go-provider-design.md`, plan `docs/superpowers/plans/2026-08-14-opencode-go-provider.md`.
 
 Consult these for motivation before changing data shapes, ring boundaries, or proxy contracts.
