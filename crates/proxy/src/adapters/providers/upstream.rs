@@ -1,6 +1,9 @@
 use super::messages_protocol::{self, AuthHeader};
 use super::minimax_stream::ThinkingMode;
 use super::model_formats::ModelFormatTable;
+use crate::adapters::translation::openai_to_responses::{
+    ResponsesDialect, ResponsesSseTranslator, translate_buffered_response, translate_request,
+};
 use crate::application::errors::ProxyError;
 use crate::application::ports::{FormatSupport, Provider, UpstreamResponse, UsageParser};
 use crate::config::{FormatMode, ProviderKind, WireFormat};
@@ -108,6 +111,7 @@ pub struct UpstreamProvider {
     name: String,
     anthropic_base_url: Option<String>,
     openai_base_url: Option<String>,
+    responses_base_url: Option<String>,
     auth: AuthHeader,
     quirks: Quirks,
     format_mode: FormatMode,
@@ -130,6 +134,7 @@ impl UpstreamProvider {
             name,
             anthropic_base_url,
             openai_base_url,
+            responses_base_url: None,
             auth,
             quirks,
             format_mode: FormatMode::Both,
@@ -165,6 +170,100 @@ impl UpstreamProvider {
         self.thinking_anthropic = anthropic;
         self.thinking_openai = openai;
         self
+    }
+
+    /// Endpoint for models routed to the OpenAI Responses API. Defaults to
+    /// `openai_base_url`, which is where OpenCode Go serves `/responses`.
+    fn responses_base(&self) -> Option<&str> {
+        self.responses_base_url
+            .as_deref()
+            .or(self.openai_base_url.as_deref())
+    }
+
+    /// OpenAI-compatible endpoints authenticate with `Authorization: Bearer`;
+    /// convert `ApiKey` → `Bearer` as the individual providers do today. Shared
+    /// by the Chat Completions and Responses paths so both authenticate alike.
+    fn auth_for_openai(&self) -> AuthHeader {
+        match &self.auth {
+            AuthHeader::ApiKey(v) => AuthHeader::Bearer(v.clone()),
+            other => other.clone(),
+        }
+    }
+
+    /// POST to `{base}/responses`, translating the Chat Completions body on the
+    /// way out and the Responses payload on the way back. Streaming responses
+    /// are wrapped in the SSE translator; buffered ones are converted whole.
+    async fn forward_responses(
+        &self,
+        headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        let base = self.responses_base().ok_or_else(|| {
+            ProxyError::BadRequest(format!(
+                "provider '{}' has no Responses endpoint",
+                self.name
+            ))
+        })?;
+        let chat: Value = serde_json::from_slice(&body)
+            .map_err(|e| ProxyError::BadRequest(format!("invalid JSON body: {e}")))?;
+        let translated = translate_request(&chat, &ResponsesDialect::vanilla())
+            .map_err(|e| ProxyError::BadRequest(format!("responses translation failed: {e}")))?;
+        let out = Bytes::from(serde_json::to_vec(&translated).map_err(|e| {
+            ProxyError::BadRequest(format!("failed to serialize responses body: {e}"))
+        })?);
+
+        let resp = messages_protocol::forward(
+            &self.http,
+            base,
+            &self.auth_for_openai(),
+            "/responses",
+            headers,
+            out,
+            streaming,
+            self.name(),
+        )
+        .await?;
+
+        Ok(match resp {
+            UpstreamResponse::Streaming {
+                status,
+                headers,
+                body,
+                provider_id,
+                translation_direction,
+            } => UpstreamResponse::Streaming {
+                status,
+                headers,
+                body: Box::pin(ResponsesSseTranslator::new(body)),
+                provider_id,
+                translation_direction,
+            },
+            UpstreamResponse::Buffered {
+                status,
+                headers,
+                body,
+                provider_id,
+                translation_direction,
+            } if (200..300).contains(&status) => {
+                let value: Value = serde_json::from_slice(&body)
+                    .map_err(|e| ProxyError::BadRequest(format!("invalid Responses body: {e}")))?;
+                let chat = translate_buffered_response(&value).map_err(|e| {
+                    ProxyError::BadRequest(format!("responses translation failed: {e}"))
+                })?;
+                UpstreamResponse::Buffered {
+                    status,
+                    headers,
+                    body: Bytes::from(serde_json::to_vec(&chat).map_err(|e| {
+                        ProxyError::BadRequest(format!("failed to serialize chat body: {e}"))
+                    })?),
+                    provider_id,
+                    translation_direction,
+                }
+            }
+            // Non-2xx bodies pass through untranslated, as everywhere else.
+            other => other,
+        })
     }
 
     /// Apply Anthropic-format request quirks: merge the resolved thinking
@@ -480,15 +579,20 @@ impl Provider for UpstreamProvider {
         body: Bytes,
         streaming: bool,
     ) -> Result<UpstreamResponse, ProxyError> {
+        // A model ruled to the Responses API leaves the Chat Completions path
+        // here; every other model is byte-identical to before. The emptiness
+        // check keeps rule-less providers off the extra body parse.
+        if !self.model_formats.is_empty() {
+            let model = messages_protocol::parse_model(&body).unwrap_or_default();
+            if self.model_formats.resolve(&model) == Some(WireFormat::Responses) {
+                return self.forward_responses(headers, body, streaming).await;
+            }
+        }
+
         let base = self.openai_base_url.as_deref().ok_or_else(|| {
             ProxyError::BadRequest(format!("provider '{}' has no OpenAI endpoint", self.name))
         })?;
-        // OpenAI-compatible endpoints authenticate with Authorization: Bearer;
-        // convert ApiKey → Bearer as the individual providers do today.
-        let auth = match &self.auth {
-            AuthHeader::ApiKey(v) => AuthHeader::Bearer(v.clone()),
-            other => other.clone(),
-        };
+        let auth = self.auth_for_openai();
         let body = self.apply_openai_request_quirks(body);
         let resp = messages_protocol::forward(
             &self.http,

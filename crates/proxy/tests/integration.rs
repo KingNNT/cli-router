@@ -940,3 +940,226 @@ async fn routing_falls_back_on_5xx_to_next_provider() {
     assert_eq!(primary.received_requests().await.unwrap().len(), 1);
     assert_eq!(fallback.received_requests().await.unwrap().len(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// OpenCode Go: per-model Responses routing
+// ---------------------------------------------------------------------------
+
+/// Build the OpenCode Go leaf: both bases on the mock server, `grok-4.5`
+/// pinned to the Responses wire format.
+fn opencode_go_leaf(server: &MockServer) -> UpstreamProvider {
+    use proxy::adapters::providers::model_formats::ModelFormatTable;
+
+    UpstreamProvider::new(
+        "go".to_string(),
+        Some(format!("{}/zen/go", server.uri())),
+        Some(format!("{}/zen/go/v1", server.uri())),
+        AuthHeader::ApiKey("secret".to_string()),
+        Quirks::none(),
+        reqwest::Client::new(),
+    )
+    .with_model_formats(ModelFormatTable::parse("grok-4.5=responses").unwrap())
+}
+
+#[tokio::test]
+async fn opencode_go_routes_a_responses_model_to_the_responses_endpoint() {
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use proxy::application::ports::UpstreamResponse;
+
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "resp_1",
+            "model": "grok-4.5",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "hello"}]
+            }],
+            "usage": {"input_tokens": 3, "output_tokens": 2}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = opencode_go_leaf(&server);
+
+    let body = Bytes::from(
+        r#"{"model":"grok-4.5","stream":false,"messages":[{"role":"user","content":"hi"}]}"#,
+    );
+    let resp = provider
+        .forward_openai("/chat/completions", &HeaderMap::new(), body, false)
+        .await
+        .unwrap();
+
+    let UpstreamResponse::Buffered { status, body, .. } = resp else {
+        panic!("expected a buffered response");
+    };
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["object"], "chat.completion");
+    assert_eq!(v["choices"][0]["message"]["content"], "hello");
+}
+
+#[tokio::test]
+async fn opencode_go_routes_an_unruled_model_to_chat_completions() {
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use proxy::application::ports::UpstreamResponse;
+
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl_1",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "hi"},
+                "finish_reason": "stop"
+            }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = opencode_go_leaf(&server);
+
+    let body = Bytes::from(
+        r#"{"model":"kimi-k3","stream":false,"messages":[{"role":"user","content":"hi"}]}"#,
+    );
+    let resp = provider
+        .forward_openai("/chat/completions", &HeaderMap::new(), body, false)
+        .await
+        .unwrap();
+
+    let UpstreamResponse::Buffered { status, body, .. } = resp else {
+        panic!("expected a buffered response");
+    };
+    assert_eq!(status, 200);
+    // Untranslated passthrough: the upstream body arrives verbatim.
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["id"], "chatcmpl_1");
+    // `expect(1)` on the mock asserts /chat/completions was the endpoint hit.
+}
+
+#[tokio::test]
+async fn anthropic_client_reaches_a_responses_model() {
+    // Both hops compose: routing translates A→O, the provider then
+    // translates O→Responses.
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use proxy::adapters::providers::RoutingProvider;
+    use proxy::application::ports::UpstreamResponse;
+
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "resp_2",
+            "model": "grok-4.5",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "hello"}]
+            }],
+            "usage": {"input_tokens": 3, "output_tokens": 2}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let leaf: Arc<dyn Provider> = Arc::new(opencode_go_leaf(&server));
+    let router = RoutingProvider::builder()
+        .rule(
+            "*",
+            proxy::config::RoutingStrategy::Failover,
+            leaf,
+            Vec::new(),
+        )
+        .unwrap()
+        .build();
+
+    let body = Bytes::from(
+        r#"{"model":"grok-4.5","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}"#,
+    );
+    let resp = router
+        .forward("/v1/messages", &HeaderMap::new(), body, false)
+        .await
+        .unwrap();
+
+    let UpstreamResponse::Buffered { status, body, .. } = resp else {
+        panic!("expected a buffered response");
+    };
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    // Back in Anthropic shape for the client.
+    assert_eq!(v["type"], "message");
+    assert_eq!(v["content"][0]["text"], "hello");
+}
+
+/// The streaming half of the same branch: the Responses SSE stream is wrapped
+/// in the translator, so clients (and the usage parser) see
+/// `chat.completion.chunk` events.
+#[tokio::test]
+async fn opencode_go_streams_a_responses_model_as_chat_completion_chunks() {
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use futures::StreamExt;
+    use proxy::application::ports::UpstreamResponse;
+
+    let sse = concat!(
+        "event: response.output_text.delta\n",
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+        "event: response.completed\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"model\":\"grok-4.5\",",
+        "\"usage\":{\"input_tokens\":3,\"output_tokens\":2,\"total_tokens\":5}}}\n\n",
+    );
+
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(sse),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = opencode_go_leaf(&server);
+
+    let body = Bytes::from(
+        r#"{"model":"grok-4.5","stream":true,"messages":[{"role":"user","content":"hi"}]}"#,
+    );
+    let resp = provider
+        .forward_openai("/chat/completions", &HeaderMap::new(), body, true)
+        .await
+        .unwrap();
+
+    let UpstreamResponse::Streaming { status, body, .. } = resp else {
+        panic!("expected a streaming response");
+    };
+    assert_eq!(status, 200);
+
+    let mut stream = body;
+    let mut collected = String::new();
+    while let Some(chunk) = stream.next().await {
+        collected.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
+    }
+    assert!(
+        collected.contains("chat.completion.chunk"),
+        "usage parsing depends on chat.completion.chunk events, got: {collected}"
+    );
+    assert!(
+        collected.contains("\"content\":\"hello\""),
+        "text delta should reach the client, got: {collected}"
+    );
+    assert!(
+        collected.contains("\"prompt_tokens\":3"),
+        "usage should reach the client, got: {collected}"
+    );
+}

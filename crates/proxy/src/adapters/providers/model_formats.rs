@@ -28,6 +28,13 @@ impl ModelFormatTable {
         Ok(Self { rules: compiled })
     }
 
+    /// `true` when no rule was configured. Lets the forward path skip parsing
+    /// the request body for a model it would have no opinion about — the case
+    /// for every provider that isn't OpenCode Go.
+    pub fn is_empty(&self) -> bool {
+        self.rules.is_empty()
+    }
+
     /// First matching rule wins. `None` means "no opinion" — the caller falls
     /// back to the provider's URL-derived capability.
     pub fn resolve(&self, model: &str) -> Option<WireFormat> {
@@ -59,6 +66,18 @@ mod tests {
     #[test]
     fn empty_table_never_matches() {
         assert_eq!(ModelFormatTable::empty().resolve("anything"), None);
+    }
+
+    /// The forward path uses this to skip parsing the body for providers that
+    /// configured no rules at all.
+    #[test]
+    fn is_empty_distinguishes_a_rule_less_table() {
+        assert!(ModelFormatTable::empty().is_empty());
+        assert!(
+            !ModelFormatTable::parse("grok-4.5=responses")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
