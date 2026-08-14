@@ -73,7 +73,8 @@ fn config(providers: Vec<ProviderConfig>, routing: Vec<RoutingRule>) -> Config {
 
 async fn forward(cfg: &Config, model: &str) -> Result<(), String> {
     let quota: Arc<dyn QuotaPort> = Arc::new(InMemoryQuota::new(vec![]));
-    let router = build_from_config(cfg, reqwest::Client::new(), quota).map_err(|e| e.to_string())?;
+    let router =
+        build_from_config(cfg, reqwest::Client::new(), quota).map_err(|e| e.to_string())?;
     let body = Bytes::from(format!(r#"{{"model":"{model}","messages":[]}}"#));
     router
         .forward("/v1/messages", &HeaderMap::new(), body, false)
