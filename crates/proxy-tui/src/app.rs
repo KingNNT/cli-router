@@ -294,6 +294,7 @@ pub enum ProviderKind {
     Codex,
     Minimax,
     Kimi,
+    OpencodeGo,
 }
 
 impl ProviderKind {
@@ -306,6 +307,7 @@ impl ProviderKind {
             ProviderKind::Codex => "codex",
             ProviderKind::Minimax => "minimax",
             ProviderKind::Kimi => "kimi",
+            ProviderKind::OpencodeGo => "opencode_go",
         }
     }
     pub fn cycle_next(self) -> Self {
@@ -316,18 +318,20 @@ impl ProviderKind {
             ProviderKind::OpenAi => ProviderKind::Codex,
             ProviderKind::Codex => ProviderKind::Minimax,
             ProviderKind::Minimax => ProviderKind::Kimi,
-            ProviderKind::Kimi => ProviderKind::Anthropic,
+            ProviderKind::Kimi => ProviderKind::OpencodeGo,
+            ProviderKind::OpencodeGo => ProviderKind::Anthropic,
         }
     }
     pub fn cycle_prev(self) -> Self {
         match self {
-            ProviderKind::Anthropic => ProviderKind::Kimi,
+            ProviderKind::Anthropic => ProviderKind::OpencodeGo,
             ProviderKind::Zai => ProviderKind::Anthropic,
             ProviderKind::DeepSeek => ProviderKind::Zai,
             ProviderKind::OpenAi => ProviderKind::DeepSeek,
             ProviderKind::Codex => ProviderKind::OpenAi,
             ProviderKind::Minimax => ProviderKind::Codex,
             ProviderKind::Kimi => ProviderKind::Minimax,
+            ProviderKind::OpencodeGo => ProviderKind::Kimi,
         }
     }
     pub fn from_str_or_default(s: &str) -> Self {
@@ -338,6 +342,7 @@ impl ProviderKind {
             "codex" => ProviderKind::Codex,
             "minimax" => ProviderKind::Minimax,
             "kimi" | "moonshot" => ProviderKind::Kimi,
+            "opencode_go" | "opencode-go" => ProviderKind::OpencodeGo,
             _ => ProviderKind::Anthropic,
         }
     }
@@ -364,6 +369,22 @@ impl ProviderKind {
                 Some("https://api.moonshot.ai/anthropic"),
                 Some("https://api.moonshot.ai/v1"),
             ),
+            ProviderKind::OpencodeGo => (
+                Some("https://opencode.ai/zen/go"),
+                Some("https://opencode.ai/zen/go/v1"),
+            ),
+        }
+    }
+
+    /// Seeded `model_formats` rules for this kind. Mirrors
+    /// `proxy::adapters::providers::upstream::preset_model_formats` (kept in
+    /// sync manually — `proxy-tui` does not depend on the `proxy` crate).
+    pub fn preset_model_formats(self) -> Option<&'static str> {
+        match self {
+            ProviderKind::OpencodeGo => Some(
+                "minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses",
+            ),
+            _ => None,
         }
     }
 }
@@ -433,6 +454,7 @@ impl ThinkingLevelInput {
             ProviderKind::DeepSeek => &[High, Max],
             ProviderKind::Kimi => &[Low, High, Max],
             ProviderKind::Minimax => &[Off, Adaptive],
+            ProviderKind::OpencodeGo => &[],
         }
     }
 
@@ -575,6 +597,7 @@ pub enum FormField {
     Kind,
     AnthropicBaseUrl,
     OpenaiBaseUrl,
+    ModelFormats,
     FormatMode,
     ThinkingLevel,
     ThinkingForce,
@@ -592,8 +615,9 @@ impl FormField {
         auth_kind: AuthInputKind,
         provider_kind: ProviderKind,
         thinking_level: ThinkingLevelInput,
+        has_model_formats: bool,
     ) -> Self {
-        let order = field_order(auth_kind, provider_kind, thinking_level);
+        let order = field_order(auth_kind, provider_kind, thinking_level, has_model_formats);
         let idx = order.iter().position(|f| *f == self).unwrap_or(0);
         order[(idx + 1) % order.len()]
     }
@@ -602,8 +626,9 @@ impl FormField {
         auth_kind: AuthInputKind,
         provider_kind: ProviderKind,
         thinking_level: ThinkingLevelInput,
+        has_model_formats: bool,
     ) -> Self {
-        let order = field_order(auth_kind, provider_kind, thinking_level);
+        let order = field_order(auth_kind, provider_kind, thinking_level, has_model_formats);
         let idx = order.iter().position(|f| *f == self).unwrap_or(0);
         order[(idx + order.len() - 1) % order.len()]
     }
@@ -611,10 +636,12 @@ impl FormField {
 
 /// Field traversal order. AuthValue is omitted when the auth kind doesn't
 /// need a typed value. ThinkingForce is offered only once a level is set.
+/// ModelFormats mirrors what `ui::render` draws — see the comment there.
 fn field_order(
     auth_kind: AuthInputKind,
     provider_kind: ProviderKind,
     thinking_level: ThinkingLevelInput,
+    has_model_formats: bool,
 ) -> Vec<FormField> {
     let mut order = vec![
         FormField::Name,
@@ -622,6 +649,9 @@ fn field_order(
         FormField::AnthropicBaseUrl,
         FormField::OpenaiBaseUrl,
     ];
+    if provider_kind == ProviderKind::OpencodeGo || has_model_formats {
+        order.push(FormField::ModelFormats);
+    }
     // Codex is bespoke (always the OpenAI Responses API), so a format policy
     // would be inert there.
     if provider_kind != ProviderKind::Codex {
@@ -676,6 +706,7 @@ pub struct ProviderFormModal {
     pub kind: ProviderKind,
     pub anthropic_base_url: String,
     pub openai_base_url: String,
+    pub model_formats: String,
     pub format_mode: FormatModeInput,
     pub thinking_level: ThinkingLevelInput,
     pub thinking_force: bool,
@@ -703,6 +734,7 @@ impl ProviderFormModal {
             kind: ProviderKind::Anthropic,
             anthropic_base_url: String::new(),
             openai_base_url: String::new(),
+            model_formats: String::new(),
             format_mode: FormatModeInput::Both,
             thinking_level: ThinkingLevelInput::Unset,
             thinking_force: false,
@@ -733,6 +765,7 @@ impl ProviderFormModal {
             kind: ProviderKind::from_str_or_default(&p.kind),
             anthropic_base_url: p.anthropic_base_url.clone().unwrap_or_default(),
             openai_base_url: p.openai_base_url.clone().unwrap_or_default(),
+            model_formats: p.model_formats.clone().unwrap_or_default(),
             thinking_level: ThinkingLevelInput::from_option(p.thinking_level.as_deref()),
             thinking_force: p.thinking_force.unwrap_or(false),
             format_mode: FormatModeInput::from_option(p.format_mode.as_deref()),
@@ -1116,7 +1149,8 @@ mod form_field_tests {
             f.next(
                 AuthInputKind::ApiKey,
                 ProviderKind::Anthropic,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::Name
         );
@@ -1129,7 +1163,8 @@ mod form_field_tests {
             f.prev(
                 AuthInputKind::ApiKey,
                 ProviderKind::Anthropic,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::Save
         );
@@ -1142,7 +1177,8 @@ mod form_field_tests {
             f.next(
                 AuthInputKind::Passthrough,
                 ProviderKind::Anthropic,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::Enabled
         );
@@ -1154,6 +1190,7 @@ mod form_field_tests {
             AuthInputKind::Passthrough,
             ProviderKind::Anthropic,
             ThinkingLevelInput::Unset,
+            false,
         );
         assert!(order.contains(&FormField::Enabled));
         assert_eq!(order.last().copied(), Some(FormField::Save));
@@ -1166,7 +1203,8 @@ mod form_field_tests {
             f.next(
                 AuthInputKind::ApiKey,
                 ProviderKind::Anthropic,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::AuthValue
         );
@@ -1179,7 +1217,8 @@ mod form_field_tests {
             f.next(
                 AuthInputKind::Passthrough,
                 ProviderKind::Codex,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::ThinkingLevel
         );
@@ -1192,7 +1231,8 @@ mod form_field_tests {
             f.next(
                 AuthInputKind::Passthrough,
                 ProviderKind::Minimax,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::FormatMode
         );
@@ -1200,9 +1240,54 @@ mod form_field_tests {
             f.next(
                 AuthInputKind::Passthrough,
                 ProviderKind::Codex,
-                ThinkingLevelInput::Unset
+                ThinkingLevelInput::Unset,
+                false
             ),
             FormField::ThinkingLevel
+        );
+    }
+
+    /// `validate_provider_form` saves `model_formats` for every kind (the docs
+    /// say the field is valid on all of them), so the row must follow the
+    /// value, not just the kind — otherwise a string typed on `opencode_go`
+    /// and then carried through a kind change stays live at runtime while
+    /// being invisible and uneditable.
+    #[test]
+    fn model_formats_field_follows_the_kind_or_an_existing_value() {
+        // OpenCode Go: offered even when empty, so it can be typed in.
+        let order = field_order(
+            AuthInputKind::ApiKey,
+            ProviderKind::OpencodeGo,
+            ThinkingLevelInput::Unset,
+            false,
+        );
+        assert!(order.contains(&FormField::ModelFormats));
+
+        // Another kind with nothing set: kept off the form, which stays short.
+        let order = field_order(
+            AuthInputKind::ApiKey,
+            ProviderKind::Anthropic,
+            ThinkingLevelInput::Unset,
+            false,
+        );
+        assert!(!order.contains(&FormField::ModelFormats));
+
+        // Another kind with a value set: visible so it can be seen and cleared.
+        let order = field_order(
+            AuthInputKind::ApiKey,
+            ProviderKind::Anthropic,
+            ThinkingLevelInput::Unset,
+            true,
+        );
+        assert!(order.contains(&FormField::ModelFormats));
+        assert_eq!(
+            FormField::OpenaiBaseUrl.next(
+                AuthInputKind::ApiKey,
+                ProviderKind::Anthropic,
+                ThinkingLevelInput::Unset,
+                true
+            ),
+            FormField::ModelFormats
         );
     }
 
@@ -1273,6 +1358,7 @@ mod form_field_tests {
             AuthInputKind::Bearer,
             ProviderKind::DeepSeek,
             ThinkingLevelInput::Unset,
+            false,
         );
         assert!(!order.contains(&FormField::ThinkingForce));
 
@@ -1280,6 +1366,7 @@ mod form_field_tests {
             AuthInputKind::Bearer,
             ProviderKind::DeepSeek,
             ThinkingLevelInput::High,
+            false,
         );
         assert!(order.contains(&FormField::ThinkingForce));
     }
@@ -1361,6 +1448,7 @@ mod form_field_tests {
             AuthInputKind::Passthrough,
             ProviderKind::Minimax,
             ThinkingLevelInput::Unset,
+            false,
         );
         assert!(order.contains(&FormField::ThinkingMode));
         assert!(order.contains(&FormField::ThinkingLevel));
@@ -1413,9 +1501,17 @@ mod form_field_tests {
         assert_eq!(ProviderKind::OpenAi.cycle_next(), ProviderKind::Codex);
         assert_eq!(ProviderKind::Codex.cycle_next(), ProviderKind::Minimax);
         assert_eq!(ProviderKind::Minimax.cycle_next(), ProviderKind::Kimi);
-        assert_eq!(ProviderKind::Kimi.cycle_next(), ProviderKind::Anthropic);
+        assert_eq!(ProviderKind::Kimi.cycle_next(), ProviderKind::OpencodeGo);
+        assert_eq!(
+            ProviderKind::OpencodeGo.cycle_next(),
+            ProviderKind::Anthropic
+        );
         // prev direction
-        assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::Kimi);
+        assert_eq!(
+            ProviderKind::Anthropic.cycle_prev(),
+            ProviderKind::OpencodeGo
+        );
+        assert_eq!(ProviderKind::OpencodeGo.cycle_prev(), ProviderKind::Kimi);
         assert_eq!(ProviderKind::Kimi.cycle_prev(), ProviderKind::Minimax);
         assert_eq!(ProviderKind::Minimax.cycle_prev(), ProviderKind::Codex);
         assert_eq!(ProviderKind::Codex.cycle_prev(), ProviderKind::OpenAi);
@@ -1431,6 +1527,7 @@ mod form_field_tests {
             AuthInputKind::Passthrough,
             ProviderKind::Kimi,
             ThinkingLevelInput::Unset,
+            false,
         );
         assert!(order.contains(&FormField::SanitizeEmptyTools));
     }
@@ -1442,6 +1539,7 @@ mod form_field_tests {
             AuthInputKind::Passthrough,
             ProviderKind::Zai,
             ThinkingLevelInput::Unset,
+            false,
         );
         assert!(!order.contains(&FormField::SanitizeEmptyTools));
     }
@@ -1449,14 +1547,75 @@ mod form_field_tests {
     #[test]
     fn cycle_includes_kimi() {
         assert_eq!(ProviderKind::Minimax.cycle_next(), ProviderKind::Kimi);
-        assert_eq!(ProviderKind::Kimi.cycle_next(), ProviderKind::Anthropic);
-        assert_eq!(ProviderKind::Anthropic.cycle_prev(), ProviderKind::Kimi);
+        assert_eq!(ProviderKind::Kimi.cycle_next(), ProviderKind::OpencodeGo);
+        assert_eq!(ProviderKind::OpencodeGo.cycle_prev(), ProviderKind::Kimi);
         assert_eq!(ProviderKind::Kimi.cycle_prev(), ProviderKind::Minimax);
         assert_eq!(
             ProviderKind::from_str_or_default("kimi"),
             ProviderKind::Kimi
         );
         assert_eq!(ProviderKind::Kimi.label(), "kimi");
+    }
+
+    #[test]
+    fn cycle_includes_opencode_go() {
+        assert_eq!(ProviderKind::Kimi.cycle_next(), ProviderKind::OpencodeGo);
+        assert_eq!(
+            ProviderKind::OpencodeGo.cycle_next(),
+            ProviderKind::Anthropic
+        );
+        assert_eq!(
+            ProviderKind::Anthropic.cycle_prev(),
+            ProviderKind::OpencodeGo
+        );
+        assert_eq!(ProviderKind::OpencodeGo.cycle_prev(), ProviderKind::Kimi);
+        assert_eq!(
+            ProviderKind::from_str_or_default("opencode_go"),
+            ProviderKind::OpencodeGo
+        );
+        assert_eq!(
+            ProviderKind::from_str_or_default("opencode-go"),
+            ProviderKind::OpencodeGo
+        );
+        assert_eq!(ProviderKind::OpencodeGo.label(), "opencode_go");
+        assert_eq!(
+            ProviderKind::OpencodeGo.default_urls(),
+            (
+                Some("https://opencode.ai/zen/go"),
+                Some("https://opencode.ai/zen/go/v1")
+            )
+        );
+        assert_eq!(
+            ProviderKind::OpencodeGo.preset_model_formats(),
+            Some("minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses")
+        );
+        assert_eq!(ProviderKind::Zai.preset_model_formats(), None);
+    }
+
+    #[test]
+    fn from_provider_loads_stored_model_formats() {
+        let payload = ProviderPayload {
+            name: "go".into(),
+            kind: "opencode_go".into(),
+            enabled: true,
+            auth: AuthPayload::Passthrough,
+            anthropic_base_url: None,
+            openai_base_url: None,
+            thinking_mode: None,
+            thinking_level: None,
+            thinking_force: None,
+            format_mode: None,
+            max_concurrent: None,
+            sanitize_empty_tools: None,
+            model_formats: Some("glm-*=openai".into()),
+        };
+        let modal = ProviderFormModal::from_provider(0, &payload);
+        assert_eq!(modal.model_formats, "glm-*=openai");
+    }
+
+    #[test]
+    fn new_for_add_starts_with_empty_model_formats() {
+        assert_eq!(ProviderFormModal::new_for_add().model_formats, "");
     }
 }
 

@@ -7,6 +7,7 @@ pub mod codex;
 pub mod live;
 mod messages_protocol;
 pub mod minimax_stream;
+pub mod model_formats;
 pub mod routing;
 pub mod thinking;
 pub mod token_refresh;

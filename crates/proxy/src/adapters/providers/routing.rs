@@ -317,8 +317,10 @@ impl Provider for RoutingProvider {
             let rewritten =
                 rewrite_model_in_body(&body, bare_model).map_err(ProxyError::BadRequest)?;
             let rewritten_body = Bytes::from(rewritten);
-            let (direction, upstream_format) =
-                Self::select_direction(ApiFormat::Anthropic, provider.supported_formats());
+            let (direction, upstream_format) = Self::select_direction(
+                ApiFormat::Anthropic,
+                provider.supported_formats_for(bare_model),
+            );
             let native_path = Self::translate_path(path, direction);
             tracing::debug!(
                 target: "routing",
@@ -359,12 +361,21 @@ impl Provider for RoutingProvider {
 
         match route.strategy {
             RoutingStrategy::Failover => {
-                self.forward_failover(route, path, headers, body, streaming, ApiFormat::Anthropic)
-                    .await
+                self.forward_failover(
+                    route,
+                    &model,
+                    path,
+                    headers,
+                    body,
+                    streaming,
+                    ApiFormat::Anthropic,
+                )
+                .await
             }
             RoutingStrategy::RoundRobin => {
                 self.forward_round_robin(
                     route,
+                    &model,
                     path,
                     headers,
                     body,
@@ -391,8 +402,10 @@ impl Provider for RoutingProvider {
             let rewritten =
                 rewrite_model_in_body(&body, bare_model).map_err(ProxyError::BadRequest)?;
             let rewritten_body = Bytes::from(rewritten);
-            let (direction, upstream_format) =
-                Self::select_direction(ApiFormat::OpenAI, provider.supported_formats());
+            let (direction, upstream_format) = Self::select_direction(
+                ApiFormat::OpenAI,
+                provider.supported_formats_for(bare_model),
+            );
             let native_path = Self::translate_path(path, direction);
             tracing::debug!(
                 target: "routing",
@@ -432,11 +445,11 @@ impl Provider for RoutingProvider {
 
         match route.strategy {
             RoutingStrategy::Failover => {
-                self.forward_failover_openai(route, path, headers, body, streaming)
+                self.forward_failover_openai(route, &model, path, headers, body, streaming)
                     .await
             }
             RoutingStrategy::RoundRobin => {
-                self.forward_round_robin_openai(route, path, headers, body, streaming)
+                self.forward_round_robin_openai(route, &model, path, headers, body, streaming)
                     .await
             }
         }
@@ -648,9 +661,13 @@ impl RoutingProvider {
 
     /// Failover: try pool[0] first, then pool[1..] on 5xx/error.
     /// `client_format` is the API format the client used (Anthropic or OpenAI).
+    /// `model` is the model going upstream — leaves may serve it in a narrower
+    /// set of formats than they advertise overall.
+    #[allow(clippy::too_many_arguments)]
     async fn forward_failover(
         &self,
         route: &Route,
+        model: &str,
         path: &str,
         headers: &HeaderMap,
         body: Bytes,
@@ -690,7 +707,7 @@ impl RoutingProvider {
             };
 
             let (direction, upstream_format) =
-                Self::select_direction(client_format, entry.provider.supported_formats());
+                Self::select_direction(client_format, entry.provider.supported_formats_for(model));
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
 
@@ -775,9 +792,12 @@ impl RoutingProvider {
     /// Round-robin: rotate across pool, skip cooling-down providers,
     /// set cooldown on 429/5xx.
     /// `client_format` is the API format the client used (Anthropic or OpenAI).
+    /// `model` is the model going upstream — see [`Self::forward_failover`].
+    #[allow(clippy::too_many_arguments)]
     async fn forward_round_robin(
         &self,
         route: &Route,
+        model: &str,
         path: &str,
         headers: &HeaderMap,
         body: Bytes,
@@ -822,7 +842,7 @@ impl RoutingProvider {
             };
 
             let (direction, upstream_format) =
-                Self::select_direction(client_format, entry.provider.supported_formats());
+                Self::select_direction(client_format, entry.provider.supported_formats_for(model));
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
 
@@ -911,6 +931,7 @@ impl RoutingProvider {
     async fn forward_failover_openai(
         &self,
         route: &Route,
+        model: &str,
         path: &str,
         headers: &HeaderMap,
         body: Bytes,
@@ -948,8 +969,10 @@ impl RoutingProvider {
                 }
             };
 
-            let (direction, upstream_format) =
-                Self::select_direction(ApiFormat::OpenAI, entry.provider.supported_formats());
+            let (direction, upstream_format) = Self::select_direction(
+                ApiFormat::OpenAI,
+                entry.provider.supported_formats_for(model),
+            );
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
 
@@ -1032,6 +1055,7 @@ impl RoutingProvider {
     async fn forward_round_robin_openai(
         &self,
         route: &Route,
+        model: &str,
         path: &str,
         headers: &HeaderMap,
         body: Bytes,
@@ -1073,8 +1097,10 @@ impl RoutingProvider {
                 }
             };
 
-            let (direction, upstream_format) =
-                Self::select_direction(ApiFormat::OpenAI, entry.provider.supported_formats());
+            let (direction, upstream_format) = Self::select_direction(
+                ApiFormat::OpenAI,
+                entry.provider.supported_formats_for(model),
+            );
             let native_path = Self::translate_path(path, direction);
             let send_body = Self::translate_request(&body, direction)?;
 
@@ -1406,6 +1432,199 @@ mod tests {
             }
             _other => panic!("expected BadRequest, got success response"),
         }
+    }
+
+    /// Leaf that records which forward method the router entered, and can
+    /// declare one model as Anthropic-only — the OpenCode Go shape.
+    struct RecordingProvider {
+        formats: FormatSupport,
+        anthropic_only_model: Option<String>,
+        openai_only_model: Option<String>,
+        calls: Arc<std::sync::Mutex<Vec<&'static str>>>,
+    }
+
+    impl RecordingProvider {
+        fn with_anthropic_only_model(mut self, model: &str) -> Self {
+            self.anthropic_only_model = Some(model.to_string());
+            self
+        }
+
+        /// The `responses` shape: routing sees OpenAI-only.
+        fn with_openai_only_model(mut self, model: &str) -> Self {
+            self.openai_only_model = Some(model.to_string());
+            self
+        }
+
+        fn calls(&self) -> Arc<std::sync::Mutex<Vec<&'static str>>> {
+            Arc::clone(&self.calls)
+        }
+    }
+
+    #[async_trait]
+    impl Provider for RecordingProvider {
+        fn name(&self) -> &str {
+            "recorder"
+        }
+        fn supported_formats(&self) -> FormatSupport {
+            self.formats
+        }
+        fn supported_formats_for(&self, model: &str) -> FormatSupport {
+            if self.anthropic_only_model.as_deref() == Some(model) {
+                return FormatSupport {
+                    anthropic: true,
+                    openai: false,
+                };
+            }
+            if self.openai_only_model.as_deref() == Some(model) {
+                return FormatSupport {
+                    anthropic: false,
+                    openai: true,
+                };
+            }
+            self.supported_formats()
+        }
+        fn parse_model(&self, body: &[u8]) -> Result<String, String> {
+            messages_protocol::parse_model(body)
+        }
+        fn usage_parser(&self) -> Box<dyn UsageParser> {
+            messages_protocol::usage_parser()
+        }
+        fn parse_usage_json(&self, body: &[u8]) -> Result<UsageRecord, String> {
+            messages_protocol::parse_usage_json(body)
+        }
+        async fn forward(
+            &self,
+            _path: &str,
+            _headers: &HeaderMap,
+            _body: Bytes,
+            _streaming: bool,
+        ) -> Result<UpstreamResponse, ProxyError> {
+            self.calls.lock().unwrap().push("forward");
+            Ok(UpstreamResponse::Buffered {
+                status: 200,
+                headers: HeaderMap::new(),
+                body: Bytes::from_static(
+                    br#"{"id":"msg_1","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"#,
+                ),
+                provider_id: "recorder".to_string(),
+                translation_direction: None,
+            })
+        }
+        async fn forward_openai(
+            &self,
+            _path: &str,
+            _headers: &HeaderMap,
+            _body: Bytes,
+            _streaming: bool,
+        ) -> Result<UpstreamResponse, ProxyError> {
+            self.calls.lock().unwrap().push("forward_openai");
+            Ok(UpstreamResponse::Buffered {
+                status: 200,
+                headers: HeaderMap::new(),
+                body: Bytes::from_static(
+                    br#"{"id":"c1","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#,
+                ),
+                provider_id: "recorder".to_string(),
+                translation_direction: None,
+            })
+        }
+    }
+
+    fn fake_provider_supporting_both() -> RecordingProvider {
+        RecordingProvider {
+            formats: FormatSupport::both(),
+            anthropic_only_model: None,
+            openai_only_model: None,
+            calls: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    fn router_with_single_rule(pattern: &str, leaf: RecordingProvider) -> RoutingProvider {
+        RoutingProvider::builder()
+            .rule(pattern, RoutingStrategy::Failover, Arc::new(leaf), vec![])
+            .unwrap()
+            .build()
+    }
+
+    /// Register the leaf under a namespace so `provider/model` resolves to it.
+    fn router_with_namespaced_leaf(namespace: &str, leaf: RecordingProvider) -> RoutingProvider {
+        let mut leaves: std::collections::HashMap<String, Arc<dyn Provider>> =
+            std::collections::HashMap::new();
+        leaves.insert(namespace.to_string(), Arc::new(leaf));
+        RoutingProvider::builder()
+            .rule("*", RoutingStrategy::Failover, dummy(), vec![])
+            .unwrap()
+            .leaves(leaves)
+            .build()
+    }
+
+    #[tokio::test]
+    async fn openai_client_asking_for_an_anthropic_only_model_is_translated() {
+        // The provider serves both formats in general, but qwen3.7-max only on
+        // its Anthropic endpoint — the OpenCode Go shape.
+        let leaf = fake_provider_supporting_both().with_anthropic_only_model("qwen3.7-max");
+        let calls = leaf.calls();
+        let router = router_with_single_rule("*", leaf);
+
+        let body = Bytes::from(r#"{"model":"qwen3.7-max","messages":[]}"#);
+        router
+            .forward_openai("/chat/completions", &HeaderMap::new(), body, false)
+            .await
+            .unwrap();
+
+        // Translated: the leaf was entered through the Anthropic method.
+        assert_eq!(calls.lock().unwrap().as_slice(), &["forward"]);
+    }
+
+    #[tokio::test]
+    async fn openai_client_asking_for_an_unruled_model_still_passes_through() {
+        let leaf = fake_provider_supporting_both();
+        let calls = leaf.calls();
+        let router = router_with_single_rule("*", leaf);
+
+        let body = Bytes::from(r#"{"model":"kimi-k3","messages":[]}"#);
+        router
+            .forward_openai("/chat/completions", &HeaderMap::new(), body, false)
+            .await
+            .unwrap();
+
+        assert_eq!(calls.lock().unwrap().as_slice(), &["forward_openai"]);
+    }
+
+    /// Namespace path, OpenAI client. The rule must be looked up with the
+    /// **bare** model — `go/qwen3.7-max` matches nothing, so passing the
+    /// namespaced string would leave the request untranslated.
+    #[tokio::test]
+    async fn namespaced_openai_client_looks_the_rule_up_by_bare_model() {
+        let leaf = fake_provider_supporting_both().with_anthropic_only_model("qwen3.7-max");
+        let calls = leaf.calls();
+        let router = router_with_namespaced_leaf("go", leaf);
+
+        let body = Bytes::from(r#"{"model":"go/qwen3.7-max","messages":[]}"#);
+        router
+            .forward_openai("/chat/completions", &HeaderMap::new(), body, false)
+            .await
+            .unwrap();
+
+        assert_eq!(calls.lock().unwrap().as_slice(), &["forward"]);
+    }
+
+    /// Namespace path, Anthropic client — the mirror of the test above, with
+    /// an OpenAI-only (i.e. `responses`) model so a namespaced lookup would
+    /// fall back to "both" and pass through to `forward` instead.
+    #[tokio::test]
+    async fn namespaced_anthropic_client_looks_the_rule_up_by_bare_model() {
+        let leaf = fake_provider_supporting_both().with_openai_only_model("grok-4.5");
+        let calls = leaf.calls();
+        let router = router_with_namespaced_leaf("go", leaf);
+
+        let body = Bytes::from(r#"{"model":"go/grok-4.5","messages":[]}"#);
+        router
+            .forward("/v1/messages", &HeaderMap::new(), body, false)
+            .await
+            .unwrap();
+
+        assert_eq!(calls.lock().unwrap().as_slice(), &["forward_openai"]);
     }
 
     #[test]

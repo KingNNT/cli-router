@@ -65,6 +65,12 @@ impl Provider for LiveProvider {
         self.current().supported_formats()
     }
 
+    /// Delegated like every other method: inheriting the port default would
+    /// silently drop per-model rules if this ever wrapped a leaf directly.
+    fn supported_formats_for(&self, model: &str) -> FormatSupport {
+        self.current().supported_formats_for(model)
+    }
+
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {
         self.current().parse_model(body)
     }

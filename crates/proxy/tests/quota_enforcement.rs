@@ -150,6 +150,7 @@ fn hot_reload_preserves_quota_enforcement() {
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
+            model_formats: None,
         }],
         routing: vec![RoutingRule {
             match_spec: MatchSpec {

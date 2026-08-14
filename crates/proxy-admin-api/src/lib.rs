@@ -142,6 +142,10 @@ pub struct ProviderPayload {
     pub max_concurrent: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sanitize_empty_tools: Option<bool>,
+    /// Per-model wire-format overrides, `glob=format` pairs joined by commas
+    /// (`format` is `anthropic`, `openai` or `responses`). First match wins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_formats: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, utoipa::ToSchema)]
@@ -603,6 +607,7 @@ mod config_payload_tests {
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
+                model_formats: None,
             }],
             routing: vec![],
             quota: vec![QuotaPayload {

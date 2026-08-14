@@ -5,18 +5,19 @@
 //! and translates responses (both streaming and buffered) back.
 
 use super::messages_protocol::{self, AuthHeader, HOP_BY_HOP};
+use crate::adapters::translation::openai_to_responses::{
+    ResponsesDialect, ResponsesSseTranslator, translate_request,
+};
 use crate::application::errors::ProxyError;
 use crate::application::ports::{
-    ApiFormat, FormatSupport, Provider, UpstreamResponse, UsageParser,
+    ApiFormat, BoxedByteStream, FormatSupport, Provider, UpstreamResponse, UsageParser,
 };
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
 use axum::http::HeaderMap;
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures::StreamExt;
 use serde_json::{Value, json};
-use std::pin::Pin;
-use std::task::{Context, Poll};
 
 const DEFAULT_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 
@@ -141,9 +142,10 @@ impl Provider for CodexProvider {
             .map_err(|e| ProxyError::BadRequest(format!("invalid JSON body: {e}")))?;
 
         // Translate to Responses API payload (always sets stream:true)
-        let responses_body = translate_request(&chat_body).map_err(|e| {
-            ProxyError::BadRequest(format!("codex request translation failed: {e}"))
-        })?;
+        let responses_body =
+            translate_request(&chat_body, &ResponsesDialect::codex()).map_err(|e| {
+                ProxyError::BadRequest(format!("codex request translation failed: {e}"))
+            })?;
 
         let url = format!("{}/responses", self.base_url.trim_end_matches('/'));
         let serialized = serde_json::to_vec(&responses_body).map_err(|e| {
@@ -366,718 +368,13 @@ impl Provider for CodexProvider {
 }
 
 // ---------------------------------------------------------------------------
-// Request translation: Chat Completions → Responses API
-// ---------------------------------------------------------------------------
-
-/// Translate a single Chat Completions tool definition to Responses API format.
-///
-/// Chat Completions: `{"type":"function","function":{"name":"...","description":"...","parameters":{...}}}`
-/// Responses API:    `{"type":"function","name":"...","description":"...","parameters":{...}}`
-fn translate_tool(tool: &Value) -> Value {
-    let tool_type = tool
-        .get("type")
-        .and_then(|t| t.as_str())
-        .unwrap_or("function");
-
-    match tool_type {
-        "function" => {
-            // Unwrap the nested "function" envelope.
-            let func = tool.get("function").cloned().unwrap_or_default();
-            let name = func.get("name").and_then(|n| n.as_str()).unwrap_or("");
-            let description = func
-                .get("description")
-                .and_then(|d| d.as_str())
-                .unwrap_or("");
-            let parameters = func.get("parameters").cloned().unwrap_or(json!({}));
-
-            // Use explicit `strict` if the client set it AND it is true.
-            // When strict is true, the Responses API validates that tool-call
-            // arguments match the schema exactly.  This only works when the
-            // schema is the ORIGINAL schema — not after we've sanitised it
-            // (stripping keywords, collapsing additionalProperties, etc.).
-            //
-            // When translating from Anthropic format, the schema has been
-            // through strip_schema_keywords() which may have changed it
-            // significantly (e.g. collapsing additionalProperties objects to
-            // false, stripping propertyNames, synthesising required arrays).
-            // In that case strict mode will REJECT the call because Codex
-            // can't produce arguments matching a schema it never saw the
-            // original form of.
-            //
-            // Rule: only enable strict when the client explicitly set it to
-            // true (i.e. the schema is untouched, coming from a native OpenAI
-            // client like OpenCode).  Never auto-detect after translation.
-            let strict = func
-                .get("strict")
-                .and_then(|s| s.as_bool())
-                .unwrap_or(false);
-
-            json!({
-                "type": "function",
-                "name": name,
-                "description": description,
-                "parameters": parameters,
-                "strict": strict,
-            })
-        }
-        _ => tool.clone(), // Pass through unknown tool types unchanged.
-    }
-}
-
-fn text_content_to_string(content: Option<&Value>) -> String {
-    let Some(content) = content else {
-        return String::new();
-    };
-
-    if let Some(text) = content.as_str() {
-        return text.to_string();
-    }
-
-    if let Some(parts) = content.as_array() {
-        return parts
-            .iter()
-            .filter_map(|part| {
-                let part_type = part.get("type").and_then(|v| v.as_str());
-                if part_type == Some("text") || part_type == Some("input_text") {
-                    part.get("text").and_then(|v| v.as_str())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("");
-    }
-
-    String::new()
-}
-
-fn translate_request(chat: &Value) -> Result<Value, String> {
-    let mut out = serde_json::Map::new();
-
-    // model → passthrough
-    if let Some(model) = chat.get("model") {
-        out.insert("model".into(), model.clone());
-    }
-
-    // Extract instructions from system/developer messages
-    let mut instructions = Value::String("You are a helpful assistant.".to_string());
-    let mut input_messages = Vec::new();
-
-    if let Some(messages) = chat.get("messages").and_then(|m| m.as_array()) {
-        for msg in messages {
-            let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("user");
-
-            if role == "system" || role == "developer" {
-                let content = text_content_to_string(msg.get("content"));
-                instructions = Value::String(content);
-                continue;
-            }
-
-            if role == "tool" {
-                let output = text_content_to_string(msg.get("content"));
-                input_messages.push(json!({
-                    "type": "function_call_output",
-                    "call_id": msg
-                        .get("tool_call_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(""),
-                    "output": output
-                }));
-                continue;
-            }
-
-            if role == "assistant"
-                && let Some(tool_calls) = msg.get("tool_calls").and_then(|v| v.as_array())
-            {
-                for tool_call in tool_calls {
-                    let function = tool_call.get("function").unwrap_or(&Value::Null);
-                    input_messages.push(json!({
-                        "type": "function_call",
-                        "call_id": tool_call
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(""),
-                        "name": function
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(""),
-                        "arguments": function
-                            .get("arguments")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                    }));
-                }
-
-                let has_text_content = msg
-                    .get("content")
-                    .and_then(|c| c.as_str())
-                    .map(|s| !s.is_empty())
-                    .unwrap_or(false);
-                if !has_text_content {
-                    continue;
-                }
-            }
-
-            // Codex backend accepts plain string content for simple text messages.
-            let content = text_content_to_string(msg.get("content"));
-
-            input_messages.push(json!({
-                "type": "message",
-                "role": role,
-                "content": content
-            }));
-        }
-    }
-
-    out.insert("instructions".into(), instructions);
-    out.insert("input".into(), Value::Array(input_messages));
-
-    // NOTE: max_output_tokens is NOT sent because the Codex backend
-    // rejects it with "Unsupported parameter: max_output_tokens".
-
-    // reasoning_effort → reasoning.effort
-    if let Some(effort) = chat.get("reasoning_effort") {
-        out.insert("reasoning".into(), json!({ "effort": effort }));
-    }
-
-    // Required fields
-    out.insert("store".into(), json!(false));
-    out.insert("include".into(), json!(["reasoning.encrypted_content"]));
-
-    // Codex backend requires stream=true; always set it.
-    out.insert("stream".into(), json!(true));
-
-    // Translate tools: Chat Completions wraps in {"type":"function","function":{...}}
-    // but the Responses API expects {"type":"function","name":"...","parameters":{...}}
-    // (flat structure without the nested "function" envelope).
-    if let Some(tools) = chat.get("tools").and_then(|t| t.as_array()) {
-        let translated_tools: Vec<Value> = tools.iter().map(translate_tool).collect();
-        out.insert("tools".into(), Value::Array(translated_tools));
-    }
-    if let Some(tool_choice) = chat.get("tool_choice") {
-        out.insert("tool_choice".into(), tool_choice.clone());
-    }
-    if let Some(temperature) = chat.get("temperature") {
-        out.insert("temperature".into(), temperature.clone());
-    }
-
-    Ok(Value::Object(out))
-}
-
-// ---------------------------------------------------------------------------
-// Buffered response translation: Responses API JSON → Chat Completions JSON
-// Used by unit tests and available for future non-SSE Codex backends.
-// ---------------------------------------------------------------------------
-
-#[allow(dead_code)]
-fn translate_buffered_response(responses_body: &Value) -> Result<Value, String> {
-    // Extract output text from the response
-    let mut content = String::new();
-    let mut tool_calls = Vec::new();
-    let mut tc_index: u32 = 0;
-
-    if let Some(output) = responses_body.get("output").and_then(|o| o.as_array()) {
-        for item in output {
-            let item_type = item.get("type").and_then(|t| t.as_str()).unwrap_or("");
-            match item_type {
-                "message" => {
-                    if let Some(content_arr) = item.get("content").and_then(|c| c.as_array()) {
-                        for c in content_arr {
-                            if c.get("type").and_then(|t| t.as_str()) == Some("output_text")
-                                && let Some(text) = c.get("text").and_then(|t| t.as_str())
-                            {
-                                content.push_str(text);
-                            }
-                        }
-                    }
-                }
-                "function_call" => {
-                    if let (Some(call_id), Some(name), Some(args)) = (
-                        item.get("call_id").and_then(|c| c.as_str()),
-                        item.get("name").and_then(|n| n.as_str()),
-                        item.get("arguments").and_then(|a| a.as_str()),
-                    ) {
-                        tool_calls.push(json!({
-                            "index": tc_index,
-                            "id": call_id,
-                            "type": "function",
-                            "function": {
-                                "name": name,
-                                "arguments": args
-                            }
-                        }));
-                        tc_index += 1;
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let mut message = json!({
-        "role": "assistant",
-        "content": if content.is_empty() { Value::Null } else { Value::String(content) }
-    });
-    if !tool_calls.is_empty() {
-        message["tool_calls"] = Value::Array(tool_calls);
-    }
-
-    let finish_reason = if message
-        .get("tool_calls")
-        .is_none_or(|tc| tc.as_array().is_none_or(|a| a.is_empty()))
-    {
-        "stop"
-    } else {
-        "tool_calls"
-    };
-
-    let model = responses_body
-        .get("model")
-        .and_then(|m| m.as_str())
-        .unwrap_or("unknown");
-
-    let id = responses_body
-        .get("id")
-        .and_then(|i| i.as_str())
-        .unwrap_or("");
-
-    let mut result = json!({
-        "id": id,
-        "object": "chat.completion",
-        "model": model,
-        "choices": [{
-            "index": 0,
-            "message": message,
-            "finish_reason": finish_reason
-        }]
-    });
-
-    // Map usage: input_tokens -> prompt_tokens, output_tokens -> completion_tokens
-    if let Some(usage) = responses_body.get("usage") {
-        let input_tokens = usage
-            .get("input_tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        if input_tokens == 0 {
-            tracing::warn!(
-                target: "codex::usage",
-                usage = %usage,
-                "codex buffered response reported zero input tokens"
-            );
-        }
-        result["usage"] = json!({
-            "prompt_tokens": input_tokens,
-            "completion_tokens": usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-            "total_tokens": usage.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-        });
-    }
-
-    Ok(result)
-}
-
-// ---------------------------------------------------------------------------
-// SSE stream translator: wraps a byte stream and translates Responses API
-// SSE events into Chat Completions SSE chunks in real time.
-// ---------------------------------------------------------------------------
-
-type BoxedByteStream =
-    Pin<Box<dyn Stream<Item = Result<Bytes, Box<dyn std::error::Error + Send + Sync>>> + Send>>;
-
-use std::collections::{HashMap, VecDeque};
-
-struct ResponsesSseTranslator {
-    inner: BoxedByteStream,
-    buffer: String,
-    pending: VecDeque<String>,
-    // State captured from response.created event and injected into all chunks.
-    response_id: String,
-    model: String,
-    // Track whether the first content chunk was emitted (to inject role).
-    first_content_sent: bool,
-    // Track whether any tool-call delta was emitted. Codex can answer OpenCode
-    // requests by calling a tool without emitting text; those streams must end
-    // with finish_reason=tool_calls so AI SDK clients execute the tool instead
-    // of treating the assistant turn as silent.
-    tool_call_started: bool,
-    // Responses argument deltas are keyed by output item id, while Chat
-    // Completions chunks must use call_id. Keep the mapping from
-    // response.output_item.added/done so later argument deltas can be emitted
-    // with the correct Chat Completions tool_call id.
-    tool_call_item_to_call_id: HashMap<String, String>,
-    deferred_tool_call_id: String,
-    deferred_tool_arguments: String,
-}
-
-impl ResponsesSseTranslator {
-    fn new(inner: BoxedByteStream) -> Self {
-        Self {
-            inner,
-            buffer: String::new(),
-            pending: VecDeque::new(),
-            response_id: String::new(),
-            model: String::new(),
-            first_content_sent: false,
-            tool_call_started: false,
-            tool_call_item_to_call_id: HashMap::new(),
-            deferred_tool_call_id: String::new(),
-            deferred_tool_arguments: String::new(),
-        }
-    }
-
-    /// Build a base Chat Completions SSE chunk with the required envelope fields.
-    fn base_chunk(&self) -> Value {
-        json!({
-            "id": if self.response_id.is_empty() { "chatcmpl-codex" } else { &self.response_id },
-            "object": "chat.completion.chunk",
-            "created": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-            "model": if self.model.is_empty() { "unknown" } else { &self.model },
-        })
-    }
-
-    /// Translate a complete SSE event from the buffer into Chat Completions chunks.
-    fn translate_event(&mut self, raw_event: &str) {
-        for line in raw_event.lines() {
-            let line = line.trim();
-            if !line.starts_with("data: ") {
-                continue;
-            }
-            let data = &line[6..];
-
-            if data == "[DONE]" {
-                self.pending.push_back("data: [DONE]\n\n".to_string());
-                continue;
-            }
-
-            let event: Value = match serde_json::from_str(data) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            let event_type = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
-
-            // Debug-log every non-trivial event so silent/empty responses are
-            // visible in proxy logs without external packet capture.
-            tracing::debug!(
-                target: "codex::sse",
-                event_type = %event_type,
-                "codex upstream SSE event"
-            );
-
-            match event_type {
-                "response.created" | "response.in_progress" => {
-                    // Capture response_id and model from the initial events.
-                    if let Some(resp) = event.get("response") {
-                        if let Some(id) = resp.get("id").and_then(|v| v.as_str()) {
-                            self.response_id = id.to_string();
-                        }
-                        if let Some(m) = resp.get("model").and_then(|v| v.as_str()) {
-                            self.model = m.to_string();
-                        }
-                    }
-                }
-                // Primary text delta event (Responses API standard).
-                "response.output_text.delta" |
-                // Fallback: some Codex backends / versions use this name instead.
-                "response.text.delta" => {
-                    if let Some(delta) = event.get("delta").and_then(|d| d.as_str()) {
-                        self.emit_text_delta(delta);
-                    }
-                }
-                "response.function_call_arguments.delta" => {
-                    if let Some(args_delta) = event.get("delta").and_then(|d| d.as_str()) {
-                        let call_id = event
-                            .get("call_id")
-                            .and_then(|c| c.as_str())
-                            .map(str::to_string)
-                            .or_else(|| {
-                                event
-                                    .get("item_id")
-                                    .and_then(|i| i.as_str())
-                                    .and_then(|item_id| self.tool_call_item_to_call_id.get(item_id))
-                                    .cloned()
-                            });
-
-                        if let Some(call_id) = call_id {
-                            if !self.tool_call_started {
-                                self.deferred_tool_call_id = call_id.clone();
-                                self.deferred_tool_arguments.push_str(args_delta);
-                                continue;
-                            }
-                            self.emit_tool_call_arguments(&call_id, args_delta);
-                        }
-                    }
-                }
-                "response.output_item.added" | "response.output_item.done" => {
-                    if let Some(item) = event.get("item")
-                        && item.get("type").and_then(|t| t.as_str()) == Some("function_call")
-                    {
-                        let call_id = item
-                            .get("call_id")
-                            .or_else(|| item.get("id"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("call_codex");
-                        if let Some(item_id) = item.get("id").and_then(|v| v.as_str()) {
-                            self.tool_call_item_to_call_id
-                                .insert(item_id.to_string(), call_id.to_string());
-                        }
-
-                        if self.tool_call_started {
-                            continue;
-                        }
-
-                        let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                        if !name.is_empty() {
-                            self.emit_tool_call_start(call_id, name);
-                            if let Some(arguments) = item
-                                .get("arguments")
-                                .and_then(|v| v.as_str())
-                                .filter(|s| !s.is_empty())
-                            {
-                                self.emit_tool_call_arguments(call_id, arguments);
-                            } else if !self.deferred_tool_arguments.is_empty() {
-                                let args = std::mem::take(&mut self.deferred_tool_arguments);
-                                self.emit_tool_call_arguments(call_id, &args);
-                            }
-                        }
-                    }
-                }
-                "response.completed" => {
-                    // Also capture model from completed event in case created didn't have it.
-                    if let Some(resp) = event.get("response") {
-                        if let Some(m) = resp.get("model").and_then(|v| v.as_str()) {
-                            self.model = m.to_string();
-                        }
-
-                        // Fallback: if no text deltas were streamed, extract the
-                        // full text from the completed response's output array.
-                        // The Codex backend can return 200 OK with content only
-                        // in the completed event (no individual deltas), especially
-                        // with reasoning models like GPT-5.5.
-                        if !self.first_content_sent
-                            && let Some(output) = resp.get("output").and_then(|o| o.as_array())
-                        {
-                                let mut collected = String::new();
-                                for item in output {
-                                    let item_type = item
-                                        .get("type")
-                                        .and_then(|t| t.as_str())
-                                        .unwrap_or("");
-                                    match item_type {
-                                        "message" => {
-                                            if let Some(content) =
-                                                item.get("content").and_then(|c| c.as_array())
-                                            {
-                                                for c in content {
-                                                    if c.get("type").and_then(|t| t.as_str())
-                                                        == Some("output_text")
-                                                        && let Some(text) =
-                                                            c.get("text").and_then(|t| t.as_str())
-                                                    {
-                                                        collected.push_str(text);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        "function_call" => {
-                                            // Tool calls in completed output are handled
-                                            // by the function_call_arguments.delta path.
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                if !collected.is_empty() {
-                                    tracing::debug!(
-                                        target: "codex::sse",
-                                        len = collected.len(),
-                                        "extracted text from response.completed fallback (no deltas received)"
-                                    );
-                                    self.emit_text_delta(&collected);
-                                }
-                        }
-
-                        let mut chunk = self.base_chunk();
-                        chunk["choices"] = json!([{
-                            "index": 0,
-                            "delta": {},
-                            "finish_reason": if self.tool_call_started { "tool_calls" } else { "stop" }
-                        }]);
-                        if let Some(usage) = resp.get("usage") {
-                            let input_tokens = usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                            if input_tokens == 0 {
-                                tracing::warn!(
-                                    target: "codex::usage",
-                                    usage = %usage,
-                                    "codex completed response reported zero input tokens"
-                                );
-                            }
-                            chunk["usage"] = json!({
-                                "prompt_tokens": input_tokens,
-                                "completion_tokens": usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                                "total_tokens": usage.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-                            });
-                        }
-                        // Re-build with updated model.
-                        chunk["id"] = json!(if self.response_id.is_empty() { "chatcmpl-codex" } else { &self.response_id });
-                        chunk["model"] = json!(if self.model.is_empty() { "unknown" } else { &self.model });
-                        self.pending.push_back(format!("data: {}\n\n", chunk));
-                    } else {
-                        // No response object in completed event — emit bare stop chunk.
-                        let mut chunk = self.base_chunk();
-                        chunk["choices"] = json!([{
-                            "index": 0,
-                            "delta": {},
-                            "finish_reason": if self.tool_call_started { "tool_calls" } else { "stop" }
-                        }]);
-                        self.pending.push_back(format!("data: {}\n\n", chunk));
-                    }
-                    // The Codex backend may not always send response.done, so emit
-                    // [DONE] here as well to ensure the stream terminates properly.
-                    self.pending.push_back("data: [DONE]\n\n".to_string());
-                }
-                "response.done" => {
-                    self.pending.push_back("data: [DONE]\n\n".to_string());
-                }
-                _ => {
-                    // Skip all other event types (metadata, reasoning, etc.)
-                }
-            }
-        }
-    }
-
-    /// Emit a text content delta as a Chat Completions SSE chunk. Inserts the
-    /// standard `{"role":"assistant"}` preamble on the first call.
-    fn emit_text_delta(&mut self, delta: &str) {
-        if !self.first_content_sent {
-            let mut role_chunk = self.base_chunk();
-            role_chunk["choices"] = json!([{
-                "index": 0,
-                "delta": {"role": "assistant"},
-                "finish_reason": null
-            }]);
-            self.pending.push_back(format!("data: {}\n\n", role_chunk));
-            self.first_content_sent = true;
-        }
-        let mut chunk = self.base_chunk();
-        chunk["choices"] = json!([{
-            "index": 0,
-            "delta": {"content": delta},
-            "finish_reason": null
-        }]);
-        self.pending.push_back(format!("data: {}\n\n", chunk));
-    }
-
-    /// Emit the initial OpenAI Chat Completions tool-call delta containing the
-    /// call id, type, function name, and an empty arguments string. Later
-    /// `response.function_call_arguments.delta` events append the arguments.
-    fn emit_tool_call_start(&mut self, call_id: &str, name: &str) {
-        let mut chunk = self.base_chunk();
-        chunk["choices"] = json!([{
-            "index": 0,
-            "delta": {
-                "tool_calls": [{
-                    "index": 0,
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "arguments": ""
-                    }
-                }]
-            },
-            "finish_reason": null
-        }]);
-        self.pending.push_back(format!("data: {}\n\n", chunk));
-        self.tool_call_started = true;
-    }
-
-    fn emit_tool_call_arguments(&mut self, call_id: &str, arguments: &str) {
-        let mut chunk = self.base_chunk();
-        chunk["choices"] = json!([{
-            "index": 0,
-            "delta": {
-                "tool_calls": [{
-                    "index": 0,
-                    "id": call_id,
-                    "type": "function",
-                    "function": {
-                        "arguments": arguments
-                    }
-                }]
-            },
-            "finish_reason": null
-        }]);
-        self.pending.push_back(format!("data: {}\n\n", chunk));
-    }
-}
-
-impl Stream for ResponsesSseTranslator {
-    type Item = Result<Bytes, Box<dyn std::error::Error + Send + Sync>>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        loop {
-            // Return any pending translated chunks first
-            if let Some(chunk) = self.pending.pop_front() {
-                return Poll::Ready(Some(Ok(Bytes::from(chunk))));
-            }
-
-            // Poll inner stream for more bytes
-            match self.inner.as_mut().poll_next(cx) {
-                Poll::Ready(Some(Ok(bytes))) => {
-                    self.buffer.push_str(&String::from_utf8_lossy(&bytes));
-
-                    // Extract complete SSE events (delimited by double newline)
-                    while let Some(pos) = self.buffer.find("\n\n") {
-                        let event = self.buffer[..pos].to_string();
-                        self.buffer = self.buffer[pos + 2..].to_string();
-
-                        self.translate_event(&event);
-                    }
-                    // Loop back to check pending
-                }
-                Poll::Ready(Some(Err(e))) => {
-                    return Poll::Ready(Some(Err(e)));
-                }
-                Poll::Ready(None) => {
-                    // If there's remaining data in the buffer, try to process it
-                    if !self.buffer.trim().is_empty() {
-                        let event = std::mem::take(&mut self.buffer);
-                        self.translate_event(&event);
-                        if let Some(chunk) = self.pending.pop_front() {
-                            return Poll::Ready(Some(Ok(Bytes::from(chunk))));
-                        }
-                    }
-                    // Warn if the stream completed without producing any content.
-                    // This helps diagnose the "silent response" bug where the
-                    // Codex backend returns 200 OK but emits no text deltas.
-                    if !self.first_content_sent {
-                        tracing::warn!(
-                            target: "codex::sse",
-                            response_id = %self.response_id,
-                            model = %self.model,
-                            "codex stream ended with zero content — \
-                             upstream may have returned a degraded/empty response"
-                        );
-                    }
-                    return Poll::Ready(None);
-                }
-                Poll::Pending => {
-                    return Poll::Pending;
-                }
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::translation::openai_to_responses::translate_buffered_response;
 
     // -- Task 2: Construction tests --
 
@@ -1148,7 +445,7 @@ mod tests {
             "model": "codex-mini",
             "messages": [{"role": "user", "content": "Hello"}]
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         assert_eq!(result["model"], "codex-mini");
         let input = result["input"].as_array().unwrap();
         assert_eq!(input.len(), 1);
@@ -1169,7 +466,7 @@ mod tests {
             }]
         });
 
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         let input = result["input"].as_array().unwrap();
         assert_eq!(input.len(), 1);
         assert_eq!(input[0]["role"], "user");
@@ -1185,7 +482,7 @@ mod tests {
                 {"role": "user", "content": "Hi"}
             ]
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         assert_eq!(result["instructions"], "Be concise");
         // System message should not be in input
         let input = result["input"].as_array().unwrap();
@@ -1202,7 +499,7 @@ mod tests {
                 {"role": "user", "content": "Write code"}
             ]
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         assert_eq!(result["instructions"], "You are a code assistant");
         let input = result["input"].as_array().unwrap();
         assert_eq!(input.len(), 1);
@@ -1217,7 +514,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}],
             "max_tokens": 4096
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         assert!(
             result.get("max_output_tokens").is_none(),
             "max_output_tokens must NOT be sent to Codex backend"
@@ -1235,7 +532,7 @@ mod tests {
             "messages": [{"role": "user", "content": "Hello"}],
             "reasoning_effort": "high"
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         assert_eq!(result["reasoning"]["effort"], "high");
     }
 
@@ -1245,7 +542,7 @@ mod tests {
             "model": "codex-mini",
             "messages": [{"role": "user", "content": "Hello"}]
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         assert!(result.get("reasoning").is_none());
     }
 
@@ -1262,7 +559,7 @@ mod tests {
             r#"{"model":"gpt-5.5","messages":[{"role":"user","content":"hi"}]}"#,
         ));
         let chat: Value = serde_json::from_slice(&patched).unwrap();
-        let responses = translate_request(&chat).unwrap();
+        let responses = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         assert_eq!(responses["reasoning"]["effort"], "xhigh");
     }
 
@@ -1272,7 +569,7 @@ mod tests {
             "model": "codex-mini",
             "messages": [{"role": "user", "content": "Hello"}]
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         assert_eq!(result["store"], false);
         assert_eq!(result["stream"], true, "Codex backend requires stream=true");
         let include = result["include"].as_array().unwrap();
@@ -1285,7 +582,7 @@ mod tests {
             "model": "codex-mini",
             "messages": [{"role": "user", "content": "Hello"}]
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         assert_eq!(result["instructions"], "You are a helpful assistant.");
     }
 
@@ -1300,7 +597,7 @@ mod tests {
                 {"role": "user", "content": "How are you?"}
             ]
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         assert_eq!(result["instructions"], "Be helpful");
         let input = result["input"].as_array().unwrap();
         assert_eq!(input.len(), 3);
@@ -1321,7 +618,7 @@ mod tests {
             "temperature": 0.7,
             "tool_choice": "auto"
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         assert_eq!(result["stream"], true);
         assert_eq!(result["temperature"], 0.7);
         assert_eq!(result["tool_choice"], "auto");
@@ -1355,7 +652,7 @@ mod tests {
                 }
             ]
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert_eq!(tools.len(), 2);
 
@@ -1396,7 +693,7 @@ mod tests {
             }]
         });
 
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         let tools = result["tools"].as_array().unwrap();
 
         assert_eq!(tools[0]["name"], "skill");
@@ -1428,7 +725,7 @@ mod tests {
                 }
             }]
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert_eq!(
             tools[0]["strict"], false,
@@ -1457,7 +754,7 @@ mod tests {
                 }
             }]
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert_eq!(
             tools[0]["strict"], false,
@@ -1485,7 +782,7 @@ mod tests {
                 }
             }]
         });
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         let tools = result["tools"].as_array().unwrap();
         assert_eq!(
             tools[0]["strict"], false,
@@ -1516,7 +813,7 @@ mod tests {
             ]
         });
 
-        let result = translate_request(&chat).unwrap();
+        let result = translate_request(&chat, &ResponsesDialect::codex()).unwrap();
         let input = result["input"].as_array().unwrap();
 
         assert_eq!(input[0]["type"], "function_call");

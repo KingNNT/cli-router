@@ -61,6 +61,7 @@ Ràng buộc validate (`Config::validate`):
 | `thinking_force` | `bool?` | ❌ | `false` | mọi kind | `true` thì mức này đè lên tham số client gửi; `false` thì chỉ điền khi client bỏ trống. |
 | `thinking_mode` | `string?` | ❌ | `"split_only"` | `minimax` | Cách xử lý nội dung thinking/reasoning trong response. Xem §5. |
 | `max_concurrent` | `number?` | ❌ | `null` (dùng default của pool) | mọi kind | Số request đồng thời tối đa tới provider này. Tăng để một provider nhanh phục vụ nhiều request; giảm để tránh vượt rate limit. |
+| `model_formats` | `string?` | ❌ | `null` (không có luật nào) | mọi kind (chỉ `opencode_go` được seed sẵn) | Bảng model → wire format dạng chuỗi nén. Xem §5d. |
 
 > **Lưu ý về `openai_base_url`:** field này chỉ được builder truyền vào cho `zai`, `minimax`,
 > `kimi` (các provider hiểu cả 2 format). `deepseek` và `openai` là OpenAI-only — endpoint của
@@ -81,11 +82,13 @@ Ràng buộc validate (`Config::validate`):
 | `codex` | — | OpenAI (Responses API) | `https://chatgpt.com/backend-api/codex` | — |
 | `minimax` | — | Anthropic + OpenAI | `https://api.minimaxi.com/anthropic` | `https://api.minimaxi.com/v1` |
 | `kimi` | `moonshot` | Anthropic + OpenAI | `https://api.moonshot.ai/anthropic` | `https://api.moonshot.ai/v1` |
+| `opencode_go` | `opencode-go` | Anthropic + OpenAI + Responses (theo model, xem §6.8) | `https://opencode.ai/zen/go` | `https://opencode.ai/zen/go/v1` |
 
 **Format nào đi qua endpoint nào:**
 - Request Anthropic (`POST /v1/messages`) → đi qua `base_url` của provider.
 - Request OpenAI (`POST /v1/chat/completions`) → đi qua `openai_base_url` (dual-format) hoặc `base_url` (OpenAI-only).
 - Nếu client gửi format mà provider không hiểu, proxy dịch chéo (Anthropic↔OpenAI) khi có thể; provider OpenAI-only sẽ lỗi nếu gọi `/v1/messages` mà không dịch được.
+- **Ngoại lệ `opencode_go`:** wire format được chọn theo **model**, qua bảng luật `model_formats` (§5d), không theo endpoint client gọi. `select_direction` vẫn dịch chéo như bình thường khi format client dùng khác với format model đó yêu cầu.
 
 ---
 
@@ -192,6 +195,60 @@ Lưu ý theo từng kind:
   `disabled`. Chỉ M3 tôn trọng giá trị này.
 - **Kimi K2.x** trả lỗi nếu request mang **cả** `thinking` lẫn `reasoning_effort` cùng lúc —
   tránh cấu hình chồng lấn thủ công từ phía client khi provider đã có `thinking_level`.
+
+---
+
+## 5d. `model_formats` — ghim wire format theo từng model
+
+Field này chấp nhận trên **mọi kind** — builder gắn `model_formats` vào bất
+kỳ `UpstreamProvider` nào bất kể `kind`, và routing gọi
+`supported_formats_for(model)` ở cả 6 điểm chọn hướng dịch, không riêng gì
+`opencode_go`. Chỉ có `opencode_go` được **seed sẵn** một chuỗi mặc định khi
+tạo provider (§6.8), vì chỉ kind đó thật sự cần chọn format theo model thay
+vì theo endpoint client gọi (§3). Tự thêm luật cho kind khác vẫn có hiệu lực
+— xem cảnh báo ở cuối mục này. Trong `proxy-tui`, dòng nhập `Model Formats`
+hiện ra khi kind là `opencode_go` **hoặc** khi provider đang có giá trị khác
+rỗng, nên một luật tự thêm cho kind khác luôn nhìn thấy và sửa/xoá được.
+`model_formats` lưu dưới dạng một chuỗi nén:
+
+```
+minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses
+```
+
+- **Ngữ pháp:** `glob=format[,glob=format]*`. `format` ∈ `anthropic` |
+  `openai` | `responses` — **không** có alias `open_ai` (khác với vocabulary
+  của field `kind` ở §3; alias đó đã bị bỏ có chủ đích cho field này).
+- Glob dùng cùng matcher với routing rule (`*` là wildcard, `.` là ký tự
+  literal, không phải "match mọi ký tự").
+- Đoạn rỗng (do dấu phẩy thừa ở cuối, ví dụ `glm-*=openai,`) bị bỏ qua.
+- **First-match-wins**, theo đúng thứ tự viết trong chuỗi — không phải luật
+  cụ thể nhất thắng.
+- Chuỗi rỗng hoặc field để trống (`null`) nghĩa là **không có luật nào** —
+  hành vi giống hệt trước khi field này tồn tại: format do URL nào được cấu
+  hình quyết định, không phụ thuộc model.
+- Được validate trong `Config::validate()` khi `PUT /admin/config` — chuỗi
+  sai cú pháp (thiếu `=`, glob rỗng, glob không hợp lệ, hoặc format không nằm
+  trong 3 giá trị trên) bị Admin API **từ chối lúc lưu**, không phải lúc có
+  request đi qua.
+
+**Luật chỉ được thu hẹp trong phạm vi provider thật sự phục vụ.** Phạm vi đó
+là kết quả của `supported_formats()`: các URL đã cấu hình, **sau khi**
+`format_mode` đã thu hẹp (§5b). Nếu một luật trỏ tới format nằm ngoài phạm vi
+đó — provider không có URL tương ứng (ví dụ đặt `=anthropic` cho một provider
+không có `base_url` Anthropic), hoặc operator đã ghim `format_mode` sang
+format khác — luật đó bị bỏ qua cho model đấy và proxy rơi về capability sẵn
+có. Hai hệ quả: cấu hình sai không làm model đó "biến mất" khỏi mọi client, và
+một luật theo model không thể lách qua `format_mode` (ví dụ luật
+`minimax-m2=openai` trên provider `minimax` đã ghim `format_mode: "anthropic"`
+vẫn đi endpoint Anthropic — đúng ý đồ của cái ghim đó).
+
+**Cảnh báo khi tự sửa luật thủ công:** một luật `=responses` viết tay trên
+provider `minimax`, `deepseek` hay `openai` sẽ âm thầm bỏ qua các quirk theo
+kind đó (`reasoning_split`, `strip_tool_choice`) và mọi phép chèn
+`thinking_level` — đường Responses không áp dụng quirk hay chèn thinking nào
+cả. Bản preset không bao giờ tạo ra tình huống này (chỉ OpenCode Go seed luật
+`responses`), nhưng nếu bạn tự thêm luật đó cho provider khác thì các quirk
+sẽ mất mà không có cảnh báo nào ở tầng request.
 
 ---
 
@@ -329,6 +386,85 @@ Endpoint Anthropic mặc định (`.../api/anthropic`) đã trỏ Coding Plan kh
 - Dual-format: `/v1/messages` qua `https://api.moonshot.ai/anthropic`, `/v1/chat/completions` qua `https://api.moonshot.ai/v1`.
 - `api_key` được tự convert sang `Bearer` cho endpoint OpenAI-format.
 
+### 6.8 OpenCode Go
+
+```jsonc
+// providers[]
+{
+  "name": "opencode-go",
+  "kind": "opencode_go",                // alias: "opencode-go"
+  "auth": { "type": "api_key", "value": "<opencode-go-key>" }
+  // "model_formats": "minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses"
+  //   ↑ giá trị được seed tự động khi tạo provider kind này — xem bên dưới.
+}
+// routing[]
+{ "match": { "model": "*" }, "provider": "opencode-go" }
+```
+
+[OpenCode Go](https://opencode.ai/docs/go/) là gói subscription $10/tháng phục
+vụ 19 model coding, nhưng **wire format phụ thuộc model, không phụ thuộc
+endpoint client gọi** — khác với mọi provider khác trong bảng ở §3. Một
+provider `opencode_go` duy nhất phục vụ cả 19 model qua namespace
+`opencode-go/<model>`.
+
+- `base_url` (Anthropic-compatible): `https://opencode.ai/zen/go`, client path
+  `/v1/messages` được nối vào.
+- `openai_base_url` (OpenAI-compatible): `https://opencode.ai/zen/go/v1`,
+  path dịch `/chat/completions` được nối vào. Endpoint `/responses` (OpenAI
+  Responses API) dùng chung base này, nối `/responses`.
+- Auth: preset là `api_key` — `forward` gửi `x-api-key` trên path Anthropic,
+  `forward_openai` tự convert sang `Authorization: Bearer` trên path OpenAI,
+  giống mọi provider khác dùng `api_key`. **Đây là giả định chưa được xác
+  minh** với API thật (chưa có key để probe); nếu `/v1/messages` từ chối
+  `x-api-key`, đổi `auth.type` sang `"bearer"`.
+
+**Ba nhóm endpoint** (theo `https://opencode.ai/docs/go/`), điều khiển bởi
+`model_formats` seed sẵn ở trên:
+
+| Endpoint | Model |
+|---|---|
+| `/chat/completions` (không có luật riêng — xem caveat bên dưới) | `glm-5.1`, `glm-5.2`, `glm-5.3`, `kimi-k3`, `kimi-k2.7-code`, `kimi-k2.6`, `deepseek-v4-pro`, `deepseek-v4-flash`, `mimo-v2.5`, `mimo-v2.5-pro`, `hy3` |
+| `/messages` (luật `=anthropic`) | `minimax-m3`, `minimax-m2.7`, `minimax-m2.5`, `qwen3.8-max`, `qwen3.7-max`, `qwen3.7-plus`, `qwen3.6-plus` |
+| `/responses` (luật `=responses`) | `grok-4.5`, `gpt-5.6-luna` |
+
+**Model không khớp luật nào (nhóm `/chat/completions` ở trên) đi qua endpoint
+mà client đang dùng, không tự động đổi sang `/chat/completions`.** Không
+khớp luật nghĩa là `supported_formats_for` trả về nguyên capability suy ra từ
+URL — cả hai URL đều được cấu hình cho `opencode_go`, nên `select_direction`
+luôn chọn passthrough theo format client gửi (§3, "Format nào đi qua endpoint
+nào"): client gọi `/v1/chat/completions` thì tới
+`https://opencode.ai/zen/go/v1/chat/completions`; client gọi `/v1/messages`
+thì tới `https://opencode.ai/zen/go/v1/messages` — kể cả khi model đó
+(ví dụ `kimi-k3`) thuộc nhóm tài liệu OpenCode liệt kê dưới
+`/chat/completions`. Đây là group **lớn nhất và ổn định nhất** nên vẫn là
+fallback hợp lý khi OpenCode thêm model mới, nhưng **liệu gateway OpenCode Go
+có chấp nhận một model thuộc nhóm `/chat/completions` khi gọi trên
+`/v1/messages` hay không là điều chưa được xác minh** (assumption #2 trong
+design spec, "Gateway strictness"). Nếu gateway từ chối (trả lỗi cho model
+"sai" endpoint), khắc phục bằng cách thêm luật tường minh cho nhóm đó thay vì
+dựa vào fallthrough, ví dụ:
+
+```
+glm-*=openai,kimi-*=openai,deepseek-v4-*=openai,mimo-*=openai,hy3=openai
+```
+
+Đây **không** phải preset đã ship — preset mặc định vẫn chỉ seed 4 luật ở
+đầu mục này; các luật `=openai` bổ sung ở trên chỉ là ví dụ khắc phục thủ
+công nếu probe xác nhận gateway strict.
+
+- Account usage và quota **không** được hỗ trợ cho kind này
+  (`NoopAccountUsage`): OpenCode Go giới hạn theo đô-la ($12/5h, $30/tuần,
+  $60/tháng), còn `QuotaRule` của proxy đếm request và token — không có phép
+  quy đổi.
+- Không có `thinking_level` nào được offer cho kind này; `reasoning_effort`
+  client gửi được truyền thẳng qua path Responses.
+- Xem §5d để biết ngữ pháp và ràng buộc đầy đủ của `model_formats`.
+
+> **Trạng thái xác minh:** các giá trị URL, auth và bảng model ở trên lấy từ
+> tài liệu OpenCode Go và từ preset đã implement; **chưa được gọi thử với API
+> thật** (cần subscription key). Xem "Assumptions and risks" trong
+> `docs/superpowers/specs/2026-08-14-opencode-go-provider-design.md`.
+
 ---
 
 ## 7. Thiết lập OAuth (Anthropic / OpenAI)
@@ -371,4 +507,6 @@ background task tự refresh (mỗi 60s, khi còn <5 phút trước hạn; retry
 - Routing / load balancing / priority / namespace: xem `RoutingRulePayload` và `RoutingStrategy` trong code.
 - Kiểu dữ liệu config: `crates/proxy/src/config.rs`; payload wire: `crates/proxy-admin-api/src/lib.rs`.
 - Default URL & xử lý auth từng provider: `crates/proxy/src/adapters/providers/{anthropic,zai,deepseek,openai,codex,minimax,kimi}.rs`.
+- `opencode_go` (default URL, auth, seed `model_formats`): `crates/proxy/src/adapters/providers/upstream.rs` (`default_urls`, `preset_model_formats`).
+- `model_formats` (parse + validate): `crates/proxy/src/config.rs` (`parse_model_formats`); bảng luật đã compile: `crates/proxy/src/adapters/providers/model_formats.rs`.
 </content>

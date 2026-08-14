@@ -107,8 +107,8 @@ impl ConfigRepository for DbConfigRepository {
             let mut stmt = tx
                 .prepare(
                     "INSERT INTO providers (name, kind, anthropic_base_url, openai_base_url, thinking_mode, auth_type,
-                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent, sanitize_empty_tools, enabled, format_mode, thinking_level, thinking_force)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms, max_concurrent, sanitize_empty_tools, enabled, format_mode, thinking_level, thinking_force, model_formats)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
                 )
                 .map_err(db_err)?;
             for p in &config.providers {
@@ -139,6 +139,7 @@ impl ConfigRepository for DbConfigRepository {
                     },
                     p.thinking_level.as_str(),
                     p.thinking_force as i64,
+                    p.model_formats,
                 ])
                 .map_err(db_err)?;
             }
@@ -214,7 +215,8 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
         .prepare(
             "SELECT name, kind, anthropic_base_url, openai_base_url, thinking_mode, auth_type,
                     auth_api_key, auth_bearer, auth_access_token, auth_refresh_token, auth_expires_at_ms,
-                    max_concurrent, sanitize_empty_tools, enabled, format_mode, thinking_level, thinking_force
+                    max_concurrent, sanitize_empty_tools, enabled, format_mode, thinking_level, thinking_force,
+                    model_formats
              FROM providers ORDER BY id",
         )
         .map_err(db_err)?;
@@ -253,6 +255,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ProviderConfig>, ConfigError>
                 thinking_level: ThinkingLevel::parse(&row.get::<_, String>(15)?)
                     .unwrap_or_default(),
                 thinking_force: row.get::<_, i64>(16)? != 0,
+                model_formats: none_if_empty(row.get(17)?),
             })
         })
         .map_err(db_err)?;
@@ -322,6 +325,7 @@ fn parse_kind(s: &str) -> ProviderKind {
         "codex" => ProviderKind::Codex,
         "minimax" => ProviderKind::Minimax,
         "kimi" | "moonshot" => ProviderKind::Kimi,
+        "opencode_go" | "opencode-go" => ProviderKind::OpencodeGo,
         _ => ProviderKind::Anthropic,
     }
 }
@@ -335,6 +339,7 @@ fn kind_to_str(k: ProviderKind) -> &'static str {
         ProviderKind::Codex => "codex",
         ProviderKind::Minimax => "minimax",
         ProviderKind::Kimi => "kimi",
+        ProviderKind::OpencodeGo => "opencode_go",
     }
 }
 
@@ -490,6 +495,7 @@ mod tests {
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
+            model_formats: None,
         });
         cfg.routing.push(RoutingRule {
             match_spec: MatchSpec {
@@ -549,12 +555,45 @@ mod tests {
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
+            model_formats: None,
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();
         let p = loaded.providers.iter().find(|p| p.name == "mm").unwrap();
         assert_eq!(p.anthropic_base_url.as_deref(), Some("https://a/anthropic"));
         assert_eq!(p.openai_base_url.as_deref(), Some("https://a/v1"));
+    }
+
+    #[test]
+    fn opencode_go_kind_round_trips_through_save_and_load() {
+        let repo = test_repo();
+        let mut cfg = repo.load().unwrap();
+        cfg.providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
+            name: "og".into(),
+            kind: ProviderKind::OpencodeGo,
+            enabled: true,
+            auth: AuthConfig::Bearer { value: "k".into() },
+            anthropic_base_url: Some("https://opencode.ai/zen/go".into()),
+            openai_base_url: Some("https://opencode.ai/zen/go/v1".into()),
+            thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
+            max_concurrent: None,
+            sanitize_empty_tools: false,
+            model_formats: None,
+        });
+        repo.save(&cfg).unwrap();
+        let loaded = repo.load().unwrap();
+        let p = loaded.providers.iter().find(|p| p.name == "og").unwrap();
+        assert_eq!(p.kind, ProviderKind::OpencodeGo);
+    }
+
+    #[test]
+    fn parse_kind_accepts_opencode_go_aliases() {
+        assert_eq!(parse_kind("opencode_go"), ProviderKind::OpencodeGo);
+        assert_eq!(parse_kind("opencode-go"), ProviderKind::OpencodeGo);
+        assert_eq!(kind_to_str(ProviderKind::OpencodeGo), "opencode_go");
     }
 
     #[test]
@@ -574,6 +613,7 @@ mod tests {
             format_mode: crate::config::FormatMode::Both,
             max_concurrent: None,
             sanitize_empty_tools: false,
+            model_formats: None,
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();
@@ -639,6 +679,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
+                model_formats: None,
             });
             repo.save(&cfg).unwrap();
             let loaded = repo.load().unwrap();
@@ -702,6 +743,7 @@ mod tests {
             max_concurrent: None,
             sanitize_empty_tools: true,
             enabled: true,
+            model_formats: None,
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();
@@ -711,6 +753,59 @@ mod tests {
                 .iter()
                 .any(|p| p.name == "moonshot" && p.sanitize_empty_tools)
         );
+    }
+
+    #[test]
+    fn model_formats_round_trips_through_the_db() {
+        let repo = test_repo();
+        let mut cfg = repo.load().unwrap();
+        cfg.providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
+            name: "og".into(),
+            kind: ProviderKind::OpencodeGo,
+            auth: AuthConfig::Passthrough,
+            anthropic_base_url: None,
+            openai_base_url: None,
+            thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
+            max_concurrent: None,
+            sanitize_empty_tools: false,
+            enabled: true,
+            model_formats: Some("qwen3.*=anthropic,grok-4.5=responses".into()),
+        });
+        repo.save(&cfg).unwrap();
+        let loaded = repo.load().unwrap();
+        let og = loaded.providers.iter().find(|p| p.name == "og").unwrap();
+        assert_eq!(
+            og.model_formats.as_deref(),
+            Some("qwen3.*=anthropic,grok-4.5=responses")
+        );
+    }
+
+    #[test]
+    fn missing_model_formats_column_value_loads_as_none() {
+        let repo = test_repo();
+        let mut cfg = repo.load().unwrap();
+        cfg.providers.push(ProviderConfig {
+            thinking_level: crate::config::ThinkingLevel::Unset,
+            thinking_force: false,
+            name: "og".into(),
+            kind: ProviderKind::OpencodeGo,
+            auth: AuthConfig::Passthrough,
+            anthropic_base_url: None,
+            openai_base_url: None,
+            thinking_mode: ThinkingMode::SplitOnly,
+            format_mode: crate::config::FormatMode::Both,
+            max_concurrent: None,
+            sanitize_empty_tools: false,
+            enabled: true,
+            model_formats: None,
+        });
+        repo.save(&cfg).unwrap();
+        let loaded = repo.load().unwrap();
+        let og = loaded.providers.iter().find(|p| p.name == "og").unwrap();
+        assert!(og.model_formats.is_none());
     }
 
     #[test]
@@ -730,6 +825,7 @@ mod tests {
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: false,
+            model_formats: None,
         });
         repo.save(&cfg).unwrap();
         let loaded = repo.load().unwrap();

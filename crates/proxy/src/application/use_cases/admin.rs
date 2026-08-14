@@ -714,6 +714,7 @@ fn config_to_payload(c: &Config) -> ConfigPayload {
                 }),
                 max_concurrent: p.max_concurrent,
                 sanitize_empty_tools: Some(p.sanitize_empty_tools),
+                model_formats: p.model_formats.clone(),
             })
             .collect(),
         routing: c
@@ -826,6 +827,7 @@ fn payload_to_config(
                 max_concurrent: pp.max_concurrent,
                 sanitize_empty_tools: pp.sanitize_empty_tools.unwrap_or(false),
                 enabled: pp.enabled,
+                model_formats: pp.model_formats,
             })
         })
         .collect::<Result<Vec<_>, ProxyError>>()?;
@@ -903,6 +905,7 @@ fn kind_to_str(k: ProviderKind) -> &'static str {
         ProviderKind::Codex => "codex",
         ProviderKind::Minimax => "minimax",
         ProviderKind::Kimi => "kimi",
+        ProviderKind::OpencodeGo => "opencode_go",
     }
 }
 
@@ -915,6 +918,7 @@ fn str_to_kind(s: &str) -> Result<ProviderKind, ProxyError> {
         "codex" => Ok(ProviderKind::Codex),
         "minimax" => Ok(ProviderKind::Minimax),
         "kimi" | "moonshot" => Ok(ProviderKind::Kimi),
+        "opencode_go" | "opencode-go" => Ok(ProviderKind::OpencodeGo),
         other => Err(ProxyError::BadRequest(format!(
             "unknown provider kind: {other}"
         ))),
@@ -1285,6 +1289,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
+                model_formats: None,
             }],
             routing: vec![RoutingRule {
                 match_spec: MatchSpec {
@@ -1330,6 +1335,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
+                model_formats: None,
             }],
             routing: vec![],
             affinity: Default::default(),
@@ -1357,6 +1363,34 @@ mod tests {
             crate::config::ThinkingLevel::High
         );
         assert!(restored.providers[0].thinking_force);
+    }
+
+    #[test]
+    fn config_payload_carries_model_formats_both_ways() {
+        let mut cfg = config_with_thinking(
+            ProviderKind::Zai,
+            crate::config::ThinkingLevel::Unset,
+            false,
+        );
+        cfg.providers[0].model_formats = Some("glm-*=openai".into());
+
+        let payload = config_to_payload(&cfg);
+        assert_eq!(
+            payload.providers[0].model_formats.as_deref(),
+            Some("glm-*=openai")
+        );
+
+        let restored = payload_to_config(
+            payload,
+            PathBuf::from("/tmp/p.db"),
+            PathBuf::from("/tmp/pr.db"),
+            &cfg,
+        )
+        .unwrap();
+        assert_eq!(
+            restored.providers[0].model_formats.as_deref(),
+            Some("glm-*=openai")
+        );
     }
 
     #[test]
@@ -1461,6 +1495,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: true,
+                model_formats: None,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -1505,6 +1540,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: true,
                 enabled: true,
+                model_formats: None,
             }],
             routing: vec![],
             affinity: AffinityConfig::default(),
@@ -1541,6 +1577,7 @@ mod tests {
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
+                model_formats: None,
             }],
             routing: vec![],
             quota: vec![],
@@ -1598,6 +1635,7 @@ mod tests {
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
+                model_formats: None,
             }],
             routing: vec![],
             quota: vec![],
@@ -1676,6 +1714,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: false,
+                model_formats: None,
             }],
             routing: vec![],
             affinity: Default::default(),
@@ -1715,6 +1754,7 @@ mod tests {
                 max_concurrent: None,
                 sanitize_empty_tools: false,
                 enabled: false,
+                model_formats: None,
             }],
             routing: vec![],
             affinity: Default::default(),

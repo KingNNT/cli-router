@@ -1091,11 +1091,21 @@ fn handle_form_key(
         (_, KeyCode::Esc) => Modal::None,
 
         (FormState::Editing, KeyCode::Down) => {
-            m.focused = m.focused.next(m.auth_kind, m.kind, m.thinking_level);
+            m.focused = m.focused.next(
+                m.auth_kind,
+                m.kind,
+                m.thinking_level,
+                !m.model_formats.is_empty(),
+            );
             Modal::ProviderForm(m)
         }
         (FormState::Editing, KeyCode::Up) => {
-            m.focused = m.focused.prev(m.auth_kind, m.kind, m.thinking_level);
+            m.focused = m.focused.prev(
+                m.auth_kind,
+                m.kind,
+                m.thinking_level,
+                !m.model_formats.is_empty(),
+            );
             Modal::ProviderForm(m)
         }
         (FormState::Editing, KeyCode::Left) => {
@@ -1234,6 +1244,7 @@ fn submit_non_oauth_save(
         kind: m.kind.label(),
         anthropic_base_url: Some(&m.anthropic_base_url),
         openai_base_url: Some(&m.openai_base_url),
+        model_formats: Some(&m.model_formats),
         thinking_level: m.thinking_level.as_option(),
         thinking_force: m.thinking_force,
         thinking_mode: m.thinking_mode.as_option(),
@@ -1322,6 +1333,14 @@ fn cycle_field_value(m: &mut ProviderFormModal, forward: bool) {
                 if openai_is_autofill {
                     m.openai_base_url = new_openai_default.unwrap_or_default().to_string();
                 }
+
+                let prev_rules_default = prev.preset_model_formats();
+                let new_rules_default = m.kind.preset_model_formats();
+                let rules_is_autofill = m.model_formats.is_empty()
+                    || Some(m.model_formats.as_str()) == prev_rules_default;
+                if rules_is_autofill {
+                    m.model_formats = new_rules_default.unwrap_or_default().to_string();
+                }
             }
         }
         FormField::ThinkingLevel => {
@@ -1383,6 +1402,7 @@ fn edit_focused_text(m: &mut ProviderFormModal, f: impl FnOnce(&mut String)) {
         FormField::Name => Some(&mut m.name),
         FormField::AnthropicBaseUrl => Some(&mut m.anthropic_base_url),
         FormField::OpenaiBaseUrl => Some(&mut m.openai_base_url),
+        FormField::ModelFormats => Some(&mut m.model_formats),
         FormField::AuthValue => Some(&mut m.auth_value),
         _ => None,
     };
@@ -1417,6 +1437,7 @@ fn submit_oauth_add(client: &AdminClient, state: &mut AppState, mut m: ProviderF
             kind: m.kind.label(),
             anthropic_base_url: Some(&m.anthropic_base_url),
             openai_base_url: Some(&m.openai_base_url),
+            model_formats: Some(&m.model_formats),
             thinking_level: m.thinking_level.as_option(),
             thinking_force: m.thinking_force,
             thinking_mode: m.thinking_mode.as_option(),
@@ -1915,6 +1936,7 @@ fn submit_oauth_edit(
         kind: m.kind.label(),
         anthropic_base_url: Some(&m.anthropic_base_url),
         openai_base_url: Some(&m.openai_base_url),
+        model_formats: Some(&m.model_formats),
         thinking_level: m.thinking_level.as_option(),
         thinking_force: m.thinking_force,
         thinking_mode: m.thinking_mode.as_option(),
@@ -2191,6 +2213,7 @@ mod modal_key_tests {
             format_mode: None,
             max_concurrent: None,
             sanitize_empty_tools: None,
+            model_formats: None,
         };
         let mut m = ProviderFormModal::from_provider(0, &payload);
         m.focused = FormField::Kind;
@@ -2256,6 +2279,58 @@ mod modal_key_tests {
         };
         assert_eq!(m.kind, ProviderKind::OpenAi);
         assert_eq!(m.openai_base_url, "https://custom-openai.example.com");
+    }
+
+    #[test]
+    fn selecting_opencode_go_prefills_urls_and_rules() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut m = ProviderFormModal::new_for_add();
+        m.focused = FormField::Kind;
+
+        while m.kind != ProviderKind::OpencodeGo {
+            let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+            let Modal::ProviderForm(next) = modal else {
+                panic!("expected provider form modal");
+            };
+            m = next;
+        }
+
+        assert_eq!(m.anthropic_base_url, "https://opencode.ai/zen/go");
+        assert_eq!(m.openai_base_url, "https://opencode.ai/zen/go/v1");
+        assert_eq!(
+            m.model_formats,
+            "minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses"
+        );
+    }
+
+    #[test]
+    fn provider_form_kind_change_does_not_overwrite_typed_model_formats() {
+        let client = client();
+        let mut state = app_state_with_config();
+        let mut m = ProviderFormModal::new_for_add();
+        m.focused = FormField::Kind;
+
+        // Cycle to OpencodeGo so the rules field is prefilled with its preset.
+        while m.kind != ProviderKind::OpencodeGo {
+            let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+            let Modal::ProviderForm(next) = modal else {
+                panic!("expected provider form modal");
+            };
+            m = next;
+        }
+        // User overwrites the prefilled preset with their own rules.
+        m.model_formats = "custom-*=openai".into();
+
+        let modal = handle_form_key(key(KeyCode::Right), &client, &mut state, m);
+        let Modal::ProviderForm(m) = modal else {
+            panic!("expected provider form modal");
+        };
+
+        assert_eq!(m.kind, ProviderKind::Anthropic);
+        // The genuine user-typed rules survive the kind change untouched,
+        // even though Anthropic doesn't offer the model-formats field.
+        assert_eq!(m.model_formats, "custom-*=openai");
     }
 
     #[test]
@@ -2573,6 +2648,7 @@ mod modal_key_tests {
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
+                model_formats: None,
             }],
             routing: vec![rule],
             quota: vec![],

@@ -100,6 +100,13 @@ pub trait Provider: Send + Sync {
     /// and OpenAI shapes.
     fn supported_formats(&self) -> FormatSupport;
 
+    /// Which formats this provider can serve for one specific model. Providers
+    /// whose capability doesn't vary by model inherit the default.
+    fn supported_formats_for(&self, model: &str) -> FormatSupport {
+        let _ = model;
+        self.supported_formats()
+    }
+
     fn parse_model(&self, body: &[u8]) -> Result<String, String>;
 
     /// Parse model and stream flag in a single JSON pass. Default implementation

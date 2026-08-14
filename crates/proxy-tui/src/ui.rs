@@ -1256,6 +1256,17 @@ fn draw_form_modal(f: &mut Frame, m: &ProviderFormModal) {
         "OpenAI URL:",
         show_or_placeholder(&m.openai_base_url),
     ));
+    // Shown for the kind that needs it, and for any provider that already has
+    // a value — `validate_provider_form` saves the field on every kind, so a
+    // value set before a kind change must stay visible and editable rather
+    // than staying live behind a row that no longer renders.
+    if m.kind == crate::app::ProviderKind::OpencodeGo || !m.model_formats.is_empty() {
+        lines.push(row(
+            FormField::ModelFormats,
+            "Model Formats:",
+            show_or_placeholder(&m.model_formats),
+        ));
+    }
     if m.kind != crate::app::ProviderKind::Codex {
         lines.push(row(
             FormField::FormatMode,
@@ -1845,6 +1856,7 @@ mod tests {
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
+                model_formats: None,
             },
             ProviderPayload {
                 name: "openai".into(),
@@ -1861,6 +1873,7 @@ mod tests {
                 format_mode: None,
                 max_concurrent: None,
                 sanitize_empty_tools: None,
+                model_formats: None,
             },
         ];
         let mut state = config_state(config);
@@ -2114,6 +2127,31 @@ mod tests {
         assert!(output.contains("https://api.anthropic.com"));
         assert!(output.contains("OpenAI URL:"));
         assert!(output.contains("https://api.openai.com/v1"));
+    }
+
+    #[test]
+    fn provider_form_shows_model_formats_field_for_opencode_go() {
+        let mut state = AppState::new();
+        let mut modal = crate::app::ProviderFormModal::new_for_add();
+        modal.kind = crate::app::ProviderKind::OpencodeGo;
+        modal.model_formats = "minimax-*=anthropic,qwen3.*=anthropic".into();
+        state.modal = Modal::ProviderForm(modal);
+
+        let output = render_state(&state, 120, 30);
+
+        assert!(output.contains("Model Formats:"));
+        assert!(output.contains("minimax-*=anthropic,qwen3.*=anthropic"));
+    }
+
+    #[test]
+    fn provider_form_hides_model_formats_field_for_other_kinds() {
+        let mut state = AppState::new();
+        let modal = crate::app::ProviderFormModal::new_for_add();
+        state.modal = Modal::ProviderForm(modal);
+
+        let output = render_state(&state, 120, 30);
+
+        assert!(!output.contains("Model Formats:"));
     }
 
     #[test]

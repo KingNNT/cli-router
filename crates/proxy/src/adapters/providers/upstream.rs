@@ -1,8 +1,12 @@
 use super::messages_protocol::{self, AuthHeader};
 use super::minimax_stream::ThinkingMode;
+use super::model_formats::ModelFormatTable;
+use crate::adapters::translation::openai_to_responses::{
+    ResponsesDialect, ResponsesSseTranslator, translate_buffered_response, translate_request,
+};
 use crate::application::errors::ProxyError;
 use crate::application::ports::{FormatSupport, Provider, UpstreamResponse, UsageParser};
-use crate::config::{FormatMode, ProviderKind};
+use crate::config::{FormatMode, ProviderKind, WireFormat};
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
 use axum::http::HeaderMap;
@@ -56,7 +60,7 @@ pub fn quirks_for(
             rename_max_tokens: true,
             ..Quirks::none()
         },
-        ProviderKind::Anthropic | ProviderKind::Zai => Quirks::none(),
+        ProviderKind::Anthropic | ProviderKind::Zai | ProviderKind::OpencodeGo => Quirks::none(),
         // Codex is bespoke and never built as an UpstreamProvider.
         ProviderKind::Codex => Quirks::none(),
     }
@@ -81,6 +85,25 @@ pub fn default_urls(kind: ProviderKind) -> (Option<&'static str>, Option<&'stati
             Some("https://api.moonshot.ai/v1"),
         ),
         ProviderKind::Codex => (None, Some("https://chatgpt.com/backend-api/codex")),
+        ProviderKind::OpencodeGo => (
+            Some("https://opencode.ai/zen/go"),
+            Some("https://opencode.ai/zen/go/v1"),
+        ),
+    }
+}
+
+/// Seed value for `ProviderConfig::model_formats` when a provider of this kind
+/// is created. Prefill only — once stored it is plain config the user owns.
+///
+/// OpenCode Go serves MiniMax and Qwen on its Anthropic endpoint, Grok 4.5 and
+/// GPT 5.6 Luna on the Responses endpoint, and everything else (GLM, Kimi,
+/// DeepSeek, MiMo, Hy3) on Chat Completions, which is the fallthrough.
+pub fn preset_model_formats(kind: ProviderKind) -> Option<&'static str> {
+    match kind {
+        ProviderKind::OpencodeGo => {
+            Some("minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses")
+        }
+        _ => None,
     }
 }
 
@@ -91,6 +114,7 @@ pub struct UpstreamProvider {
     auth: AuthHeader,
     quirks: Quirks,
     format_mode: FormatMode,
+    model_formats: ModelFormatTable,
     thinking_anthropic: Option<super::thinking::ThinkingInjection>,
     thinking_openai: Option<super::thinking::ThinkingInjection>,
     http: reqwest::Client,
@@ -112,6 +136,7 @@ impl UpstreamProvider {
             auth,
             quirks,
             format_mode: FormatMode::Both,
+            model_formats: ModelFormatTable::empty(),
             thinking_anthropic: None,
             thinking_openai: None,
             http,
@@ -122,6 +147,13 @@ impl UpstreamProvider {
     /// [`FormatMode`].
     pub fn with_format_mode(mut self, mode: FormatMode) -> Self {
         self.format_mode = mode;
+        self
+    }
+
+    /// Attach compiled per-model format rules. Empty means "decide from the
+    /// configured URLs", i.e. the behavior of every other provider.
+    pub fn with_model_formats(mut self, table: ModelFormatTable) -> Self {
+        self.model_formats = table;
         self
     }
 
@@ -136,6 +168,109 @@ impl UpstreamProvider {
         self.thinking_anthropic = anthropic;
         self.thinking_openai = openai;
         self
+    }
+
+    /// OpenAI-compatible endpoints authenticate with `Authorization: Bearer`;
+    /// convert `ApiKey` → `Bearer` as the individual providers do today. Shared
+    /// by the Chat Completions and Responses paths so both authenticate alike.
+    fn auth_for_openai(&self) -> AuthHeader {
+        match &self.auth {
+            AuthHeader::ApiKey(v) => AuthHeader::Bearer(v.clone()),
+            other => other.clone(),
+        }
+    }
+
+    /// POST to `{base}/responses`, translating the Chat Completions body on the
+    /// way out and the Responses payload on the way back. Streaming responses
+    /// are wrapped in the SSE translator; buffered ones are converted whole.
+    async fn forward_responses(
+        &self,
+        headers: &HeaderMap,
+        body: Bytes,
+        streaming: bool,
+    ) -> Result<UpstreamResponse, ProxyError> {
+        // OpenCode Go serves `/responses` off the same base as
+        // `/chat/completions`; a provider with no OpenAI URL has no Responses
+        // endpoint either.
+        let base = self.openai_base_url.as_deref().ok_or_else(|| {
+            ProxyError::BadRequest(format!(
+                "provider '{}' has no Responses endpoint",
+                self.name
+            ))
+        })?;
+        let name = &self.name;
+        let chat: Value = serde_json::from_slice(&body).map_err(|e| {
+            ProxyError::BadRequest(format!("provider '{name}': invalid JSON body: {e}"))
+        })?;
+        let translated = translate_request(&chat, &ResponsesDialect::vanilla()).map_err(|e| {
+            ProxyError::BadRequest(format!(
+                "provider '{name}': responses translation failed: {e}"
+            ))
+        })?;
+        let out = Bytes::from(serde_json::to_vec(&translated).map_err(|e| {
+            ProxyError::BadRequest(format!(
+                "provider '{name}': failed to serialize responses body: {e}"
+            ))
+        })?);
+
+        let resp = messages_protocol::forward(
+            &self.http,
+            base,
+            &self.auth_for_openai(),
+            "/responses",
+            headers,
+            out,
+            streaming,
+            self.name(),
+        )
+        .await?;
+
+        Ok(match resp {
+            UpstreamResponse::Streaming {
+                status,
+                headers,
+                body,
+                provider_id,
+                translation_direction,
+            } => UpstreamResponse::Streaming {
+                status,
+                headers,
+                body: Box::pin(ResponsesSseTranslator::new(body)),
+                provider_id,
+                translation_direction,
+            },
+            UpstreamResponse::Buffered {
+                status,
+                headers,
+                body,
+                provider_id,
+                translation_direction,
+            } if (200..300).contains(&status) => {
+                let value: Value = serde_json::from_slice(&body).map_err(|e| {
+                    ProxyError::BadRequest(format!(
+                        "provider '{name}': invalid Responses body: {e}"
+                    ))
+                })?;
+                let chat = translate_buffered_response(&value).map_err(|e| {
+                    ProxyError::BadRequest(format!(
+                        "provider '{name}': responses translation failed: {e}"
+                    ))
+                })?;
+                UpstreamResponse::Buffered {
+                    status,
+                    headers,
+                    body: Bytes::from(serde_json::to_vec(&chat).map_err(|e| {
+                        ProxyError::BadRequest(format!(
+                            "provider '{name}': failed to serialize chat body: {e}"
+                        ))
+                    })?),
+                    provider_id,
+                    translation_direction,
+                }
+            }
+            // Non-2xx bodies pass through untranslated, as everywhere else.
+            other => other,
+        })
     }
 
     /// Apply Anthropic-format request quirks: merge the resolved thinking
@@ -373,6 +508,30 @@ impl Provider for UpstreamProvider {
         }
     }
 
+    fn supported_formats_for(&self, model: &str) -> FormatSupport {
+        // A rule may only *narrow* within what the provider already offers —
+        // which is `supported_formats()`, i.e. the configured URLs after
+        // `format_mode` has had its say. Deriving from the URLs alone would let
+        // a rule overrule an operator's `format_mode` pin (e.g. MiniMax pinned
+        // to `anthropic` because its OpenAI endpoint leaks reasoning). A rule
+        // naming an endpoint this provider doesn't offer falls through instead
+        // of black-holing the model.
+        let base = self.supported_formats();
+        match self.model_formats.resolve(model) {
+            // Responses is an upstream detail of the OpenAI path: routing only
+            // needs to know the request goes out as OpenAI.
+            Some(WireFormat::OpenAi | WireFormat::Responses) if base.openai => FormatSupport {
+                anthropic: false,
+                openai: true,
+            },
+            Some(WireFormat::Anthropic) if base.anthropic => FormatSupport {
+                anthropic: true,
+                openai: false,
+            },
+            _ => base,
+        }
+    }
+
     // parse_model / usage parsers / forward / forward_openai — Task 4.
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {
         super::messages_protocol::parse_model(body)
@@ -423,15 +582,28 @@ impl Provider for UpstreamProvider {
         body: Bytes,
         streaming: bool,
     ) -> Result<UpstreamResponse, ProxyError> {
+        // A model ruled to the Responses API leaves the Chat Completions path
+        // here; every other model is byte-identical to before. The emptiness
+        // check keeps rule-less providers off the extra body parse.
+        //
+        // The path guard matters: `/chat/completions` is the only path a chat
+        // request ever arrives on (`HandleMessages` sends it verbatim for
+        // OpenAI clients, and `RoutingProvider::translate_path` rewrites
+        // `/v1/messages` to it when translating A→O). Sibling endpoints —
+        // notably `/v1/messages/count_tokens`, which passes through
+        // untranslated — must not be turned into a billed `/responses`
+        // generation.
+        if path == "/chat/completions" && !self.model_formats.is_empty() {
+            let model = messages_protocol::parse_model(&body).unwrap_or_default();
+            if self.model_formats.resolve(&model) == Some(WireFormat::Responses) {
+                return self.forward_responses(headers, body, streaming).await;
+            }
+        }
+
         let base = self.openai_base_url.as_deref().ok_or_else(|| {
             ProxyError::BadRequest(format!("provider '{}' has no OpenAI endpoint", self.name))
         })?;
-        // OpenAI-compatible endpoints authenticate with Authorization: Bearer;
-        // convert ApiKey → Bearer as the individual providers do today.
-        let auth = match &self.auth {
-            AuthHeader::ApiKey(v) => AuthHeader::Bearer(v.clone()),
-            other => other.clone(),
-        };
+        let auth = self.auth_for_openai();
         let body = self.apply_openai_request_quirks(body);
         let resp = messages_protocol::forward(
             &self.http,
@@ -513,6 +685,87 @@ mod tests {
         let s = p.supported_formats();
         assert!(!s.anthropic);
         assert!(s.openai);
+    }
+
+    #[test]
+    fn model_formats_narrow_supported_formats_per_model() {
+        let p = UpstreamProvider::new(
+            "go".to_string(),
+            Some("https://opencode.ai/zen/go".to_string()),
+            Some("https://opencode.ai/zen/go/v1".to_string()),
+            AuthHeader::ApiKey("k".to_string()),
+            Quirks::none(),
+            reqwest::Client::new(),
+        )
+        .with_model_formats(
+            ModelFormatTable::parse("qwen3.*=anthropic,grok-4.5=responses").unwrap(),
+        );
+
+        // Anthropic-only model.
+        let qwen = p.supported_formats_for("qwen3.7-max");
+        assert!(qwen.anthropic && !qwen.openai);
+
+        // Responses models ride the OpenAI path; the split happens inside
+        // forward_openai.
+        let grok = p.supported_formats_for("grok-4.5");
+        assert!(grok.openai && !grok.anthropic);
+
+        // No rule → unchanged capability (both URLs configured).
+        let kimi = p.supported_formats_for("kimi-k3");
+        assert!(kimi.anthropic && kimi.openai);
+    }
+
+    /// A rule may only narrow within the endpoints that exist. Naming one the
+    /// provider has no URL for must not black-hole the model — same invariant
+    /// `supported_formats` keeps for `format_mode`.
+    #[test]
+    fn model_format_rule_for_an_unconfigured_endpoint_falls_back() {
+        let openai_only = UpstreamProvider::new(
+            "openai-only".to_string(),
+            None,
+            Some("https://api.example.com/v1".to_string()),
+            AuthHeader::ApiKey("k".to_string()),
+            Quirks::none(),
+            reqwest::Client::new(),
+        )
+        .with_model_formats(ModelFormatTable::parse("foo-*=anthropic").unwrap());
+        let foo = openai_only.supported_formats_for("foo-1");
+        assert!(!foo.anthropic && foo.openai);
+
+        let anthropic_only = UpstreamProvider::new(
+            "anthropic-only".to_string(),
+            Some("https://api.example.com".to_string()),
+            None,
+            AuthHeader::ApiKey("k".to_string()),
+            Quirks::none(),
+            reqwest::Client::new(),
+        )
+        .with_model_formats(ModelFormatTable::parse("bar-*=responses,baz-*=openai").unwrap());
+        let bar = anthropic_only.supported_formats_for("bar-1");
+        assert!(bar.anthropic && !bar.openai);
+        let baz = anthropic_only.supported_formats_for("baz-1");
+        assert!(baz.anthropic && !baz.openai);
+    }
+
+    /// `format_mode` is an operator pin, not a default. MiniMax is pinned to
+    /// `anthropic` precisely because its OpenAI endpoint loses the head of the
+    /// answer into `reasoning_content`; a per-model rule must not quietly send
+    /// a model back to the endpoint the pin exists to avoid.
+    #[test]
+    fn a_model_rule_cannot_defeat_format_mode() {
+        let pinned = dual_provider(FormatMode::Anthropic)
+            .with_model_formats(ModelFormatTable::parse("minimax-m2=openai").unwrap());
+        let s = pinned.supported_formats_for("minimax-m2");
+        assert!(
+            s.anthropic && !s.openai,
+            "a rule must narrow within format_mode, not around it"
+        );
+
+        // The mirror image: pinned to OpenAI, an `anthropic` rule is inert.
+        let pinned_openai = dual_provider(FormatMode::OpenAi)
+            .with_model_formats(ModelFormatTable::parse("minimax-m2=anthropic").unwrap());
+        let s = pinned_openai.supported_formats_for("minimax-m2");
+        assert!(!s.anthropic && s.openai);
     }
 
     #[test]
@@ -708,6 +961,28 @@ mod tests {
         let (a, o) = default_urls(ProviderKind::DeepSeek);
         assert!(a.is_none());
         assert!(o.is_some());
+    }
+
+    #[test]
+    fn opencode_go_preset_serves_both_bases_and_seeds_rules() {
+        let (anthropic, openai) = default_urls(ProviderKind::OpencodeGo);
+        assert_eq!(anthropic, Some("https://opencode.ai/zen/go"));
+        assert_eq!(openai, Some("https://opencode.ai/zen/go/v1"));
+        assert_eq!(
+            preset_model_formats(ProviderKind::OpencodeGo),
+            Some("minimax-*=anthropic,qwen3.*=anthropic,grok-4.5=responses,gpt-5.6-luna=responses")
+        );
+        assert!(preset_model_formats(ProviderKind::Zai).is_none());
+    }
+
+    #[test]
+    fn opencode_go_preset_has_no_quirks() {
+        let q = quirks_for(ProviderKind::OpencodeGo, ThinkingMode::SplitOnly, false);
+        assert!(!q.reasoning_split);
+        assert!(!q.strip_tool_choice);
+        assert!(!q.rename_max_tokens);
+        assert!(!q.sanitize_empty_tools);
+        assert!(q.strip_thinking.is_none());
     }
 
     #[test]

@@ -452,6 +452,7 @@ async fn admin_config_put_hot_reloads_routing_to_new_upstream() {
             max_concurrent: None,
             sanitize_empty_tools: false,
             enabled: true,
+            model_formats: None,
         }],
         routing: vec![RoutingRule {
             match_spec: MatchSpec {
@@ -938,4 +939,464 @@ async fn routing_falls_back_on_5xx_to_next_provider() {
     assert_eq!(body["model"], "glm-4.6");
     assert_eq!(primary.received_requests().await.unwrap().len(), 1);
     assert_eq!(fallback.received_requests().await.unwrap().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// OpenCode Go: per-model Responses routing
+// ---------------------------------------------------------------------------
+
+/// Build the OpenCode Go leaf: both bases on the mock server, `grok-4.5`
+/// pinned to the Responses wire format.
+fn opencode_go_leaf(server: &MockServer) -> UpstreamProvider {
+    use proxy::adapters::providers::model_formats::ModelFormatTable;
+
+    UpstreamProvider::new(
+        "go".to_string(),
+        Some(format!("{}/zen/go", server.uri())),
+        Some(format!("{}/zen/go/v1", server.uri())),
+        AuthHeader::ApiKey("secret".to_string()),
+        Quirks::none(),
+        reqwest::Client::new(),
+    )
+    .with_model_formats(ModelFormatTable::parse("grok-4.5=responses").unwrap())
+}
+
+#[tokio::test]
+async fn opencode_go_routes_a_responses_model_to_the_responses_endpoint() {
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use proxy::application::ports::UpstreamResponse;
+
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "resp_1",
+            "model": "grok-4.5",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "hello"}]
+            }],
+            "usage": {"input_tokens": 3, "output_tokens": 2}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = opencode_go_leaf(&server);
+
+    let body = Bytes::from(
+        r#"{"model":"grok-4.5","stream":false,"messages":[{"role":"user","content":"hi"}]}"#,
+    );
+    let resp = provider
+        .forward_openai("/chat/completions", &HeaderMap::new(), body, false)
+        .await
+        .unwrap();
+
+    let UpstreamResponse::Buffered { status, body, .. } = resp else {
+        panic!("expected a buffered response");
+    };
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["object"], "chat.completion");
+    assert_eq!(v["choices"][0]["message"]["content"], "hello");
+}
+
+/// The `/messages` third of the endpoint table: an `anthropic`-ruled model
+/// must land on `{base}/zen/go/v1/messages` — a different base from the other
+/// two endpoints, which is exactly the wiring most likely to be typo'd.
+#[tokio::test]
+async fn opencode_go_routes_an_anthropic_model_to_the_messages_endpoint() {
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use proxy::adapters::providers::model_formats::ModelFormatTable;
+    use proxy::application::ports::UpstreamResponse;
+
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "model": "minimax-m2",
+            "content": [{"type": "text", "text": "hi"}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // The Anthropic base is `{server}/zen/go/v1` here so all three endpoints
+    // sit under one prefix, matching the shipped OpenCode Go preset shape.
+    let provider = UpstreamProvider::new(
+        "go".to_string(),
+        Some(format!("{}/zen/go/v1", server.uri())),
+        Some(format!("{}/zen/go/v1", server.uri())),
+        AuthHeader::ApiKey("secret".to_string()),
+        Quirks::none(),
+        reqwest::Client::new(),
+    )
+    .with_model_formats(ModelFormatTable::parse("minimax-*=anthropic").unwrap());
+
+    let body = Bytes::from(
+        r#"{"model":"minimax-m2","stream":false,"messages":[{"role":"user","content":"hi"}]}"#,
+    );
+    let resp = provider
+        .forward("/messages", &HeaderMap::new(), body, false)
+        .await
+        .unwrap();
+
+    let UpstreamResponse::Buffered { status, body, .. } = resp else {
+        panic!("expected a buffered response");
+    };
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["id"], "msg_1");
+    // `expect(1)` on the mock asserts /zen/go/v1/messages was the URL hit.
+}
+
+/// Design assumption #1: one API key authenticates all three endpoints, but
+/// with a different header on each. `auth_for_openai` converts `ApiKey` →
+/// `Bearer` for the OpenAI-shaped endpoints, including `/responses`. Get any
+/// of these wrong and 100% of requests to that endpoint fail on auth.
+#[tokio::test]
+async fn one_api_key_authenticates_all_three_endpoints() {
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use proxy::adapters::providers::model_formats::ModelFormatTable;
+    use proxy::application::ports::UpstreamResponse;
+
+    let server = MockServer::start().await;
+
+    // Anthropic endpoint: x-api-key, verbatim.
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/messages"))
+        .and(matchers::header("x-api-key", "secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg_1", "type": "message", "role": "assistant",
+            "model": "minimax-m2", "content": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // Chat Completions: Authorization: Bearer.
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/chat/completions"))
+        .and(matchers::header("authorization", "Bearer secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl_1", "object": "chat.completion", "choices": []
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // Responses: Authorization: Bearer, via the same ApiKey → Bearer hop.
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/responses"))
+        .and(matchers::header("authorization", "Bearer secret"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "resp_1", "model": "grok-4.5",
+            "output": [], "usage": {"input_tokens": 1, "output_tokens": 1}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base = format!("{}/zen/go/v1", server.uri());
+    let provider = UpstreamProvider::new(
+        "go".to_string(),
+        Some(base.clone()),
+        Some(base),
+        AuthHeader::ApiKey("secret".to_string()),
+        Quirks::none(),
+        reqwest::Client::new(),
+    )
+    .with_model_formats(ModelFormatTable::parse("minimax-*=anthropic,grok-4.5=responses").unwrap());
+
+    let anthropic_body = Bytes::from(r#"{"model":"minimax-m2","stream":false,"messages":[]}"#);
+    let status = match provider
+        .forward("/messages", &HeaderMap::new(), anthropic_body, false)
+        .await
+        .unwrap()
+    {
+        UpstreamResponse::Buffered { status, .. } => status,
+        _ => panic!("expected buffered"),
+    };
+    assert_eq!(status, 200, "/messages must send x-api-key");
+
+    let chat_body = Bytes::from(r#"{"model":"kimi-k3","stream":false,"messages":[]}"#);
+    let status = match provider
+        .forward_openai("/chat/completions", &HeaderMap::new(), chat_body, false)
+        .await
+        .unwrap()
+    {
+        UpstreamResponse::Buffered { status, .. } => status,
+        _ => panic!("expected buffered"),
+    };
+    assert_eq!(
+        status, 200,
+        "/chat/completions must send Authorization: Bearer"
+    );
+
+    let responses_body = Bytes::from(r#"{"model":"grok-4.5","stream":false,"messages":[]}"#);
+    let status = match provider
+        .forward_openai(
+            "/chat/completions",
+            &HeaderMap::new(),
+            responses_body,
+            false,
+        )
+        .await
+        .unwrap()
+    {
+        UpstreamResponse::Buffered { status, .. } => status,
+        _ => panic!("expected buffered"),
+    };
+    assert_eq!(status, 200, "/responses must send Authorization: Bearer");
+}
+
+#[tokio::test]
+async fn opencode_go_routes_an_unruled_model_to_chat_completions() {
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use proxy::application::ports::UpstreamResponse;
+
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "chatcmpl_1",
+            "object": "chat.completion",
+            "choices": [{
+                "index": 0,
+                "message": {"role": "assistant", "content": "hi"},
+                "finish_reason": "stop"
+            }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = opencode_go_leaf(&server);
+
+    let body = Bytes::from(
+        r#"{"model":"kimi-k3","stream":false,"messages":[{"role":"user","content":"hi"}]}"#,
+    );
+    let resp = provider
+        .forward_openai("/chat/completions", &HeaderMap::new(), body, false)
+        .await
+        .unwrap();
+
+    let UpstreamResponse::Buffered { status, body, .. } = resp else {
+        panic!("expected a buffered response");
+    };
+    assert_eq!(status, 200);
+    // Untranslated passthrough: the upstream body arrives verbatim.
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["id"], "chatcmpl_1");
+    // `expect(1)` on the mock asserts /chat/completions was the endpoint hit.
+}
+
+#[tokio::test]
+async fn anthropic_client_reaches_a_responses_model() {
+    // Both hops compose: routing translates A→O, the provider then
+    // translates O→Responses.
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use proxy::adapters::providers::RoutingProvider;
+    use proxy::application::ports::UpstreamResponse;
+
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "resp_2",
+            "model": "grok-4.5",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "hello"}]
+            }],
+            "usage": {"input_tokens": 3, "output_tokens": 2}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let leaf: Arc<dyn Provider> = Arc::new(opencode_go_leaf(&server));
+    let router = RoutingProvider::builder()
+        .rule(
+            "*",
+            proxy::config::RoutingStrategy::Failover,
+            leaf,
+            Vec::new(),
+        )
+        .unwrap()
+        .build();
+
+    let body = Bytes::from(
+        r#"{"model":"grok-4.5","max_tokens":32,"messages":[{"role":"user","content":"hi"}]}"#,
+    );
+    let resp = router
+        .forward("/v1/messages", &HeaderMap::new(), body, false)
+        .await
+        .unwrap();
+
+    let UpstreamResponse::Buffered { status, body, .. } = resp else {
+        panic!("expected a buffered response");
+    };
+    assert_eq!(status, 200);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    // Back in Anthropic shape for the client.
+    assert_eq!(v["type"], "message");
+    assert_eq!(v["content"][0]["text"], "hello");
+}
+
+/// `/v1/messages/count_tokens` is a preflight, not a generation. Routing
+/// translates the client A→O because `grok-4.5` is OpenAI-only here, but
+/// `translate_path` leaves the count_tokens path alone — so it lands in
+/// `forward_openai` on a non-chat path. It must never be re-pointed at
+/// `/responses`, which would bill a full generation and answer with a
+/// translated `chat.completion` where the client expects `{"input_tokens": N}`.
+#[tokio::test]
+async fn count_tokens_for_a_responses_model_never_reaches_the_responses_endpoint() {
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use proxy::adapters::providers::RoutingProvider;
+    use proxy::application::use_cases::CountTokensInput;
+
+    let server = MockServer::start().await;
+    // Present but forbidden: any hit here is the bug.
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "resp_billed",
+            "model": "grok-4.5",
+            "output": [{
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "billed!"}]
+            }],
+            "usage": {"input_tokens": 3, "output_tokens": 2}
+        })))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let leaf: Arc<dyn Provider> = Arc::new(opencode_go_leaf(&server));
+    let router: Arc<dyn Provider> = Arc::new(
+        RoutingProvider::builder()
+            .rule(
+                "*",
+                proxy::config::RoutingStrategy::Failover,
+                leaf,
+                Vec::new(),
+            )
+            .unwrap()
+            .build(),
+    );
+
+    let conn = Connection::open_in_memory().unwrap();
+    ensure_current(&conn).unwrap();
+    let conn = Arc::new(Mutex::new(conn));
+    let request_log: Arc<dyn RequestLogPort> = Arc::new(SqliteRequestLogRepository::new(conn));
+    let use_case = HandleMessages::new(
+        router,
+        request_log,
+        Arc::new(NullPricing),
+        Arc::new(SystemClock),
+        1,
+        Arc::new(proxy::adapters::quota::InMemoryQuota::new(vec![])),
+    );
+
+    let body = Bytes::from(r#"{"model":"grok-4.5","messages":[{"role":"user","content":"hi"}]}"#);
+    let out = use_case
+        .count_tokens(CountTokensInput {
+            headers: HeaderMap::new(),
+            body,
+        })
+        .await
+        .unwrap();
+
+    // The provider has no count_tokens endpoint, so the upstream fails and
+    // `HandleMessages` falls back to local estimation — the pre-existing
+    // behavior for every OpenAI-only provider.
+    let v: serde_json::Value = serde_json::from_slice(&out.body).unwrap();
+    assert!(
+        v.get("input_tokens").and_then(|t| t.as_u64()).is_some(),
+        "client must get a token count, got: {v}"
+    );
+
+    let hits = server.received_requests().await.unwrap();
+    assert!(
+        !hits.iter().any(|r| r.url.path().ends_with("/responses")),
+        "count_tokens must never POST /responses, got: {:?}",
+        hits.iter().map(|r| r.url.path()).collect::<Vec<_>>()
+    );
+}
+
+/// The streaming half of the same branch: the Responses SSE stream is wrapped
+/// in the translator, so clients (and the usage parser) see
+/// `chat.completion.chunk` events.
+#[tokio::test]
+async fn opencode_go_streams_a_responses_model_as_chat_completion_chunks() {
+    use axum::http::HeaderMap;
+    use bytes::Bytes;
+    use futures::StreamExt;
+    use proxy::application::ports::UpstreamResponse;
+
+    let sse = concat!(
+        "event: response.output_text.delta\n",
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"hello\"}\n\n",
+        "event: response.completed\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"model\":\"grok-4.5\",",
+        "\"usage\":{\"input_tokens\":3,\"output_tokens\":2,\"total_tokens\":5}}}\n\n",
+    );
+
+    let server = MockServer::start().await;
+    Mock::given(matchers::method("POST"))
+        .and(matchers::path("/zen/go/v1/responses"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                .set_body_string(sse),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let provider = opencode_go_leaf(&server);
+
+    let body = Bytes::from(
+        r#"{"model":"grok-4.5","stream":true,"messages":[{"role":"user","content":"hi"}]}"#,
+    );
+    let resp = provider
+        .forward_openai("/chat/completions", &HeaderMap::new(), body, true)
+        .await
+        .unwrap();
+
+    let UpstreamResponse::Streaming { status, body, .. } = resp else {
+        panic!("expected a streaming response");
+    };
+    assert_eq!(status, 200);
+
+    let mut stream = body;
+    let mut collected = String::new();
+    while let Some(chunk) = stream.next().await {
+        collected.push_str(&String::from_utf8_lossy(&chunk.unwrap()));
+    }
+    assert!(
+        collected.contains("chat.completion.chunk"),
+        "usage parsing depends on chat.completion.chunk events, got: {collected}"
+    );
+    assert!(
+        collected.contains("\"content\":\"hello\""),
+        "text delta should reach the client, got: {collected}"
+    );
+    assert!(
+        collected.contains("\"prompt_tokens\":3"),
+        "usage should reach the client, got: {collected}"
+    );
 }
