@@ -7,6 +7,7 @@ use super::account_usage::{
     MinimaxAccountUsage, ZaiAccountUsage,
 };
 use super::minimax_stream;
+use super::model_formats::ModelFormatTable;
 use super::upstream::{UpstreamProvider, quirks_for};
 use super::{AuthHeader, CodexProvider, RoutingProvider};
 use crate::application::ports::{AccountUsagePort, AccountUsageRegistry, Provider, QuotaPort};
@@ -22,6 +23,8 @@ pub enum BuildError {
     BadPattern(String, String),
     #[error("{0}")]
     AuthResolve(String),
+    #[error("invalid model_formats: {0}")]
+    InvalidModelFormats(String),
 }
 
 /// Build a single leaf provider from one `ProviderConfig` row.
@@ -110,6 +113,13 @@ pub fn build_leaf(
         crate::config::ThinkingMode::StripAll => minimax_stream::ThinkingMode::StripAll,
     };
     let quirks = quirks_for(p.kind, thinking, p.sanitize_empty_tools);
+    // Compiled once at build time, not per request.
+    let model_formats = match p.model_formats.as_deref() {
+        Some(rules) if !rules.trim().is_empty() => {
+            ModelFormatTable::parse(rules).map_err(BuildError::InvalidModelFormats)?
+        }
+        _ => ModelFormatTable::empty(),
+    };
     Ok(Arc::new(
         UpstreamProvider::new(
             p.name.clone(),
@@ -120,6 +130,7 @@ pub fn build_leaf(
             http,
         )
         .with_format_mode(p.format_mode)
+        .with_model_formats(model_formats)
         .with_thinking(thinking_anthropic, thinking_openai),
     ))
 }

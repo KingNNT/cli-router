@@ -1,8 +1,9 @@
 use super::messages_protocol::{self, AuthHeader};
 use super::minimax_stream::ThinkingMode;
+use super::model_formats::ModelFormatTable;
 use crate::application::errors::ProxyError;
 use crate::application::ports::{FormatSupport, Provider, UpstreamResponse, UsageParser};
-use crate::config::{FormatMode, ProviderKind};
+use crate::config::{FormatMode, ProviderKind, WireFormat};
 use crate::domain::UsageRecord;
 use async_trait::async_trait;
 use axum::http::HeaderMap;
@@ -110,6 +111,7 @@ pub struct UpstreamProvider {
     auth: AuthHeader,
     quirks: Quirks,
     format_mode: FormatMode,
+    model_formats: ModelFormatTable,
     thinking_anthropic: Option<super::thinking::ThinkingInjection>,
     thinking_openai: Option<super::thinking::ThinkingInjection>,
     http: reqwest::Client,
@@ -131,6 +133,7 @@ impl UpstreamProvider {
             auth,
             quirks,
             format_mode: FormatMode::Both,
+            model_formats: ModelFormatTable::empty(),
             thinking_anthropic: None,
             thinking_openai: None,
             http,
@@ -141,6 +144,13 @@ impl UpstreamProvider {
     /// [`FormatMode`].
     pub fn with_format_mode(mut self, mode: FormatMode) -> Self {
         self.format_mode = mode;
+        self
+    }
+
+    /// Attach compiled per-model format rules. Empty means "decide from the
+    /// configured URLs", i.e. the behavior of every other provider.
+    pub fn with_model_formats(mut self, table: ModelFormatTable) -> Self {
+        self.model_formats = table;
         self
     }
 
@@ -392,6 +402,22 @@ impl Provider for UpstreamProvider {
         }
     }
 
+    fn supported_formats_for(&self, model: &str) -> FormatSupport {
+        match self.model_formats.resolve(model) {
+            // Responses is an upstream detail of the OpenAI path: routing only
+            // needs to know the request goes out as OpenAI.
+            Some(WireFormat::OpenAi) | Some(WireFormat::Responses) => FormatSupport {
+                anthropic: false,
+                openai: true,
+            },
+            Some(WireFormat::Anthropic) => FormatSupport {
+                anthropic: true,
+                openai: false,
+            },
+            None => self.supported_formats(),
+        }
+    }
+
     // parse_model / usage parsers / forward / forward_openai — Task 4.
     fn parse_model(&self, body: &[u8]) -> Result<String, String> {
         super::messages_protocol::parse_model(body)
@@ -532,6 +558,34 @@ mod tests {
         let s = p.supported_formats();
         assert!(!s.anthropic);
         assert!(s.openai);
+    }
+
+    #[test]
+    fn model_formats_narrow_supported_formats_per_model() {
+        let p = UpstreamProvider::new(
+            "go".to_string(),
+            Some("https://opencode.ai/zen/go".to_string()),
+            Some("https://opencode.ai/zen/go/v1".to_string()),
+            AuthHeader::ApiKey("k".to_string()),
+            Quirks::none(),
+            reqwest::Client::new(),
+        )
+        .with_model_formats(
+            ModelFormatTable::parse("qwen3.*=anthropic,grok-4.5=responses").unwrap(),
+        );
+
+        // Anthropic-only model.
+        let qwen = p.supported_formats_for("qwen3.7-max");
+        assert!(qwen.anthropic && !qwen.openai);
+
+        // Responses models ride the OpenAI path; the split happens inside
+        // forward_openai.
+        let grok = p.supported_formats_for("grok-4.5");
+        assert!(grok.openai && !grok.anthropic);
+
+        // No rule → unchanged capability (both URLs configured).
+        let kimi = p.supported_formats_for("kimi-k3");
+        assert!(kimi.anthropic && kimi.openai);
     }
 
     #[test]
