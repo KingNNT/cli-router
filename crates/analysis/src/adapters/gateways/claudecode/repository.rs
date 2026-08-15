@@ -51,24 +51,24 @@ fn load_all(root: &Path) -> Result<Vec<UsageRecord>, AdapterError> {
     if !root.exists() {
         return Ok(out);
     }
-    let project_dirs = std::fs::read_dir(root).map_err(io_err)?;
-    for entry in project_dirs {
-        let entry = entry.map_err(io_err)?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let session_files = std::fs::read_dir(&path).map_err(io_err)?;
-        for file in session_files {
-            let file = file.map_err(io_err)?;
-            let fp = file.path();
-            if fp.extension().and_then(|s| s.to_str()) != Some("jsonl") {
-                continue;
-            }
-            parse_jsonl_into(&fp, &mut out)?;
+    collect_jsonl(root, &mut out)?;
+    Ok(out)
+}
+
+/// Walks the whole tree rather than only `<project>/*.jsonl`: Claude Code
+/// writes sub-agent transcripts one level deeper, at
+/// `<project>/<session-id>/subagents/agent-*.jsonl`, and those rows carry the
+/// model the sub-agent actually ran on.
+fn collect_jsonl(dir: &Path, out: &mut Vec<UsageRecord>) -> Result<(), AdapterError> {
+    for entry in std::fs::read_dir(dir).map_err(io_err)? {
+        let path = entry.map_err(io_err)?.path();
+        if path.is_dir() {
+            collect_jsonl(&path, out)?;
+        } else if path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
+            parse_jsonl_into(&path, out)?;
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 fn parse_jsonl_into(path: &Path, out: &mut Vec<UsageRecord>) -> Result<(), AdapterError> {
@@ -281,6 +281,41 @@ mod tests {
         assert_eq!(rows[0].date.to_string(), "2026-04-23");
         assert_eq!(rows[0].tokens.input.value(), 300);
         assert_eq!(rows[1].tokens.input.value(), 50);
+    }
+
+    #[test]
+    fn parses_subagent_transcripts_in_nested_dirs() {
+        let tmp = TestRoot::new("subagents");
+        let proj = tmp.path().join("-p");
+        let subagents = proj.join("s1").join("subagents");
+        std::fs::create_dir_all(&subagents).unwrap();
+        write_jsonl(
+            &proj,
+            "s1.jsonl",
+            &[
+                r#"{"type":"assistant","timestamp":"2026-04-23T09:00:00Z","sessionId":"s1","cwd":"/p","message":{"model":"opus","usage":{"input_tokens":100}}}"#,
+            ],
+        );
+        write_jsonl(
+            &subagents,
+            "agent-a1.jsonl",
+            &[
+                r#"{"type":"assistant","timestamp":"2026-04-23T09:30:00Z","sessionId":"s1","cwd":"/p","message":{"model":"sonnet","usage":{"input_tokens":40}}}"#,
+            ],
+        );
+
+        let repo = ClaudeCodeUsageRepository::new(tmp.path().to_path_buf());
+        let ov = repo.overview(&Filter::default()).unwrap();
+        assert_eq!(ov.message_count, 2);
+        assert_eq!(ov.tokens.input.value(), 140);
+
+        let rows = repo.daily_by_model(&Filter::default()).unwrap();
+        assert_eq!(rows.len(), 2);
+        let sonnet = rows
+            .iter()
+            .find(|r| r.model.as_str() == "sonnet")
+            .expect("sub-agent model must be reported separately");
+        assert_eq!(sonnet.tokens.input.value(), 40);
     }
 
     #[test]
