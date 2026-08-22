@@ -82,9 +82,9 @@ mise run dev:proxy-tui      # Run proxy-tui against dev proxy
 mise run dev:init           # Clone prod DB into dev
 mise run dev:reset          # Delete dev DBs and re-clone from prod
 mise run prod:apps:install  # Install all binaries into ~/.cargo/bin
-mise run prod:deploy        # Install binaries and register launchd service
-mise run prod:service:status     # Show launchd service status
-mise run prod:service:logs       # Tail service logs
+mise run prod:deploy        # Install binaries and register service
+mise run prod:service:status     # Show service status (LaunchAgent on macOS, systemd --user on Linux)
+mise run prod:service:logs       # Tail service logs (log files on macOS, journalctl on Linux)
 ```
 
 Run `mise tasks` for the full list.

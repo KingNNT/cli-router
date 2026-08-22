@@ -1,11 +1,26 @@
 #!/usr/bin/env bash
-#MISE description="Tail proxy service stdout + stderr logs"
+#MISE description="Tail proxy service logs (log files on macOS, journalctl -u <unit> on Linux)"
 #MISE alias="sl"
 
 set -euo pipefail
 
-SERVICE_LOG_OUT="$HOME/Library/Logs/cli-router-proxy.log"
-SERVICE_LOG_ERR="$HOME/Library/Logs/cli-router-proxy.err"
+ROOT_TASKS="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=_lib.sh
+. "$ROOT_TASKS/_lib.sh"
 
-touch "$SERVICE_LOG_OUT" "$SERVICE_LOG_ERR"
-tail -f "$SERVICE_LOG_OUT" "$SERVICE_LOG_ERR"
+logs_macos() {
+    : > "$SERVICE_LOG_ERR"
+    tail -f "$SERVICE_LOG_OUT" "$SERVICE_LOG_ERR"
+}
+
+logs_linux() {
+    # journalctl -u requires the unit name. We use SERVICE_LABEL so
+    # `prod:apps:install-proxy` can restart via `systemctl --user restart`
+    # and the new logs land in the same unit's journal.
+    exec journalctl --user -u "$SERVICE_LABEL" -f
+}
+
+case "$OS" in
+    macos) logs_macos ;;
+    linux) logs_linux ;;
+esac

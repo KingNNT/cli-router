@@ -4,12 +4,19 @@
 
 set -euo pipefail
 
-CARGO="${CARGO:-cargo}"
-SERVICE_PLIST="$HOME/Library/LaunchAgents/com.cli-router.proxy.plist"
+# Resolve _lib.sh via the parent tasks dir. This script lives in
+# prod/apps/, two levels under the tasks root.
+ROOT_TASKS="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=_lib.sh
+. "$ROOT_TASKS/_lib.sh"
 
+CARGO="${CARGO:-cargo}"
 "$CARGO" install --locked --force --path crates/proxy
 
-if [ -f "$SERVICE_PLIST" ]; then
-    echo "service plist detected — restarting to pick up new binary"
+if [ -f "$SERVICE_UNIT_PATH" ]; then
+    case "$OS" in
+        macos) echo "service plist detected — restarting to pick up new binary" ;;
+        linux) echo "service unit detected — restarting to pick up new binary" ;;
+    esac
     mise run prod:service:restart
 fi
