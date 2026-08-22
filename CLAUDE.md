@@ -58,14 +58,18 @@ mise run dev:seed-requests # insert mock requests into dev DB
 mise run prod:apps:install         # install proxy, proxy-tui, and analysis
 mise run prod:apps:install-proxy   # install proxy binary (restarts service if loaded)
 mise run prod:apps:uninstall       # uninstall all binaries
-mise run prod:deploy               # uninstall service + binaries, then reinstall all and register launchd service
+mise run prod:deploy               # uninstall service + binaries, then reinstall all and register service
 
-# Service (macOS)
-mise run prod:service:install   # build proxy, install, and run as LaunchAgent
-mise run prod:service:uninstall # stop and remove the LaunchAgent
+# Service (LaunchAgent on macOS, systemd --user on Linux)
+# OS is auto-detected at the top of every service script.
+mise run prod:service:install   # build proxy, install, and register service
+mise run prod:service:uninstall # stop and remove the service
 mise run prod:service:restart   # restart the proxy service
-mise run prod:service:status    # show launchd status
-mise run prod:service:logs      # tail service stdout + stderr logs
+mise run prod:service:status    # show service status
+mise run prod:service:logs      # tail service logs (log files on macOS, journalctl on Linux)
+
+# Shell tests for the mise task helpers
+mise run test                   # run all .mise/tasks/tests/*.sh
 ```
 
 Run `mise tasks` for the full list and short aliases (e.g., `mise run dp` for `dev:proxy`).

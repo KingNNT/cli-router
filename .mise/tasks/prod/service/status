@@ -1,18 +1,43 @@
 #!/usr/bin/env bash
-#MISE description="Show launchd status for the proxy service"
+#MISE description="Show service status (LaunchAgent on macOS, systemd --user on Linux)"
 #MISE alias="ss"
 
 set -euo pipefail
 
-SERVICE_LABEL="com.cli-router.proxy"
+# Source shared OS detection + path vars. The library exits 1 on
+# unsupported OS so we never reach unsupported dispatch.
+ROOT_TASKS="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=_lib.sh
+. "$ROOT_TASKS/_lib.sh"
 
-output=$(launchctl list | awk -v label="$SERVICE_LABEL" 'NR==1 || $0 ~ label')
-header=$(echo "$output" | head -1)
-lines=$(echo "$output" | tail -n +2)
+status_macos() {
+    if ! command -v launchctl >/dev/null 2>&1; then
+        echo "  (launchctl unavailable — not running on macOS?)"
+        return 0
+    fi
+    local output header lines
+    output=$(launchctl list | awk -v label="$SERVICE_LABEL" 'NR==1 || $0 ~ label')
+    header=$(echo "$output" | head -1)
+    lines=$(echo "$output" | tail -n +2)
 
-echo "$header"
-if [ -z "$lines" ]; then
-    echo "  (not loaded)"
-else
-    echo "$lines"
-fi
+    echo "$header"
+    if [ -z "$lines" ]; then
+        echo "  (not loaded)"
+    else
+        echo "$lines"
+    fi
+}
+
+status_linux() {
+    if systemctl --user status "$SERVICE_LABEL" >/dev/null 2>&1; then
+        # --no-pager so the output is friendly in TTY and pipes.
+        systemctl --user status --no-pager "$SERVICE_LABEL" || true
+    else
+        echo "  (not loaded)"
+    fi
+}
+
+case "$OS" in
+    macos) status_macos ;;
+    linux) status_linux ;;
+esac

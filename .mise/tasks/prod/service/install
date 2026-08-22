@@ -1,90 +1,174 @@
 #!/usr/bin/env bash
-#MISE description="Build proxy, install it, and run it as a LaunchAgent (one-shot deploy)"
+#MISE description="Build proxy, install it, and run it as a service: LaunchAgent on macOS, systemd --user on Linux"
 #MISE alias="si"
 
 set -euo pipefail
 
-LAUNCH_AGENT_DIR="$HOME/Library/LaunchAgents"
-SERVICE_LABEL="com.cli-router.proxy"
-SERVICE_PLIST="$LAUNCH_AGENT_DIR/$SERVICE_LABEL.plist"
-SERVICE_BIN="$HOME/.cargo/bin/cli-router-proxy"
-SERVICE_LOG_DIR="$HOME/Library/Logs"
-SERVICE_LOG_OUT="$SERVICE_LOG_DIR/cli-router-proxy.log"
-SERVICE_LOG_ERR="$SERVICE_LOG_DIR/cli-router-proxy.err"
-SERVICE_DOMAIN="gui/$(id -u)"
-SERVICE_TARGET="$SERVICE_DOMAIN/$SERVICE_LABEL"
-PROD_CONFIG="$HOME/.config/cli-router/config.toml"
-SERVICE_ENV_FILE="$HOME/.config/cli-router/.env"
+ROOT_TASKS="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=_lib.sh
+. "$ROOT_TASKS/_lib.sh"
 
 CARGO="${CARGO:-cargo}"
 "$CARGO" install --locked --force --path crates/proxy
 
-mkdir -p "$LAUNCH_AGENT_DIR" "$SERVICE_LOG_DIR"
+# Shared by macOS + Linux paths: scan $PROD_CONFIG for ${VAR} references,
+# print `name|value|source` (one per line) for each var resolved from
+# either $SERVICE_ENV_FILE or the shell environment.
+scan_env_vars() {
+    [ -f "$PROD_CONFIG" ] || return 0
+    local var_names var val source
+    var_names=$(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' "$PROD_CONFIG" 2>/dev/null \
+        | sed 's/\${//;s/}//' | sort -u || true)
+    for var in $var_names; do
+        val=""
+        source=""
+        if [ -f "$SERVICE_ENV_FILE" ]; then
+            # `|| true` because grep no-match + pipefail would otherwise
+            # abort this function under `set -euo pipefail` in the caller.
+            val=$(grep -E "^$var=" "$SERVICE_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)
+        fi
+        if [ -n "$val" ]; then
+            source=".env"
+        else
+            eval "val=\${$var:-}"
+            if [ -n "$val" ]; then source="env"; fi
+        fi
+        if [ -n "$val" ]; then
+            printf '%s|%s|%s\n' "$var" "$val" "$source"
+        else
+            echo "  warning: $var referenced in config but not set (neither .env nor env)" >&2
+        fi
+    done
+}
 
-{
-    printf '%s\n' \
-        '<?xml version="1.0" encoding="UTF-8"?>' \
-        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
-        '<plist version="1.0">' \
-        '<dict>' \
-        '  <key>Label</key><string>'"$SERVICE_LABEL"'</string>' \
-        '  <key>ProgramArguments</key>' \
-        '  <array><string>'"$SERVICE_BIN"'</string></array>' \
-        '  <key>RunAtLoad</key><true/>' \
-        '  <key>KeepAlive</key><true/>' \
-        '  <key>StandardOutPath</key><string>'"$SERVICE_LOG_OUT"'</string>' \
-        '  <key>StandardErrorPath</key><string>'"$SERVICE_LOG_ERR"'</string>'
+install_macos() {
+    LAUNCH_AGENT_DIR="$(dirname "$SERVICE_UNIT_PATH")"
+    SERVICE_LOG_DIR="$(dirname "$SERVICE_LOG_OUT")"
+    SERVICE_DOMAIN="gui/$(id -u)"
 
-    count=0
-    if [ -f "$PROD_CONFIG" ]; then
-        var_names=$(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' "$PROD_CONFIG" 2>/dev/null \
-            | sed 's/\${//;s/}//' | sort -u || true)
-        for var in $var_names; do
-            val=""
-            source=""
-            if [ -f "$SERVICE_ENV_FILE" ]; then
-                val=$(grep -E "^$var=" "$SERVICE_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2-)
-            fi
-            if [ -n "$val" ]; then
-                source=".env"
-            else
-                eval "val=\${$var:-}"
-                if [ -n "$val" ]; then source="env"; fi
-            fi
-            if [ -n "$val" ]; then
-                if [ "$count" -eq 0 ]; then
-                    printf '  <key>EnvironmentVariables</key>\n  <dict>\n'
+    mkdir -p "$LAUNCH_AGENT_DIR" "$SERVICE_LOG_DIR"
+
+    {
+        printf '%s\n' \
+            '<?xml version="1.0" encoding="UTF-8"?>' \
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+            '<plist version="1.0">' \
+            '<dict>' \
+            '  <key>Label</key><string>'"$SERVICE_LABEL"'</string>' \
+            '  <key>ProgramArguments</key>' \
+            '<array><string>'"$SERVICE_BIN"'</string></array>' \
+            '  <key>RunAtLoad</key><true/>' \
+            '  <key>KeepAlive</key><true/>' \
+            '  <key>StandardOutPath</key><string>'"$SERVICE_LOG_OUT"'</string>' \
+            '  <key>StandardErrorPath</key><string>'"$SERVICE_LOG_ERR"'</string>'
+
+        count=0
+        if [ -f "$PROD_CONFIG" ]; then
+            var_names=$(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' "$PROD_CONFIG" 2>/dev/null \
+                | sed 's/\${//;s/}//' | sort -u || true)
+            for var in $var_names; do
+                val=""
+                source=""
+                if [ -f "$SERVICE_ENV_FILE" ]; then
+                    # `|| true` because grep no-match + pipefail would
+                    # otherwise abort under `set -euo pipefail`.
+                    val=$(grep -E "^$var=" "$SERVICE_ENV_FILE" 2>/dev/null | head -1 | cut -d= -f2- || true)
                 fi
-                printf '    <key>%s</key><string>%s</string>\n' "$var" "$val"
+                if [ -n "$val" ]; then
+                    source=".env"
+                else
+                    eval "val=\${$var:-}"
+                    if [ -n "$val" ]; then source="env"; fi
+                fi
+                if [ -n "$val" ]; then
+                    if [ "$count" -eq 0 ]; then
+                        printf '  <key>EnvironmentVariables</key>\n  <dict>\n'
+                    fi
+                    printf '    <key>%s</key><string>%s</string>\n' "$var" "$val"
+                    echo "  $var <- $source" >&2
+                    count=$((count + 1))
+                else
+                    echo "  warning: $var referenced in config but not set (neither .env nor env)" >&2
+                fi
+            done
+        fi
+        if [ "$count" -gt 0 ]; then
+            printf '  </dict>\n'
+        fi
+
+        printf '%s\n' \
+            '</dict>' \
+            '</plist>'
+    } > "$SERVICE_UNIT_PATH"
+
+    # launchd refuses a group- or world-writable job plist with
+    # "Bootstrap failed: 5: Input/output error", so don't inherit a loose umask.
+    chmod 644 "$SERVICE_UNIT_PATH"
+
+    if launchctl print "$SERVICE_TARGET" >/dev/null 2>&1; then
+        echo "service already loaded — kickstarting (atomic respawn, no AddrInUse race)"
+        launchctl kickstart -k "$SERVICE_TARGET"
+    else
+        echo "first-time install — bootstrapping"
+        launchctl bootstrap "$SERVICE_DOMAIN" "$SERVICE_UNIT_PATH"
+    fi
+
+    : > "$SERVICE_LOG_ERR"
+    echo "service installed: $SERVICE_UNIT_PATH"
+    echo "logs: $SERVICE_LOG_OUT"
+    echo "      $SERVICE_LOG_ERR"
+}
+
+install_linux() {
+    UNIT_DIR="$(dirname "$SERVICE_UNIT_PATH")"
+    mkdir -p "$UNIT_DIR"
+
+    {
+        printf '[Unit]\n'
+        printf 'Description=cli-router proxy\n'
+        printf '\n'
+        printf '[Service]\n'
+        printf 'ExecStart=%s\n' "$SERVICE_BIN"
+        printf 'Restart=on-failure\n'
+        printf 'RestartSec=1\n'
+
+        # Emit Environment= lines for each resolved var.
+        if [ -f "$PROD_CONFIG" ]; then
+            while IFS='|' read -r var val source; do
+                [ -n "${var:-}" ] || continue
+                printf 'Environment="%s=%s"\n' "$var" "$val"
                 echo "  $var <- $source" >&2
-                count=$((count + 1))
-            else
-                echo "  warning: $var referenced in config but not set (neither .env nor env)" >&2
-            fi
-        done
+            done < <(scan_env_vars)
+        fi
+
+        printf '\n'
+        printf '[Install]\n'
+        printf 'WantedBy=default.target\n'
+    } > "$SERVICE_UNIT_PATH"
+
+    # Persist user service across logout. Best-effort — if loginctl is
+    # not available (rare), the unit will still work while the session
+    # is alive and `prod:service:install` will print a warning.
+    if command -v loginctl >/dev/null 2>&1; then
+        loginctl enable-linger "$USER" 2>/dev/null || \
+            echo "warning: could not enable-linger — service will stop at logout" >&2
+    else
+        echo "warning: loginctl not found — service will stop at logout" >&2
     fi
-    if [ "$count" -gt 0 ]; then
-        printf '  </dict>\n'
+
+    if systemctl --user is-enabled "$SERVICE_LABEL" >/dev/null 2>&1; then
+        echo "service already enabled — restarting"
+        systemctl --user restart "$SERVICE_LABEL"
+    else
+        echo "first-time install — enabling"
+        systemctl --user enable --now "$SERVICE_LABEL"
     fi
 
-    printf '%s\n' \
-        '</dict>' \
-        '</plist>'
-} > "$SERVICE_PLIST"
+    echo "service installed: $SERVICE_UNIT_PATH"
+    echo "logs:   journalctl --user -u $SERVICE_LABEL -f"
+}
 
-# launchd refuses a group- or world-writable job plist with
-# "Bootstrap failed: 5: Input/output error", so don't inherit a loose umask.
-chmod 644 "$SERVICE_PLIST"
-
-if launchctl print "$SERVICE_TARGET" >/dev/null 2>&1; then
-    echo "service already loaded — kickstarting (atomic respawn, no AddrInUse race)"
-    launchctl kickstart -k "$SERVICE_TARGET"
-else
-    echo "first-time install — bootstrapping"
-    launchctl bootstrap "$SERVICE_DOMAIN" "$SERVICE_PLIST"
-fi
-
-: > "$SERVICE_LOG_ERR"
-echo "service installed: $SERVICE_PLIST"
-echo "logs: $SERVICE_LOG_OUT"
-echo "      $SERVICE_LOG_ERR"
+case "$OS" in
+    macos) install_macos ;;
+    linux) install_linux ;;
+esac

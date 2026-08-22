@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#MISE description="Run shell tests for mise service task helpers"
+#MISE alias="test-shell"
+
+set -uo pipefail
+
+cd "$MISE_PROJECT_ROOT" || exit 1
+TESTS_DIR=".mise/tasks/tests"
+[ -d "$TESTS_DIR" ] || { echo "no $TESTS_DIR dir"; exit 0; }
+
+FAILS=0
+for f in "$TESTS_DIR"/*.sh; do
+    [ -f "$f" ] || continue
+    printf '\n=== %s ===\n' "$f"
+    bash "$f" || FAILS=$((FAILS + 1))
+done
+
+if [ "$FAILS" -ne 0 ]; then
+    echo
+    echo "$FAILS shell test file(s) failed"
+    exit 1
+fi
+echo
+echo "All shell tests passed."
