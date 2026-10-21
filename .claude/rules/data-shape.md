@@ -2,6 +2,18 @@
 
 These assumptions are baked into every SQL query in `db.rs`. Changing any of them means touching every query — do it deliberately.
 
+## OpenCode v1 vs. v2
+
+OpenCode ships two layouts; `OpenCodeSchema::detect` (in `adapters::gateways::sqlite::query_builder`) picks one per query — v2 when `session_message` exists, else v1. All schema-specific SQL fragments live on that enum.
+
+| | v1 | v2 |
+|---|---|---|
+| tables | `message`, `session` | `session_message`, `session_v2` |
+| assistant filter | `json_extract(m.data, '$.role') = 'assistant'` | `m.type = 'assistant'` |
+| model / provider | `$.modelID` / `$.providerID` | `$.model.id` / `$.model.providerID` |
+
+`$.tokens.*`, `$.cost` and `$.time.created` are identical in both. The sections below use v1 names; the same rules apply to their v2 equivalents.
+
 ## Assistant-only rows
 
 Token and cost fields live in `message.data` JSON and are **only present on `role = 'assistant'` rows**. `Db::where_clause` always prepends:

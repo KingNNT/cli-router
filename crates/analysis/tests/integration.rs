@@ -1,6 +1,6 @@
 //! End-to-end test for the composition root.
 //!
-//! Loads `adapters/tests/fixtures/seed.sql` into in-memory SQLite, wires the real
+//! Loads `adapters/tests/fixtures/seed_v1.sql` into in-memory SQLite, wires the real
 //! gateways (SqliteUsageRepository, SqlitePricingRepository) and use cases
 //! the same way `main.rs` does, and asserts the results match the fixture.
 //!
@@ -30,7 +30,7 @@ impl Clock for FixedClock {
 
 fn seeded_usage_conn() -> Arc<Mutex<Connection>> {
     let conn = Connection::open_in_memory().unwrap();
-    let sql = include_str!("fixtures/seed.sql");
+    let sql = include_str!("fixtures/seed_v1.sql");
     conn.execute_batch(sql).unwrap();
     Arc::new(Mutex::new(conn))
 }

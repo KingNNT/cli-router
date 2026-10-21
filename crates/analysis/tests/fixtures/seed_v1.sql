@@ -1,3 +1,4 @@
+-- OpenCode v1 schema (session / message tables).
 CREATE TABLE session (
   id TEXT PRIMARY KEY,
   directory TEXT NOT NULL
