@@ -865,7 +865,6 @@ impl RoutingProvider {
                 Ok(UpstreamResponse::Buffered {
                     status,
                     headers: resp_headers,
-                    body: _,
                     ..
                 }) if status == 429 => {
                     let cooldown_ms = extract_retry_after_ms(&resp_headers) * 1000;
@@ -1123,7 +1122,6 @@ impl RoutingProvider {
                 Ok(UpstreamResponse::Buffered {
                     status,
                     headers: resp_headers,
-                    body: _,
                     ..
                 }) if status == 429 => {
                     let cooldown_ms = extract_retry_after_ms(&resp_headers) * 1000;
